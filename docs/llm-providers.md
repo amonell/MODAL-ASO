@@ -18,8 +18,7 @@ Select an exact ID from the [model catalog](https://openrouter.ai/models). `OPEN
 
 | Variable | Purpose |
 | --- | --- |
-| `ASO_LLM_PROVIDER` | `openai` or `openrouter`. |
-| `OPENAI_API_KEY` | OpenAI credential. |
+| `ASO_LLM_PROVIDER` | Set to `openrouter`. |
 | `OPENROUTER_API_KEY` | OpenRouter credential. |
 | `OPENROUTER_MODEL` | Exact `provider/model` ID for every OpenRouter call. |
 | `OPENROUTER_REASONING_EFFORT` | Model-supported effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. |
@@ -30,20 +29,10 @@ Select an exact ID from the [model catalog](https://openrouter.ai/models). `OPEN
 | `OPENROUTER_DATA_COLLECTION` | `allow` or `deny`. |
 | `ASO_LLM_TRANSPORT_RETRIES` | Retry count for transient transport failures; default `0`. |
 
-`OPENAI_BASE_URL` and `OPENROUTER_BASE_URL` override the corresponding API endpoint. Credentials are read from the environment.
+`OPENROUTER_BASE_URL` overrides the API endpoint. Credentials are read from the environment.
 
 For individual roles, `ASO_GOAL_INTAKE_MODEL`, `ASO_REQUEST_WORKBENCH_MODEL`, `ASO_WORKBENCH_RESPONSE_MODEL`, `ASO_SANDBOX_ANALYSIS_MODEL` and `ASO_ANSWER_WEB_SEARCH_MODEL` select model IDs. A global `OPENROUTER_MODEL` setting takes precedence.
 
 MODAL-ASO validates structured model responses locally. Reports retain model attribution and evidence from the run.
 
-## Optional direct OpenAI backend
-
-The code also includes a direct OpenAI backend with separate model defaults for individual agent roles:
-
-```bash
-export ASO_LLM_PROVIDER=openai
-export OPENAI_API_KEY="your-api-key"
-modal-aso "your request"
-```
-
-Set `ASO_LLM_PROVIDER` explicitly. Leaving it unset selects the legacy OpenAI configuration.
+Set `ASO_LLM_PROVIDER=openrouter` before starting a run.

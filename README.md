@@ -66,7 +66,7 @@ export OPENROUTER_MODEL="provider/model"
 export OPENROUTER_REASONING_EFFORT=none
 ```
 
-Choose a model that supports tool calling and your selected reasoning effort. [Provider settings →](docs/llm-providers.md)
+Choose a model that supports tool calling and your selected reasoning effort. [OpenRouter settings →](docs/llm-providers.md)
 
 </details>
 
