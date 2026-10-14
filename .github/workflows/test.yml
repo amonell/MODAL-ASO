@@ -61,6 +61,7 @@ jobs:
       - name: Splice inference on a synthetic reference
         env:
           ASO_RUN_INSTALLED_SMOKE: '1'
+          ASO_RUN_MOUSE_SMOKE: '1'
         run: .venv/bin/python -m pytest -q tests/integration/test_installed_runtime.py::test_released_splice_model_inference
       - name: Build and inspect wheel
         run: |
