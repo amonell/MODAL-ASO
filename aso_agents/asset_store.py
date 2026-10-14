@@ -204,12 +204,13 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
         raise AssertionError("Download attempts exhausted")
 
 
-def decompress(source: Path, destination: Path, *, kind: str | None = None) -> dict:
+def decompress(source: Path, destination: Path, *, kind: str | None = None,
+               expected_sha256: str | None = None) -> dict:
     """Decompress once, binding the result to its compressed source checksum."""
     source_identity = read_receipt(source).get("sha256") or sha256(source)
     binding = "gzip:sha256:" + source_identity
     with file_lock(asset_lock(destination)):
-        if read_receipt(destination).get("source") == binding and verify(destination):
+        if read_receipt(destination).get("source") == binding and verify(destination, expected_sha256=expected_sha256):
             return {"status": "ready", "path": str(destination)}
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(destination.name + ".extracting")
@@ -219,8 +220,10 @@ def decompress(source: Path, destination: Path, *, kind: str | None = None) -> d
                 dst.flush()
                 os.fsync(dst.fileno())
             validate_file(temporary, kind)
+            if expected_sha256 and sha256(temporary) != expected_sha256:
+                raise ValueError(f"Extracted asset checksum mismatch: {destination.name}")
             temporary.replace(destination)
-            attest(destination, source=binding, kind=kind)
+            attest(destination, source=binding, expected_sha256=expected_sha256, kind=kind)
         finally:
             temporary.unlink(missing_ok=True)
         return {"status": "extracted", "path": str(destination)}

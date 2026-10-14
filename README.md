@@ -9,7 +9,10 @@
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-164A79?style=flat-square)
 ![License GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-0FA3BE?style=flat-square)
 
+<picture>
+<source media="(max-width: 640px)" srcset="docs/assets/mechanisms-mobile.png">
 <img src="docs/assets/mechanisms.png" alt="ASO mechanisms: RNase H-mediated RNA degradation, splice modulation, and steric blocking of regulatory interactions." width="100%">
+</picture>
 
 </div>
 

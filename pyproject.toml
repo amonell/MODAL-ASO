@@ -70,6 +70,9 @@ Repository = "https://github.com/amonell/MODAL-ASO"
 Documentation = "https://github.com/amonell/MODAL-ASO#readme"
 Issues = "https://github.com/amonell/MODAL-ASO/issues"
 
+[tool.uv]
+python-preference = "only-managed"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

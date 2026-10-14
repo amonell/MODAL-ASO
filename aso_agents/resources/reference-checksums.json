@@ -1,0 +1,38 @@
+{
+  "GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta": {
+    "bytes": 3144230986,
+    "sha256": "9cce8b926416dd96b152deea85188495b75f7ac8d634cc723a017067be8702b7"
+  },
+  "GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta.fai": {
+    "bytes": 7804,
+    "sha256": "502a1b8fb73ccd53285c28a0f12df90c818b4fe3de1e862ef47c593ef1a0a4b4"
+  },
+  "GRCh38_no_alt_analysis_set_GCA_000001405.15.fna.gz": {
+    "bytes": 872949833,
+    "sha256": "fb4243ebb014caf27111f24dd62b7ce42160f28581da6f8fcd6cba5977778d02"
+  },
+  "gencode.v42.annotation.gtf": {
+    "bytes": 1560832603,
+    "sha256": "359c8560d291687df9deac4c8b692cd6a488e409640223ce1318707c30bd4c74"
+  },
+  "gencode.v42.annotation.gtf.gz": {
+    "bytes": 49548290,
+    "sha256": "f59a5b38c6de1472430ccd0181927a01df0b4ad8d78f598e521badc9da80a76e"
+  },
+  "gencode.v42.metadata.RefSeq.gz": {
+    "bytes": 865624,
+    "sha256": "c7e85a8effa6cd5069d1745868f07a3d984fd3efcf6d3dffa56e0992ab83557e"
+  },
+  "hg38.chrom.sizes": {
+    "bytes": 11672,
+    "sha256": "e1d9152418038457a959e949d99c9caf7ae3e4f87cfbb4ffe7d8b9a54ba1202b"
+  },
+  "hg38.phastCons30way.bw": {
+    "bytes": 7077152013,
+    "sha256": "9ab162c23deaece27eccdb40f47afcd958a1876e717aa561f58856cf716e65de"
+  },
+  "hg38.phyloP30way.bw": {
+    "bytes": 8400229101,
+    "sha256": "c9e206b20851e9c9a7712e01cafb63728be85b3290bd86af66ffae247dd0da22"
+  }
+}

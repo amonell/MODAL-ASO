@@ -19,7 +19,7 @@ On Windows, [install WSL2](https://learn.microsoft.com/windows/wsl/install) and 
 xcode-select --install
 ```
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then follow the README quick start.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then follow the README quick start. The project uses uv’s native Python 3.11 build.
 
 ## Install from a ZIP
 
@@ -38,7 +38,7 @@ Model source code is fetched automatically at pinned revisions.
 With a release wheel downloaded locally:
 
 ```bash
-uv venv --python 3.11
+uv venv --python 3.11 --managed-python
 source .venv/bin/activate
 uv pip install "./modal_aso-0.1.0-py3-none-any.whl[splice]"
 modal-aso setup --species human --features tools references splice

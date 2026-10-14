@@ -13,7 +13,7 @@ import tempfile
 
 from .asset_store import (asset_lock, atomic_json, attest, decompress, download,
                           file_lock, fingerprint, read_receipt, verify)
-from .paths import reference_root, data_root
+from .paths import reference_root, data_root, resource_root
 
 UCSC = "https://hgdownload.soe.ucsc.edu/goldenPath"
 GENCODE = "https://ftp.ebi.ac.uk/pub/databases/gencode"
@@ -45,7 +45,7 @@ INDEX_SUFFIXES = ("1", "2", "3", "4", "rev.1", "rev.2")
 def assets(species: str) -> list[dict]:
     c = CATALOG[species]
     build, alignment = c["build"], c["alignment"]
-    return [
+    items = [
         {"name": c["compressed"], "url": c["genome_url"], "kind": "gzip", "extract": c["fasta"], "extracted_kind": "fasta"},
         {"name": c["gtf"] + ".gz", "url": f"{c['gencode_url']}/{c['gtf']}.gz", "kind": "gzip", "extract": c["gtf"]},
         {"name": c["xref"], "url": f"{c['gencode_url']}/{c['xref']}", "kind": "gzip"},
@@ -53,6 +53,16 @@ def assets(species: str) -> list[dict]:
         *[{"name": f"{build}.{track}{alignment}.bw", "url": f"{UCSC}/{build}/{track}{alignment}/{build}.{track}{alignment}.bw", "kind": "bigwig"}
           for track in ("phastCons", "phyloP")],
     ]
+    checksums = reference_checksums()
+    for item in items:
+        item["sha256"] = checksums.get(item["name"], {}).get("sha256")
+        if "extract" in item:
+            item["extracted_sha256"] = checksums.get(item["extract"], {}).get("sha256")
+    return items
+
+
+def reference_checksums() -> dict:
+    return json.loads((resource_root() / "reference-checksums.json").read_text())
 
 
 def binary(name: str) -> str:
@@ -153,14 +163,15 @@ def install_reference(species: str, root: Path | None = None, *, progress=print)
         for item in assets(species):
             output = root / item.get("extract", item["name"])
             # Imported or already extracted verified files also satisfy setup.
-            if verify(output):
+            expected = item.get("extracted_sha256") if "extract" in item else item.get("sha256")
+            if verify(output, expected_sha256=expected):
                 progress(f"Ready: {output.name}")
                 steps.append({"status": "ready", "path": str(output)})
                 continue
             packed = root / item["name"]
-            steps.append(download(item["url"], packed, kind=item.get("kind"), progress=progress))
+            steps.append(download(item["url"], packed, expected_sha256=item.get("sha256"), kind=item.get("kind"), progress=progress))
             if "extract" in item:
-                steps.append(decompress(packed, output, kind=item.get("extracted_kind")))
+                steps.append(decompress(packed, output, kind=item.get("extracted_kind"), expected_sha256=expected))
         validation = validate_reference(species, root)
         steps.append(build_index(species, root, progress=progress))
         result = {"status": "ready", "species": species, **validation, "steps": steps}
@@ -185,8 +196,10 @@ def import_reference(species: str, source: Path, root: Path | None = None, *, pr
                     raise ValueError(f"Managed file already exists: {destination}")
             else:
                 destination.symlink_to(original)
-            if not verify(destination):
-                attest(destination, source="import:" + str(original), kind=item.get("extracted_kind") or (item.get("kind") if "extract" not in item else None))
+            expected = item.get("extracted_sha256") if "extract" in item else item.get("sha256")
+            if not verify(destination, expected_sha256=expected) or not read_receipt(destination):
+                attest(destination, source="import:" + str(original), expected_sha256=expected,
+                       kind=item.get("extracted_kind") or (item.get("kind") if "extract" not in item else None))
         validation = validate_reference(species, root)
         c = CATALOG[species]
         original_prefix = source / "bowtie" / c["build"]
@@ -225,7 +238,8 @@ def inventory(species: str, *, full=False) -> list[dict]:
     files = [root / item.get("extract", item["name"]) for item in assets(species)]
     files += [Path(str(root / c["fasta"]) + ".fai")]
     files += _index_files(root / "bowtie" / c["build"]) or [root / "bowtie" / (c["build"] + ".1.ebwt")]
-    return [{"path": str(p), "status": "verified" if verify(p, full=full) else "missing" if not p.exists() else "unverified",
+    checksums = reference_checksums()
+    return [{"path": str(p), "status": "verified" if verify(p, expected_sha256=checksums.get(p.name, {}).get("sha256"), full=full) else "missing" if not p.exists() else "unverified",
              "bytes": p.stat().st_size if p.exists() else 0} for p in files]
 
 

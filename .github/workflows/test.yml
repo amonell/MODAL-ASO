@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           wheel_env="$RUNNER_TEMP/wheel-env"
-          uv venv --python 3.11 "$wheel_env"
+          uv venv --python 3.11 --managed-python "$wheel_env"
           uv export --frozen --extra splice --no-dev --no-emit-project --output-file "$RUNNER_TEMP/constraints.txt"
           uv pip install --python "$wheel_env/bin/python" --constraint "$RUNNER_TEMP/constraints.txt" "./dist/modal_aso-0.1.0-py3-none-any.whl[splice]"
           cd "$RUNNER_TEMP"
