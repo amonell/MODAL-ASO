@@ -2,7 +2,9 @@
 
 # MODAL-ASO
 
-**Design and evaluate antisense oligonucleotides from a natural-language request.**
+**Multi-mechanism Orchestration and Design by an Agentic LLM for ASOs**
+
+Design and evaluate antisense oligonucleotides from a natural-language request.
 
 [Quick start](#quick-start) · [Installation](docs/installation.md) · [Examples](docs/examples.md) · [Outputs](docs/outputs.md)
 

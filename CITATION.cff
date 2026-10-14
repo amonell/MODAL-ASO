@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "Please cite the version of MODAL-ASO used in your work."
-title: "MODAL-ASO: Multi-mechanism Orchestration and Design by an Agentic LLM"
+title: "MODAL-ASO: Multi-mechanism Orchestration and Design by an Agentic LLM for ASOs"
 type: software
 version: 0.1.0
 license: GPL-3.0-only

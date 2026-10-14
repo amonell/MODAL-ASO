@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "modal-aso"
 version = "0.1.0"
-description = "Multi-mechanism Orchestration and Design by an Agentic LLM for ASO design and evaluation."
+description = "Multi-mechanism Orchestration and Design by an Agentic LLM for ASOs"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = "GPL-3.0-only"
