@@ -1,23 +1,13 @@
 # Language models
 
-Set provider settings before starting MODAL-ASO. Your provider bills API usage directly.
-
-## OpenAI
-
-```bash
-export ASO_LLM_PROVIDER=openai
-export OPENAI_API_KEY="your-api-key"
-modal-aso "your request"
-```
-
-OpenAI is the default provider. The built-in configuration assigns models to individual agent roles.
+The quick start uses DeepSeek through OpenRouter. Set these variables before starting MODAL-ASO. Your provider bills API usage directly.
 
 ## OpenRouter
 
 ```bash
 export ASO_LLM_PROVIDER=openrouter
 export OPENROUTER_API_KEY="your-api-key"
-export OPENROUTER_MODEL="provider/model"
+export OPENROUTER_MODEL="deepseek/deepseek-v4-flash"
 export OPENROUTER_REASONING_EFFORT=max
 modal-aso "your request"
 ```
@@ -45,3 +35,15 @@ Select an exact ID from the [model catalog](https://openrouter.ai/models). `OPEN
 For individual roles, `ASO_GOAL_INTAKE_MODEL`, `ASO_REQUEST_WORKBENCH_MODEL`, `ASO_WORKBENCH_RESPONSE_MODEL`, `ASO_SANDBOX_ANALYSIS_MODEL` and `ASO_ANSWER_WEB_SEARCH_MODEL` select model IDs. A global `OPENROUTER_MODEL` setting takes precedence.
 
 MODAL-ASO validates structured model responses locally. Reports retain model attribution and evidence from the run.
+
+## Optional direct OpenAI backend
+
+The code also includes a direct OpenAI backend with separate model defaults for individual agent roles:
+
+```bash
+export ASO_LLM_PROVIDER=openai
+export OPENAI_API_KEY="your-api-key"
+modal-aso "your request"
+```
+
+Set `ASO_LLM_PROVIDER` explicitly. Leaving it unset selects the legacy OpenAI configuration.

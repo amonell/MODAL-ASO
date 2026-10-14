@@ -18,7 +18,7 @@
 
 MODAL-ASO connects transcript selection, candidate design, chemistry, off-target analysis and mechanism-specific predictions. Each run produces ranked candidates and a report with supporting evidence.
 
-| Workflow | What it does |
+| Capability | What it does |
 | :--- | :--- |
 | **Gapmer design** | RNase H-active candidates, target accessibility and OligoAI predictions. |
 | **Splice modulation** | Splice-switching candidates with predicted junction effects. |
@@ -41,10 +41,13 @@ modal-aso doctor
 
 Setup stores downloads outside the repository. Future sessions reuse the same tools, models, genomes and indexes. [Choose a data drive or import existing references →](docs/references.md)
 
-Set your API key:
+Configure DeepSeek through OpenRouter:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
+export ASO_LLM_PROVIDER=openrouter
+export OPENROUTER_API_KEY="your-api-key"
+export OPENROUTER_MODEL="deepseek/deepseek-v4-flash"
+export OPENROUTER_REASONING_EFFORT=max
 ```
 
 Then describe your request:
@@ -56,13 +59,11 @@ modal-aso "Design 10 RNase H-active gapmer ASOs targeting human PCSK9 mRNA."
 Answer any clarification questions in the terminal. Open the printed **`report.html`** path when the run finishes.
 
 <details>
-<summary><strong>Use OpenRouter or choose another model</strong></summary>
+<summary><strong>Choose another model or reasoning level</strong></summary>
 
 ```bash
-export ASO_LLM_PROVIDER=openrouter
-export OPENROUTER_API_KEY="your-api-key"
 export OPENROUTER_MODEL="provider/model"
-export OPENROUTER_REASONING_EFFORT=max
+export OPENROUTER_REASONING_EFFORT=none
 ```
 
 Choose a model that supports tool calling and your selected reasoning effort. [Provider settings →](docs/llm-providers.md)
