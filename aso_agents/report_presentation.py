@@ -155,6 +155,30 @@ def artifact_href(path, root):
     return quote(Path(os.path.relpath(path, root)).as_posix(), safe="/.")
 
 
+def read_markdown_fragment(source, report_dir):
+    """Rebase a saved fragment's local links when embedding it in a report."""
+    source, root = Path(source).resolve(), Path(report_dir).resolve()
+    text = source.read_text(encoding="utf-8")
+    # Match the same code and link tokens supported by inline_markdown. Code
+    # literals, external links and in-document anchors retain their bytes.
+    pattern = r"(`+)([^`]*?)\1|\[([^\]]+)\]\((<[^>]+>|[^)]+)\)"
+    def rebase(match):
+        if match.group(1):
+            return match.group(0)
+        label, target = match.group(3), match.group(4).strip().strip("<>")
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or not parsed.path:
+            return match.group(0)
+        candidate = (source.parent / unquote(parsed.path)).resolve()
+        if not candidate.is_relative_to(root):
+            return label + " (file unavailable)"
+        href = artifact_href(candidate, root)
+        if parsed.fragment:
+            href += "#" + parsed.fragment
+        return f"[{label}](<{href}>)"
+    return re.sub(pattern, rebase, text)
+
+
 def _link(label, target, report_dir):
     target = html.unescape(target.strip().strip("<>"))
     parsed = urlsplit(target)

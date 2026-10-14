@@ -20,4 +20,4 @@ When a run needs an answer, the terminal prints its state path. Resume with:
 modal-aso --agentic-state-path /path/to/run_state.json
 ```
 
-The existing calculations stay with the run.
+The existing calculations stay with the run. Resuming keeps its original output directory, including when you open a new terminal.

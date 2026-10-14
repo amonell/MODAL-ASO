@@ -208,8 +208,10 @@ def attest(path: Path, *, source: str, expected_sha256: str | None = None,
 
 def download(url: str, destination: Path, *, expected_sha256: str | None = None,
              kind: str | None = None, progress=print, attempts: int = 3,
-             max_bytes: int | None = None) -> dict:
+             max_bytes: int | None = None, mirror_urls: tuple[str, ...] = ()) -> dict:
     """Reuse a verified asset; otherwise resume an incomplete transfer safely."""
+    if mirror_urls and not expected_sha256:
+        raise ValueError("Mirror downloads require a pinned SHA256 checksum")
     destination = Path(destination)
     with file_lock(asset_lock(destination)):
         old = read_receipt(destination)
@@ -228,6 +230,8 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
         parallel_allowed = True
         for attempt in range(attempts):
             try:
+                active_url = (mirror_urls[min(attempt - 1, len(mirror_urls) - 1)]
+                              if attempt and mirror_urls else url)
                 try:
                     state = json.loads(state_path.read_text())
                 except (OSError, ValueError):
@@ -241,8 +245,10 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
                     if state.get("etag"):
                         headers["If-Range"] = state["etag"]
                 progress(f"Downloading: {destination.name}" + (f" (resuming at {offset:,} bytes)" if offset else ""))
+                if active_url != url:
+                    progress(f"Trying a checksum-verified mirror: {destination.name}")
                 try:
-                    response = urlopen(Request(url, headers=headers), timeout=120)
+                    response = urlopen(Request(active_url, headers=headers), timeout=120)
                 except HTTPError as exc:
                     if exc.code == 416 and offset:
                         partial.unlink(missing_ok=True)
@@ -280,7 +286,7 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
                             partial.write_bytes(b"")
                         progress(f"Using {DOWNLOAD_CONNECTIONS} download connections: {destination.name}")
                         try:
-                            transferred += _parallel_transfer(url, partial, offset=base, total=base + remaining, etag=etag, headers=headers)
+                            transferred += _parallel_transfer(active_url, partial, offset=base, total=base + remaining, etag=etag, headers=headers)
                         except _RangeUnavailable:
                             parallel_allowed = False
                             raise
@@ -305,7 +311,7 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
                     raise ValueError(f"Checksum mismatch downloading {destination.name}")
                 partial.replace(destination)
                 atomic_json(receipt_path(destination), {"schema_version": 1, "source": url,
-                            "sha256": actual, "fingerprint": fingerprint(destination), "metadata": {}})
+                            "sha256": actual, "fingerprint": fingerprint(destination), "metadata": {"download_url": active_url}})
                 state_path.unlink(missing_ok=True)
                 staging = partial.with_name(partial.name + ".parts")
                 if staging.is_dir():

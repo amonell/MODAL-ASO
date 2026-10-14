@@ -85,7 +85,13 @@ def test_released_oligoai_inference_and_result_reuse(tmp_path):
     assert (directory / "model-results.json").stat().st_mtime_ns == before
 
 
-def test_released_splice_model_inference(tmp_path):
+@pytest.mark.parametrize("species", [
+    "human",
+    pytest.param("mouse", marks=pytest.mark.skipif(
+        os.environ.get("ASO_RUN_MOUSE_SMOKE") != "1",
+        reason="Set ASO_RUN_MOUSE_SMOKE=1 after installing the mouse checkpoint")),
+])
+def test_released_splice_model_inference(tmp_path, species):
     from aso_agents import splicing_agent as exported
     import importlib
     module = importlib.import_module("aso_agents.splicing_agent")
@@ -98,7 +104,7 @@ def test_released_splice_model_inference(tmp_path):
     tiles = tmp_path / "tiles.json"
     tiles.write_text(json.dumps({"rows": [{"chrom": "chr1", "start": 11980, "end": 12000,
                                           "strand": "+", "sequence": sequence[11980:12000], "name": "neutral"}]}))
-    goal = {"intent": "splice_modulation", "species": "human", "exon_label": 2,
+    goal = {"intent": "splice_modulation", "species": species, "exon_label": 2,
             "isoform_transcripts": {"fixture": {"transcript_id": "SNAPGENE::fixture", "strand": 1,
                 "chrom": "chr1", "seq_region_name": "1", "exons_tx": [
                     {"index": 1, "start": 10000, "end": 11000},

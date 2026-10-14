@@ -49,6 +49,30 @@ def test_markdown_preserves_chemical_notation_fences_and_zero():
     assert 'href=' not in inline_markdown('[bad](javascript:alert)')
 
 
+def test_embedded_fragment_keeps_its_own_evidence_links(tmp_path):
+    from aso_agents.report_presentation import read_markdown_fragment
+    root = tmp_path / 'run with spaces'
+    child = root / 'child_runs' / 'arm' / 'artifacts'
+    child.mkdir(parents=True)
+    (root / 'evidence.csv').write_text('unrelated top-level record')
+    (child / 'evidence.csv').write_text('actual scoped evidence')
+    (tmp_path / 'private.csv').write_text('outside the report bundle')
+    fragment = child / 'panel.md'
+    fragment.write_text('[Evidence](evidence.csv) [Missing](missing.csv) '
+                        '[Outside](../../../../private.csv) [Anchor](#section) '
+                        '[External](https://example.org) `literal [link](evidence.csv)`')
+    rebased = read_markdown_fragment(fragment, root)
+    assert '[Evidence](<child_runs/arm/artifacts/evidence.csv>)' in rebased
+    assert '[Missing](<child_runs/arm/artifacts/missing.csv>)' in rebased
+    assert 'Outside (file unavailable)' in rebased
+    assert '[Anchor](#section)' in rebased
+    assert '[External](https://example.org)' in rebased
+    assert '`literal [link](evidence.csv)`' in rebased
+    page = markdown_html(rebased, root)
+    assert 'href="child_runs/arm/artifacts/evidence.csv"' in page
+    assert 'href="evidence.csv"' not in page
+
+
 def test_child_report_shows_typed_scope_without_execution_instructions(tmp_path):
     from aso_agents.report_explainer import _request_text_from_payload
     run = tmp_path/'parent'/'child_runs'/'arm'; run.mkdir(parents=True)

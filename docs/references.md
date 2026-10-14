@@ -29,7 +29,7 @@ modal-aso setup --species human mouse --features tools references splice
 | Human | GRCh38 no-alt | GENCODE v42 | UCSC 30-way |
 | Mouse | GRCm39 | GENCODE vM35 | UCSC 35-way |
 
-Downloads receive integrity records. Extraction and Bowtie indexing happen once. Repeated setup verifies and reuses completed assets. Incomplete transfers remain separate from ready files.
+Static references use pinned checksums; verified mirrors support interrupted transfers. Downloads receive integrity records. Extraction and Bowtie indexing happen once. Repeated setup verifies and reuses completed assets. Incomplete transfers remain separate from ready files.
 
 Other species use Ensembl reference retrieval during the relevant workflow. Splice prediction requires a compatible species model; [model configuration](llm-providers.md) describes language-model settings separately.
 

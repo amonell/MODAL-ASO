@@ -43,7 +43,7 @@ def _setup(args):
             install_reference(species)
     if "splice" in features:
         if importlib.util.find_spec("gdown") is None:
-            raise RuntimeError('Install the splice extra first: uv sync --extra splice (source) or pip install "modal-aso[splice]" (wheel).')
+            raise RuntimeError('Install splice support with uv sync --frozen --extra splice, or reinstall your release wheel with its [splice] extra.')
         if "human" in args.species:
             from .splice_eval_assets import ensure_splicetransformer_assets
             result = ensure_splicetransformer_assets()
@@ -127,6 +127,19 @@ def _run(argv):
     _configure(args)
     if args.output_dir:
         os.environ["ASO_RUNS_DIR"] = str(args.output_dir.expanduser().resolve())
+    resume = argparse.ArgumentParser(add_help=False)
+    resume.add_argument("--agentic-state-path", type=Path)
+    saved, _ = resume.parse_known_args(remainder)
+    if saved.agentic_state_path:
+        state = json.loads(saved.agentic_state_path.expanduser().read_text())
+        run_directory = state.get("run_dir") if isinstance(state, dict) else None
+        if run_directory:
+            # A resumed request keeps its output root even from a new shell
+            # or working directory. Delegated runs stay inside that folder.
+            output_root = Path(run_directory).expanduser().resolve().parent
+            if args.output_dir and args.output_dir.expanduser().resolve() != output_root:
+                raise ValueError("A resumed request uses its existing output directory. Omit --output-dir when resuming.")
+            os.environ["ASO_RUNS_DIR"] = str(output_root)
     from .runtime_binaries import refresh_runtime_path
     refresh_runtime_path()
     os.environ.setdefault("MODAL_ASO_SKIP_RUNTIME_INSTALL", "1")
@@ -135,8 +148,9 @@ def _run(argv):
         get_provider_config()
         print("Starting MODAL-ASO...", flush=True)
     from run_goal_intake import main as run
-    run(argv=remainder)
-    return 0
+    outcome = {}
+    run(argv=remainder, result_callback=outcome.update)
+    return 0 if not outcome or outcome.get("status") in {"run_complete", "needs_user_input", "completed"} else 1
 
 
 def main(argv=None):

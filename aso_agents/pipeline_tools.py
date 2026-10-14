@@ -31961,7 +31961,8 @@ def _summary_child_design_panels(response_payload: Dict[str, Any], run_dir: str)
         if panel in seen or not panel.is_file():
             continue
         seen.add(panel)
-        content = panel.read_text(encoding="utf-8").strip()
+        from .report_presentation import read_markdown_fragment
+        content = read_markdown_fragment(panel, run_dir).strip()
         if not content:
             continue
         if not lines:
@@ -55329,7 +55330,8 @@ def tool_write_markdown_report(
         # Carry the complete native selected-panel evidence into the named
         # report. Truncating at the selection section loses the source-backed
         # placement, chemistry and off-target scope that the CSV preserves.
-        panel = Path(panel_path).read_text(encoding="utf-8").strip()
+        from .report_presentation import read_markdown_fragment
+        panel = read_markdown_fragment(panel_path, run_dir).strip()
         if panel:
             panel = panel.replace("# Candidate panel", "## Selected physical panel", 1)
             markdown_text += "\n\n" + panel

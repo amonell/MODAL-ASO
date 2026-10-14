@@ -11,6 +11,18 @@
     "bytes": 872949833,
     "sha256": "fb4243ebb014caf27111f24dd62b7ce42160f28581da6f8fcd6cba5977778d02"
   },
+  "GRCm39.primary_assembly.genome.fa": {
+    "bytes": 2773693944,
+    "sha256": "08dc6846bb559fb0f2e12e9d0a970076ee77b2cd09b57e8f58cfab206fde5033"
+  },
+  "GRCm39.primary_assembly.genome.fa.fai": {
+    "bytes": 2031,
+    "sha256": "b3503853371676c0d0f0d655ca875fd8e4aec5028c9ebbf82ab1b65a2c6e723f"
+  },
+  "GRCm39.primary_assembly.genome.fa.gz": {
+    "bytes": 773873008,
+    "sha256": "19046d5fb1ee8ab88ab3e5b5d4012677191d9c00297854475a92741b0a62d061"
+  },
   "gencode.v42.annotation.gtf": {
     "bytes": 1560832603,
     "sha256": "359c8560d291687df9deac4c8b692cd6a488e409640223ce1318707c30bd4c74"
@@ -23,6 +35,18 @@
     "bytes": 865624,
     "sha256": "c7e85a8effa6cd5069d1745868f07a3d984fd3efcf6d3dffa56e0992ab83557e"
   },
+  "gencode.vM35.metadata.RefSeq.gz": {
+    "bytes": 570075,
+    "sha256": "bbe70cd661f4a510a1a90507380c8c4b00a8b4986866dd6f0ba494223886f79f"
+  },
+  "gencode.vM35.primary_assembly.annotation.gtf": {
+    "bytes": 904107000,
+    "sha256": "1e88594d52a8b4fd0ad4d7e6466ee2fd278a189f35d1f360f438423f85ee5273"
+  },
+  "gencode.vM35.primary_assembly.annotation.gtf.gz": {
+    "bytes": 29311518,
+    "sha256": "e5a4f76880c646b39ee37bcdff7be5a8eb00ecbf8c5901954a7d54fa42e0b6fe"
+  },
   "hg38.chrom.sizes": {
     "bytes": 11672,
     "sha256": "e1d9152418038457a959e949d99c9caf7ae3e4f87cfbb4ffe7d8b9a54ba1202b"
@@ -34,5 +58,17 @@
   "hg38.phyloP30way.bw": {
     "bytes": 8400229101,
     "sha256": "c9e206b20851e9c9a7712e01cafb63728be85b3290bd86af66ffae247dd0da22"
+  },
+  "mm39.chrom.sizes": {
+    "bytes": 1350,
+    "sha256": "acd0edeab2409fe5e112444846dd89c4f8873df1f8ee4ca616aed6cf75be2a05"
+  },
+  "mm39.phastCons35way.bw": {
+    "bytes": 4567105688,
+    "sha256": "1133731a7ca61bb4ff1b8b8b90e11c27065209e6fb00a062f27f75204809238f"
+  },
+  "mm39.phyloP35way.bw": {
+    "bytes": 6119398278,
+    "sha256": "8fa5441cde6267bff61a93e83c969b4ad8950a3497dd51054960809671e99ddf"
   }
 }

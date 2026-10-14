@@ -58,6 +58,9 @@ def assets(species: str) -> list[dict]:
         item["sha256"] = checksums.get(item["name"], {}).get("sha256")
         if "extract" in item:
             item["extracted_sha256"] = checksums.get(item["extract"], {}).get("sha256")
+        if item["sha256"] and item["url"].startswith("https://ftp.ebi.ac.uk/"):
+            # Both published EBI transports serve the same checksum-pinned file.
+            item["mirror_urls"] = (item["url"].replace("https://", "http://", 1),)
     return items
 
 
@@ -169,7 +172,8 @@ def install_reference(species: str, root: Path | None = None, *, progress=print)
                 steps.append({"status": "ready", "path": str(output)})
                 continue
             packed = root / item["name"]
-            steps.append(download(item["url"], packed, expected_sha256=item.get("sha256"), kind=item.get("kind"), progress=progress))
+            steps.append(download(item["url"], packed, expected_sha256=item.get("sha256"), kind=item.get("kind"),
+                                  mirror_urls=item.get("mirror_urls", ()), progress=progress))
             if "extract" in item:
                 steps.append(decompress(packed, output, kind=item.get("extracted_kind"), expected_sha256=expected))
         validation = validate_reference(species, root)

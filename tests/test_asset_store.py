@@ -202,3 +202,25 @@ def test_interrupted_parallel_transfer_reuses_completed_ranges(server, tmp_path,
     result = store.download(url, path, expected_sha256=hashlib.sha256(payload).hexdigest())
     assert result["downloaded_bytes"] == len(payload)-reused
     assert path.read_bytes() == payload
+
+
+def test_verified_mirror_resumes_the_same_partial_file(server, tmp_path):
+    mirror, payload, state = server
+    primary = "http://127.0.0.1:1/unavailable"
+    path = tmp_path / "mirrored-asset"
+    partial = path.with_name(path.name + ".partial")
+    partial.write_bytes(payload[:4096])
+    store.atomic_json(partial.with_name(partial.name + ".json"), {"url": primary, "etag": '"fixture-one"'})
+    result = store.download(primary, path, expected_sha256=hashlib.sha256(payload).hexdigest(), mirror_urls=(mirror,))
+    assert path.read_bytes() == payload
+    assert result["downloaded_bytes"] == len(payload)-4096
+    assert state["requests"][0]["Range"] == "bytes=4096-"
+    assert store.read_receipt(path)["source"] == primary
+    assert store.read_receipt(path)["metadata"]["download_url"] == mirror
+
+
+def test_unpinned_mirror_is_rejected_before_network(server, tmp_path):
+    url, _, state = server
+    with pytest.raises(ValueError, match="pinned SHA256"):
+        store.download(url, tmp_path/'asset', mirror_urls=(url,))
+    assert state["requests"] == []
