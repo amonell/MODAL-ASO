@@ -40,7 +40,10 @@ torch.cuda.synchronize()
 print(json.dumps({'python':sys.version.split()[0], 'torch':torch.__version__,
                   'flash_attention':flash_attn.__version__, 'gpu':torch.cuda.get_device_name(0)}))
 """
-    return json.loads(subprocess.check_output([str(python), "-c", script, str(source)], text=True))
+    env = dict(os.environ, PYTHONNOUSERSITE="1")
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    return json.loads(subprocess.check_output([str(python), "-c", script, str(source)], env=env, text=True))
 
 
 def install(root=None, native_python=None):
@@ -69,9 +72,13 @@ def install(root=None, native_python=None):
             return root
         if not python.is_file():
             subprocess.run([str(native_python), "-m", "venv", str(root / "venv")], check=True)
+        legacy_link = root / "venv/lib/python3.11/site-packages/modal_runtime.pth"
+        if legacy_link.exists():
+            legacy_link.replace(legacy_link.with_suffix(".pth.disabled"))
         # Every dependency is installed here; host site-packages are never added.
         env = dict(os.environ, PIP_CACHE_DIR=str(cache_root() / "pip"), PYTHONNOUSERSITE="1")
         env.pop("PYTHONPATH", None)
+        env.pop("PYTHONHOME", None)
         subprocess.run([str(python), "-m", "pip", "install", "--require-hashes", "-r", str(requirements)], env=env, check=True)
         wheel = cache_root() / "wheels" / FLASH_NAME
         download(FLASH_WHEEL, wheel, expected_sha256=FLASH_SHA256, kind="zip")

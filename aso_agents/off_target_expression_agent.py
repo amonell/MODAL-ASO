@@ -1290,31 +1290,9 @@ def _download_file(
     chunk_size: int = 1024 * 1024,
     max_bytes: Optional[int] = None,
 ) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=CELLXGENE_TIMEOUT) as response:
-        response.raise_for_status()
-        content_length = response.headers.get("Content-Length")
-        if max_bytes is not None and content_length:
-            try:
-                if int(content_length) > max_bytes:
-                    raise RuntimeError(f"h5ad size {content_length} exceeds max_bytes {max_bytes}")
-            except ValueError:
-                pass
-        written = 0
-        try:
-            with destination.open("wb") as handle:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if not chunk:
-                        continue
-                    handle.write(chunk)
-                    if max_bytes is not None:
-                        written += len(chunk)
-                        if written > max_bytes:
-                            raise RuntimeError(f"h5ad size exceeded max_bytes {max_bytes}")
-        except Exception:
-            if destination.exists():
-                destination.unlink(missing_ok=True)
-            raise
+    del chunk_size
+    from .asset_store import download
+    download(url, destination, kind="hdf5", max_bytes=max_bytes)
 
 
 def _load_anndata(path: Path):

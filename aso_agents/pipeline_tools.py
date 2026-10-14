@@ -29218,6 +29218,15 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     }
 
 
+def _publish_generated_artifacts(structured_goal, final_payload, artifacts):
+    """Publish computed results without replacing canonical request settings."""
+    from .goal_contract import canonical_structured_goal_schema
+    request_fields = canonical_structured_goal_schema()["properties"]
+    final_payload.update(deepcopy(artifacts))
+    structured_goal.update({key: deepcopy(value) for key, value in artifacts.items()
+                            if key not in request_fields})
+
+
 def _load_generated_set_payload(path_text: Any) -> Dict[str, Any]:
     path_value = str(path_text or "").strip()
     if not path_value:
@@ -55140,8 +55149,7 @@ def tool_build_report_payload(
     existing_payload = final_payload.get("report_payload") if isinstance(final_payload.get("report_payload"), dict) else {}
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
     if generated_artifacts:
-        final_payload.update(generated_artifacts)
-        structured_goal.update(generated_artifacts)
+        _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
     report_payload = _build_report_payload_manifest(
         structured_goal=structured_goal,
         final_payload=final_payload,
@@ -55229,8 +55237,7 @@ def tool_write_markdown_report(
     structured_goal = context["structured_goal"]
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
     if generated_artifacts:
-        final_payload.update(generated_artifacts)
-        structured_goal.update(generated_artifacts)
+        _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
     report_payload = _build_report_payload_manifest(
         structured_goal=structured_goal,
         final_payload=final_payload,
@@ -55441,8 +55448,7 @@ def tool_write_aux_exports(
     # later persistence stage.
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
     if generated_artifacts:
-        final_payload.update(generated_artifacts)
-        structured_goal.update(generated_artifacts)
+        _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
         _save_goal_payload(run_dir, payload, structured_goal, final_payload)
 
     genbank_export_path = None
@@ -55585,8 +55591,7 @@ def tool_persist_run_outputs(
 
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
     if generated_artifacts:
-        final_payload.update(generated_artifacts)
-        structured_goal.update(generated_artifacts)
+        _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
         _save_goal_payload(run_dir, payload, structured_goal, final_payload)
     write_layout_manifest(run_dir)
 

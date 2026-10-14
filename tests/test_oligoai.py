@@ -302,3 +302,35 @@ def test_unsupported_profile_still_displays_the_physical_sequence(tmp_path):
     result=evaluate_candidates([row(architecture="2ome:5-10-5")],{},tmp_path,references=[reference()])
     assert SEQ in markdown_section(result)
     assert SEQ in html_section(result)
+
+
+@pytest.mark.parametrize('options', [{}, {'dosage_nm': 42, 'transfection_method': 'Gymnosis'}])
+def test_repeated_report_publication_preserves_prediction_inputs(tmp_path, options):
+    from aso_agents.pipeline_tools import _publish_generated_artifacts
+    goal = {'oligoai_evaluation': deepcopy(options)}
+    final = {}
+    for generation in range(3):
+        candidates = [row()]
+        result = evaluate_candidates(candidates, goal, tmp_path, references=[reference()], predictor=predictor)
+        assert result['status'] == 'complete'
+        assert result['predicted_count'] == 1
+        _publish_generated_artifacts(goal, final, {'oligoai_evaluation': result,
+                                                 'generated_aso_set_json': str(tmp_path/'candidates.json')})
+        assert goal['oligoai_evaluation'] == options
+        assert final['oligoai_evaluation']['predicted_count'] == 1
+        assert evaluation_conditions(goal) == result['conditions']
+        assert '73.12' in markdown_section(final['oligoai_evaluation'])
+
+
+def test_computed_artifacts_cannot_replace_any_canonical_request_field():
+    from aso_agents.pipeline_tools import _publish_generated_artifacts
+    goal = {'chemistry': {'CHEMISTRY': '5-10-5'}, 'candidate_limit': 12}
+    original = deepcopy(goal)
+    final = {}
+    artifacts = {'chemistry': {'output_summary': 'computed'}, 'candidate_limit': 4,
+                 'generated_aso_set_json': 'candidates.json'}
+    _publish_generated_artifacts(goal, final, artifacts)
+    assert goal['chemistry'] == original['chemistry']
+    assert goal['candidate_limit'] == original['candidate_limit']
+    assert goal['generated_aso_set_json'] == 'candidates.json'
+    assert final == artifacts

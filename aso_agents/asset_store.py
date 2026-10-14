@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import gzip
 from http.client import HTTPException
@@ -16,8 +17,82 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import zipfile
+import zlib
 
 from .paths import cache_root
+
+PARALLEL_THRESHOLD = 128 * 1024 * 1024
+DOWNLOAD_CONNECTIONS = 4
+
+
+class _RangeUnavailable(OSError):
+    pass
+
+
+def _parallel_transfer(url: str, partial: Path, *, offset: int, total: int,
+                       etag: str, headers: dict) -> int:
+    """Fetch disjoint ranges, then append a contiguous prefix to the partial file."""
+    staging = partial.with_name(partial.name + ".parts")
+    staging.mkdir(exist_ok=True)
+    identity = {"url": url, "etag": etag, "total": total, "offset": offset}
+    manifest = staging / "transfer.json"
+    try:
+        previous = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        previous = {}
+    if previous != identity:
+        for path in staging.iterdir():
+            if path.is_file():
+                path.unlink()
+        atomic_json(manifest, identity)
+    size = (total - offset + DOWNLOAD_CONNECTIONS - 1) // DOWNLOAD_CONNECTIONS
+    spans = [(start, min(start + size, total) - 1) for start in range(offset, total, size)]
+
+    def fetch(span):
+        start, end = span
+        target = staging / f"{start}-{end}"
+        present = target.stat().st_size if target.exists() else 0
+        if present > end - start + 1:
+            target.unlink()
+            present = 0
+        if present == end - start + 1:
+            return target, 0
+        chunk_headers = {**headers, "Range": f"bytes={start + present}-{end}", "If-Range": etag}
+        received = 0
+        with urlopen(Request(url, headers=chunk_headers), timeout=120) as response:
+            expected_range = f"bytes {start + present}-{end}/{total}"
+            if response.status != 206 or response.headers.get("Content-Range") != expected_range:
+                raise _RangeUnavailable("Server does not support the requested byte ranges")
+            if response.headers.get("ETag") != etag:
+                raise _RangeUnavailable("Asset changed during a range transfer")
+            with target.open("ab" if present else "wb") as stream:
+                while chunk := response.read(8 * 1024 * 1024):
+                    if received + len(chunk) > end - start + 1 - present:
+                        raise _RangeUnavailable("Server sent data outside the requested range")
+                    stream.write(chunk)
+                    received += len(chunk)
+                stream.flush()
+                os.fsync(stream.fileno())
+        if target.stat().st_size != end - start + 1:
+            raise OSError("Range transfer ended early")
+        return target, received
+
+    with ThreadPoolExecutor(max_workers=DOWNLOAD_CONNECTIONS) as pool:
+        completed = list(pool.map(fetch, spans))
+    if not partial.exists():
+        partial.touch()
+    if partial.stat().st_size != offset:
+        raise OSError("Partial file changed during range transfer")
+    with partial.open("ab") as output:
+        for path, _ in completed:
+            with path.open("rb") as stream:
+                shutil.copyfileobj(stream, output, 8 * 1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
+            path.unlink()
+    manifest.unlink()
+    staging.rmdir()
+    return sum(received for _, received in completed)
 
 
 def sha256(path: Path) -> str:
@@ -94,6 +169,17 @@ def validate_file(path: Path, kind: str | None = None) -> None:
         raise ValueError(f"Expected a FASTA header: {path}")
     elif kind == "bigwig" and head[:4] not in (b"\x26\xfc\x8f\x88", b"\x88\x8f\xfc\x26"):
         raise ValueError(f"Expected a bigWig file: {path}")
+    elif kind == "hdf5":
+        signature = b"\x89HDF\r\n\x1a\n"
+        found, offset = head[:8] == signature, 512
+        # HDF5 permits an optional user block before the superblock.
+        with path.open("rb") as stream:
+            while not found and offset < path.stat().st_size:
+                stream.seek(offset)
+                found = stream.read(8) == signature
+                offset *= 2
+        if not found:
+            raise ValueError(f"Expected an HDF5 file: {path}")
 
 
 def verify(path: Path, *, expected_sha256: str | None = None, full: bool = False) -> bool:
@@ -121,7 +207,8 @@ def attest(path: Path, *, source: str, expected_sha256: str | None = None,
 
 
 def download(url: str, destination: Path, *, expected_sha256: str | None = None,
-             kind: str | None = None, progress=print, attempts: int = 3) -> dict:
+             kind: str | None = None, progress=print, attempts: int = 3,
+             max_bytes: int | None = None) -> dict:
     """Reuse a verified asset; otherwise resume an incomplete transfer safely."""
     destination = Path(destination)
     with file_lock(asset_lock(destination)):
@@ -138,6 +225,7 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
         partial = destination.with_name(destination.name + ".partial")
         state_path = partial.with_name(partial.name + ".json")
         transferred = 0
+        parallel_allowed = True
         for attempt in range(attempts):
             try:
                 try:
@@ -173,17 +261,40 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
                     content_length = response.headers.get("Content-Length")
                     if content_length:
                         remaining = int(content_length)
+                        if max_bytes is not None and remaining + (offset if resumed else 0) > max_bytes:
+                            raise ValueError(f"Asset size exceeds max_bytes {max_bytes}: {destination.name}")
                         if shutil.disk_usage(destination.parent).free < remaining + 16 * 1024 * 1024:
                             raise OSError(f"Insufficient free space for {destination.name} ({remaining:,} bytes remaining)")
                     atomic_json(state_path, {"url": url, "etag": response.headers.get("ETag")})
                     received = 0
-                    with partial.open("ab" if resumed else "wb") as stream:
-                        while chunk := response.read(8 * 1024 * 1024):
-                            stream.write(chunk)
-                            received += len(chunk)
-                            transferred += len(chunk)
-                        stream.flush()
-                        os.fsync(stream.fileno())
+                    etag = response.headers.get("ETag")
+                    use_parallel = (parallel_allowed and content_length and int(content_length) >= PARALLEL_THRESHOLD
+                                    and response.headers.get("Accept-Ranges") == "bytes" and etag and not etag.startswith("W/"))
+                    if use_parallel:
+                        base = offset if resumed else 0
+                        remaining = int(content_length)
+                        if shutil.disk_usage(destination.parent).free < remaining + remaining // DOWNLOAD_CONNECTIONS + 16 * 1024 * 1024:
+                            raise OSError("Insufficient space for parallel transfer staging")
+                        response.close()
+                        if not base:
+                            partial.write_bytes(b"")
+                        progress(f"Using {DOWNLOAD_CONNECTIONS} download connections: {destination.name}")
+                        try:
+                            transferred += _parallel_transfer(url, partial, offset=base, total=base + remaining, etag=etag, headers=headers)
+                        except _RangeUnavailable:
+                            parallel_allowed = False
+                            raise
+                        received = remaining
+                    else:
+                        with partial.open("ab" if resumed else "wb") as stream:
+                            while chunk := response.read(8 * 1024 * 1024):
+                                stream.write(chunk)
+                                received += len(chunk)
+                                transferred += len(chunk)
+                                if max_bytes is not None and received + (offset if resumed else 0) > max_bytes:
+                                    raise ValueError(f"Asset size exceeds max_bytes {max_bytes}: {destination.name}")
+                            stream.flush()
+                            os.fsync(stream.fileno())
                     if content_length and received != int(content_length):
                         raise OSError("Download ended before Content-Length was received")
                 validate_file(partial, kind or ("gzip" if destination.name.endswith(".gz") else "zip" if destination.name.endswith(".zip") else None))
@@ -196,8 +307,11 @@ def download(url: str, destination: Path, *, expected_sha256: str | None = None,
                 atomic_json(receipt_path(destination), {"schema_version": 1, "source": url,
                             "sha256": actual, "fingerprint": fingerprint(destination), "metadata": {}})
                 state_path.unlink(missing_ok=True)
+                staging = partial.with_name(partial.name + ".parts")
+                if staging.is_dir():
+                    shutil.rmtree(staging)
                 return {"status": "downloaded", "path": str(destination), "downloaded_bytes": transferred}
-            except (OSError, ValueError, EOFError, HTTPException, zipfile.BadZipFile) as exc:
+            except (OSError, ValueError, EOFError, HTTPException, zipfile.BadZipFile, zlib.error) as exc:
                 if attempt + 1 == attempts:
                     raise RuntimeError(f"Could not install {destination.name}: {exc}") from exc
                 time.sleep(min(attempt + 1, 3))

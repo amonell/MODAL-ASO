@@ -56,6 +56,12 @@ jobs:
         env:
           ASO_RUN_INSTALLED_SMOKE: '1'
         run: .venv/bin/python -m pytest -q tests/integration/test_installed_runtime.py::test_packaged_tiling_from_a_directory_with_spaces
+      - name: Install pinned splice model
+        run: .venv/bin/python ci/check_splice_install.py
+      - name: Splice inference on a synthetic reference
+        env:
+          ASO_RUN_INSTALLED_SMOKE: '1'
+        run: .venv/bin/python -m pytest -q tests/integration/test_installed_runtime.py::test_released_splice_model_inference
       - name: Build and inspect wheel
         run: |
           uv build

@@ -49,7 +49,7 @@ The source directory can be read-only. It must remain accessible while the links
 
 ```bash
 modal-aso assets list --species human mouse
-modal-aso assets verify --species human mouse
+modal-aso assets verify --species human mouse --models
 ```
 
 `verify` recomputes file hashes. Normal setup uses stored hashes and file metadata to avoid repeatedly reading large files.

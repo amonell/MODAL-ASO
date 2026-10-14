@@ -313,6 +313,8 @@ def released_model_predict(inputs, directory, *, use_service=True, gpu_lock_fd=N
         env["ASO_OLIGOAI_GPU_LOCK_FD"] = str(gpu_lock_fd)
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONNOUSERSITE"] = "1"
+    env.pop("PYTHONHOME", None)
     env["TMPDIR"] = str(directory / "tmp")
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     with (directory / "stdout.txt").open("w") as stdout, (directory / "stderr.txt").open("w") as stderr:

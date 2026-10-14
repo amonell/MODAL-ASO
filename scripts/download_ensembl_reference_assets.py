@@ -106,51 +106,20 @@ def _progress(total: int, initial: int, desc: str):
 
 
 def _download(url: str, output: Path) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists() and output.stat().st_size > 0:
-        print(f"Already exists: {output}", flush=True)
-        return
-    part = output.with_suffix(output.suffix + ".part")
-    existing = part.stat().st_size if part.exists() else 0
-    headers = {"User-Agent": USER_AGENT}
-    if existing:
-        headers["Range"] = f"bytes={existing}-"
-    with requests.get(url, headers=headers, stream=True, timeout=60) as response:
-        if existing and response.status_code != 206:
-            existing = 0
-        response.raise_for_status()
-        mode = "ab" if existing else "wb"
-        content_len = int(response.headers.get("content-length") or 0)
-        total = existing + content_len if response.status_code == 206 else content_len
-        bar = _progress(total, existing, f"download {output.name}")
-        with part.open(mode) as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                handle.write(chunk)
-                if bar is not None:
-                    bar.update(len(chunk))
-        if bar is not None:
-            bar.close()
-    part.replace(output)
+    import zlib
+    from aso_agents.asset_store import download, attest, verify
+    if output.is_file() and not verify(output):
+        # Adopt a complete existing archive, then reuse its integrity record.
+        try:
+            attest(output, source=url, kind="gzip")
+        except (OSError, ValueError, EOFError, zlib.error):
+            pass
+    download(url, output, kind="gzip")
 
 
 def _gunzip(source: Path, output: Path) -> None:
-    if output.exists() and output.stat().st_size > 0:
-        print(f"Already exists: {output}", flush=True)
-        return
-    output.parent.mkdir(parents=True, exist_ok=True)
-    bar = _progress(0, 0, f"decompress {source.name}")
-    with gzip.open(source, "rb") as src, output.open("wb") as dst:
-        while True:
-            chunk = src.read(1024 * 1024)
-            if not chunk:
-                break
-            dst.write(chunk)
-            if bar is not None:
-                bar.update(len(chunk))
-    if bar is not None:
-        bar.close()
+    from aso_agents.asset_store import decompress
+    decompress(source, output, kind="fasta" if output.suffix in {".fa", ".fasta", ".fna"} else None)
 
 
 def _generate_chrom_sizes(fasta: Path, output: Path) -> int:

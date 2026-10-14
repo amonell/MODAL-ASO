@@ -80,9 +80,11 @@ def _doctor(args):
         values = inventory(species, full=args.verify)
         missing = [v for v in values if v["status"] != "verified"]
         add(species + " references", "ok" if not missing else "missing", f"{len(values) - len(missing)}/{len(values)} verified; {reference_root()}")
-    from .splice_eval_assets import missing_splicetransformer_files
-    add("SpliceTransformer", "optional" if missing_splicetransformer_files() else "ok", splice_root())
-    add("OligoAI", "ok" if (oligoai_root() / "installation.json").is_file() else "optional", oligoai_root())
+    from .model_assets import inventory as model_inventory
+    for item in model_inventory(args.species, full=args.verify):
+        add(item["name"], "ok" if item["status"] == "verified" else item["status"], item["path"])
+    import torch
+    add("Inference device", "ok", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU; OligoAI requires a supported NVIDIA GPU")
     from .llm_provider import get_provider_config
     provider = get_provider_config(require_credentials=False)
     add("LLM credentials", "ok" if provider.api_key else "missing", provider.name + " (key configured)" if provider.api_key else provider.name + " (set API key)")
@@ -93,7 +95,7 @@ def _doctor(args):
         print(f"MODAL-ASO {__version__}\n")
         for check in checks:
             print(f"{check['status'].upper():8} {check['name']}: {check['detail']}")
-    return 1 if any(c["status"] == "error" or (c["status"] == "missing" and c["name"] != "LLM credentials") for c in checks) else 0
+    return 1 if any(c["status"] in {"error", "unverified"} or (c["status"] == "missing" and c["name"] != "LLM credentials") for c in checks) else 0
 
 
 def _assets(args):
@@ -103,14 +105,17 @@ def _assets(args):
         print(json.dumps(import_reference(args.species[0], args.source), indent=2))
         return 0
     values = {s: inventory(s, full=args.action == "verify") for s in args.species}
+    if args.models:
+        from .model_assets import inventory as model_inventory
+        values["models"] = model_inventory(args.species, full=args.action == "verify")
     if args.json:
         print(json.dumps(values, indent=2))
     else:
         for species, rows in values.items():
             print(species)
             for row in rows:
-                print(f"  {row['status']:10} {row['bytes']:>14,}  {row['path']}")
-    return 1 if args.action == "verify" and any(row["status"] != "verified" for rows in values.values() for row in rows) else 0
+                print(f"  {row['status']:10} {row.get('bytes', 0):>14,}  {row['path']}")
+    return 1 if args.action == "verify" and any(row["status"] not in {"verified", "optional"} for rows in values.values() for row in rows) else 0
 
 
 def _run(argv):
@@ -128,6 +133,7 @@ def _run(argv):
     from .llm_provider import get_provider_config
     if not any(flag in remainder for flag in ("--help", "-h")):
         get_provider_config()
+        print("Starting MODAL-ASO...", flush=True)
     from run_goal_intake import main as run
     run(argv=remainder)
     return 0
@@ -164,6 +170,7 @@ def main(argv=None):
                 action.add_argument("source", type=Path, help="Existing reference directory")
             else:
                 action.add_argument("--json", action="store_true")
+                action.add_argument("--models", action="store_true", help="Include installed model sources and checkpoints")
             action.set_defaults(func=_assets)
         args = parser.parse_args(argv)
         if not hasattr(args, "func"):

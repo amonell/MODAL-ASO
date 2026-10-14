@@ -21208,16 +21208,8 @@ def _configured_targetscan_path(kind: str) -> Optional[Path]:
 
 
 def _download_targetscan_file(url: str, output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    headers = {"User-Agent": os.environ.get("HTTP_USER_AGENT", "aso-agent/0.1 (+https://example.org)")}
-    with requests.get(url, headers=headers, stream=True, timeout=120) as resp:
-        resp.raise_for_status()
-        with open(tmp_path, "wb") as handle:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-    tmp_path.replace(output_path)
+    from aso_agents.asset_store import download
+    download(url, output_path, kind="zip" if output_path.suffix == ".zip" else None)
 
 
 def _ensure_targetscan_data_file(kind: str, run_dir: str, release: Optional[str] = None) -> Path:
@@ -21231,9 +21223,16 @@ def _ensure_targetscan_data_file(kind: str, run_dir: str, release: Optional[str]
     if not filename:
         raise ValueError(f"unsupported_targetscan_file_kind:{kind}")
     cache_path = _targetscan_cache_dir(run_dir) / release_key / filename
-    if cache_path.exists():
+    from aso_agents.asset_store import attest, verify
+    url = _targetscan_release_url(kind, release_key)
+    if cache_path.exists() and not verify(cache_path):
+        try:
+            attest(cache_path, source=url, kind="zip" if cache_path.suffix == ".zip" else None)
+        except (OSError, ValueError, EOFError, zipfile.BadZipFile):
+            pass
+    if verify(cache_path):
         return cache_path
-    _download_targetscan_file(_targetscan_release_url(kind, release_key), cache_path)
+    _download_targetscan_file(url, cache_path)
     return cache_path
 
 
