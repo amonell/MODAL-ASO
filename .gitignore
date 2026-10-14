@@ -1,0 +1,27 @@
+# Environments and build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.key
+
+# Generated runs and local data
+/runs/
+/data/
+/cache/
+/.runtime/
+*.log
+.DS_Store

@@ -1,0 +1,341 @@
+"""Bounded execution and artifact verification for generated data analyses."""
+from __future__ import annotations
+
+import ast
+import csv
+import json
+import hashlib
+import shutil
+import tempfile
+from pathlib import Path
+import subprocess
+import sys
+from typing import Callable
+
+
+def _inexact_decimal_boundary_lines(code: str) -> list[int]:
+    """Find strict numeric gates built from binary floats and decimal literals.
+
+    This is a conservative syntax-level guard, independent of column names,
+    threshold values, gene names and requested outcome. It covers both a
+    fraction computed with ``/`` and a decimal parsed with ``float``. A
+    generated program can instead compare ``Fraction`` or ``Decimal`` values
+    formed from the source strings, then format them for display afterwards.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+
+    def scope_nodes(root: ast.AST):
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            yield node
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                    continue
+                stack.append(child)
+
+    scopes = [tree, *(node for node in ast.walk(tree)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)))]
+    lines: set[int] = set()
+    for scope in scopes:
+        assignments: dict[str, list[ast.AST]] = {}
+        nodes = list(scope_nodes(scope))
+        for node in nodes:
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                targets = (node.targets if isinstance(node, ast.Assign)
+                           else [node.target])
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        assignments.setdefault(target.id, []).append(node.value)
+
+        def contains(node: ast.AST, *, decimal_literal: bool, seen: frozenset[str] = frozenset()) -> bool:
+            if isinstance(node, ast.Name) and node.id in assignments and node.id not in seen:
+                return any(contains(value, decimal_literal=decimal_literal, seen=seen | {node.id})
+                           for value in assignments[node.id])
+            if decimal_literal:
+                if isinstance(node, ast.Constant) and isinstance(node.value, float):
+                    return not node.value.is_integer()
+            else:
+                if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                    return True
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "float":
+                    return True
+            return any(contains(child, decimal_literal=decimal_literal, seen=seen)
+                       for child in ast.iter_child_nodes(node))
+
+        for node in nodes:
+            if not isinstance(node, ast.Compare):
+                continue
+            if not any(isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)) for op in node.ops):
+                continue
+            operands = [node.left, *node.comparators]
+            if any(contains(item, decimal_literal=True) for item in operands) and any(
+                contains(item, decimal_literal=False) for item in operands
+            ):
+                lines.add(node.lineno)
+    return sorted(lines)
+
+
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    """Identify a regular file written in this attempt; never follow aliases."""
+    if path.is_symlink() or not path.is_file():
+        return None
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _promote_same_named_exports(
+    directory: Path, required_outputs: list[Path], before: dict[Path, tuple[int, int] | None],
+) -> list[tuple[Path, Path]]:
+    """Deliver only fresh, unambiguous files saved in conventional work locations.
+
+    A generated program may use the declared export's basename relative to its
+    working directory or its output/ subdirectory. The requested absolute path
+    remains authoritative. No renamed, stale, multiply written, symlinked or
+    already delivered file is substituted.
+    """
+    names = [path.name for path in required_outputs]
+    promoted = []
+    for output in required_outputs:
+        if names.count(output.name) != 1 or output.exists():
+            continue
+        candidates = [directory / output.name, directory / "output" / output.name]
+        fresh = [source for source in candidates
+                 if source != output
+                 and not source.parent.is_symlink()
+                 and (signature := _file_signature(source)) is not None
+                 and signature != before.get(source)]
+        if len(fresh) != 1:
+            continue
+        source = fresh[0]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+        try:
+            shutil.copyfile(source, temporary)
+            temporary.replace(output)
+        finally:
+            temporary.unlink(missing_ok=True)
+        promoted.append((source, output))
+    return promoted
+
+
+def _validate_completed_evaluation_export_rows(payload: dict, required_outputs: list[Path]) -> None:
+    """Do not accept header-only exports of completed physical evaluations.
+
+    The native evaluator supplies a structured molecule count to the final
+    output writer. If that count is positive, an all-empty set of requested
+    tables is a delivery failure, even when every file exists and a generated
+    program exits successfully. The writer can repair its source traversal on
+    the next attempt; no observations or rows are synthesized here.
+    """
+    if payload.get("operation") != "render_requested_outputs":
+        return
+    declared = payload.get("declared_inputs")
+    completed = declared.get("completed_run") if isinstance(declared, dict) else None
+    evidence = completed.get("evaluation_evidence") if isinstance(completed, dict) else None
+    source_rows = sum(
+        entry["total_rows"] for entry in evidence or []
+        if isinstance(entry, dict) and type(entry.get("total_rows")) is int
+        and entry["total_rows"] > 0
+    )
+    if not source_rows:
+        return
+    tables = [path for path in required_outputs if path.suffix.lower() in {".csv", ".tsv"}]
+    if not tables:
+        return
+    exported_rows = []
+    for path in tables:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.reader(handle, delimiter="\t" if path.suffix.lower() == ".tsv" else ",")
+            next(reader, None)
+            exported_rows.append(sum(1 for row in reader if any(value.strip() for value in row)))
+    if not any(exported_rows):
+        raise ValueError(
+            "All requested CSV/TSV exports contain zero data rows, although "
+            f"completed native evaluation evidence contains {source_rows} physical molecule rows. "
+            "Read the declared completed_run.evaluation_evidence rows or its source_json_path, "
+            "then write a source-grounded table; do not treat a header-only file as complete."
+        )
+
+
+def execute_analysis_program(
+    *, directory: Path, payload: dict, generate: Callable[[dict], dict],
+    required_outputs: list[Path], timeout_seconds: int | None = None, max_attempts: int = 3,
+    readonly_outputs: list[Path] | None = None,
+    source_tables: list[Path] | None = None,
+    validate_result: Callable[[dict], None] | None = None,
+) -> dict:
+    """Repair execution/serialization faults without substituting scientific data.
+
+    Every generated program and error stays on disk. Success requires a valid
+    result, an actual summary and all explicitly requested files. An exit-zero
+    program that only promises files is incomplete.
+    """
+    directory = directory.resolve()
+    required_outputs = [path.resolve() for path in required_outputs]
+    readonly_outputs = [path.resolve() for path in (readonly_outputs or [])]
+    source_tables = [path.resolve() for path in (source_tables or [])]
+    if not set(source_tables).issubset(readonly_outputs):
+        raise ValueError('Report source tables must be protected read-only inputs')
+    directory.mkdir(parents=True, exist_ok=True)
+    result_path, summary_path = directory / 'sandbox_result.json', directory / 'sandbox_summary.md'
+    errors, attempts = [], []
+    request = dict(payload)
+    request['requested_output_paths'] = [str(p) for p in required_outputs]
+    request['readonly_output_paths'] = [str(p) for p in readonly_outputs]
+    execution_contract = {'working_directory': str(directory),
+        'result_json': str(result_path), 'summary_markdown': str(summary_path),
+        'required_output_files': [str(p) for p in [result_path, summary_path, *required_outputs]],
+        'relative_path_base': str(directory), 'readonly_output_files': [str(p) for p in readonly_outputs],
+        'report_source_tables': [str(p) for p in source_tables]}
+    request['execution_contract'] = execution_contract
+    previous = [int(p.name) for p in (directory / "execution_attempts").glob("*") if p.is_dir() and p.name.isdigit()]
+    offset = max(previous, default=0)
+    for attempt in range(offset + 1, offset + max_attempts + 1):
+        local = directory / 'execution_attempts' / f'{attempt:02d}'
+        local.mkdir(parents=True, exist_ok=False)
+        protected = {}
+        for index, path in enumerate(readonly_outputs):
+            backup = local / 'preserved_outputs' / str(index)
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup)
+            protected[path] = backup
+        plan = generate(request)
+        code = str(plan.get('python_code') or '').strip()
+        (local / 'plan.json').write_text(json.dumps(plan, indent=2))
+        code_path = directory / 'generated_code.py'
+        code_path.write_text(code)
+        (local / 'generated_code.py').write_text(code)
+        # Do not accept stale outputs from a failed preceding attempt.
+        before = {str(p): (p.stat().st_mtime_ns, p.stat().st_size) for p in
+                  [result_path, summary_path, *required_outputs] if p.is_file()}
+        same_named_before = {
+            source: _file_signature(source)
+            for path in required_outputs
+            for source in (directory / path.name, directory / "output" / path.name)
+        }
+        stdout = stderr = ''
+        exit_code = 1
+        promoted: list[tuple[Path, Path]] = []
+        try:
+            if not code:
+                raise ValueError('No executable analysis program was returned')
+            inexact_lines = _inexact_decimal_boundary_lines(code)
+            if inexact_lines:
+                raise ValueError(
+                    'Inexact decimal-boundary comparison at generated code lines '
+                    + ', '.join(map(str, inexact_lines))
+                    + '. Retain source decimal strings and integer counts as '
+                    'Decimal or Fraction through every threshold comparison; '
+                    'convert only for final display or serialization.'
+                )
+            diagnostic_path = local / "runtime_error.json"
+            process = subprocess.run([sys.executable, str(Path(__file__).with_name("analysis_runtime.py")),
+                str(code_path.resolve()), str(diagnostic_path.resolve())], cwd=directory,
+                capture_output=True, text=True, timeout=timeout_seconds)
+            stdout, stderr, exit_code = process.stdout, process.stderr, process.returncode
+            if exit_code:
+                raise ValueError(f'Analysis program exited {exit_code}: {stderr[-6000:]}')
+            # Require a real result and summary before moving same-named
+            # working-directory exports to their declared delivery paths.
+            if result_path.is_file() and summary_path.is_file():
+                preview = json.loads(result_path.read_text())
+                if isinstance(preview, dict) and summary_path.read_text().strip():
+                    promoted = _promote_same_named_exports(directory, required_outputs, same_named_before)
+            missing = [str(p) for p in [result_path, summary_path, *required_outputs] if not p.is_file()]
+            if missing:
+                raise ValueError('Requested output files were not created: ' + ', '.join(missing))
+            stale = [str(p) for p in [result_path, summary_path, *required_outputs]
+                     if str(p) in before and before[str(p)] == (p.stat().st_mtime_ns, p.stat().st_size)]
+            if stale:
+                raise ValueError('The current attempt did not produce its output files: ' + ', '.join(stale))
+            result = json.loads(result_path.read_text())
+            if not isinstance(result, dict):
+                raise ValueError('sandbox_result.json must contain an object')
+            if validate_result is not None:
+                validate_result(result)
+            from .tabular_reports import render_report_tables
+            render_report_tables(result, required_outputs, summary_path,
+                                 required=bool(payload.get('require_tabular_report_views')),
+                                 source_tables=source_tables)
+            _validate_completed_evaluation_export_rows(payload, required_outputs)
+            if result.get('report_table_rendering'):
+                result_path.write_text(json.dumps(result, indent=2))
+            summary = summary_path.read_text().strip()
+            if not summary:
+                raise ValueError('Analysis summary is empty')
+            error = None
+        except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+            error = f'{type(exc).__name__}: {exc}'
+            for _, output in promoted:
+                output.unlink(missing_ok=True)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                exit_code = 124
+                stdout = exc.stdout or ''
+                stderr = exc.stderr or ''
+                stdout = stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout
+                stderr = stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr
+            result, summary = {}, ''
+        changed_readonly = []
+        def file_digest(path):
+            digest = hashlib.sha256()
+            with path.open('rb') as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b''):
+                    digest.update(block)
+            return digest.hexdigest()
+        for index, (path, backup) in enumerate(protected.items()):
+            try:
+                changed = path.is_symlink() or not path.is_file() or file_digest(path) != file_digest(backup)
+            except OSError:
+                changed = True
+            if changed:
+                changed_readonly.append(str(path))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.is_dir() and not path.is_symlink():
+                    shutil.move(str(path), str(local / f'rejected_output_directory_{index}'))
+                with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+                    restored = Path(handle.name)
+                shutil.copy2(backup, restored)
+                restored.replace(path)
+        if changed_readonly:
+            error = (error + '; ' if error else '') + 'Modified previously delivered files; original contents restored: ' + ', '.join(changed_readonly)
+            for _, output in promoted:
+                output.unlink(missing_ok=True)
+            result, summary = {}, ''
+        for name, text in [('stdout.log', stdout), ('stderr.log', stderr)]:
+            (local / name).write_text(text)
+            (directory / name).write_text(text)
+        diagnostic_path = local / "runtime_error.json"
+        diagnostics = json.loads(diagnostic_path.read_text()) if diagnostic_path.is_file() else {}
+        receipt = {'attempt':attempt, 'exit_code':exit_code, 'error':error,
+                   'code_sha256': hashlib.sha256(code.encode()).hexdigest(),
+                   'runtime_diagnostics': diagnostics,
+                   'required_outputs':[str(p) for p in required_outputs]}
+        if promoted:
+            receipt['promoted_same_named_exports'] = [
+                {'source': str(source), 'requested_output': str(output)} for source, output in promoted]
+        if readonly_outputs:
+            receipt['readonly_outputs'] = [str(p) for p in readonly_outputs]
+            receipt['restored_output_paths'] = changed_readonly
+        if error:
+            receipt['workspace_files'] = [str(path.relative_to(directory)) for path in sorted(directory.rglob('*'))
+                if path.is_file() and not path.is_symlink()
+                and path.relative_to(directory).parts[0] != 'execution_attempts'][:200]
+        (local / 'execution.json').write_text(json.dumps(receipt, indent=2))
+        attempts.append(receipt)
+        if error is None:
+            return {'ok':True, 'plan':plan, 'result':result, 'summary':summary,
+                    'exit_code':0, 'attempts':attempts}
+        errors.append(error)
+        request = {**payload, 'requested_output_paths':[str(p) for p in required_outputs],
+                   'readonly_output_paths': [str(p) for p in readonly_outputs],
+                   'execution_contract': execution_contract,
+                   'execution_repair':{'previous_code':code, 'previous_plan':plan, 'error':error,
+                       'runtime_diagnostics': diagnostics, 'previous_attempts': list(attempts),
+                       'instruction':'Repair the program and create the requested files using only the same declared inputs. Do not invent missing data or change the requested scientific criteria.'}}
+    return {'ok':False, 'plan':plan, 'result':{}, 'summary':'', 'exit_code':exit_code,
+            'error':errors[-1], 'attempts':attempts}

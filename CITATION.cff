@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "Please cite the version of MODAL-ASO used in your work."
+title: "MODAL-ASO: Multi-mechanism Orchestration and Design by an Agentic LLM"
+type: software
+version: 0.1.0
+license: GPL-3.0-only
+repository-code: "https://github.com/amonell/MODAL-ASO"
+authors:
+  - name: "MODAL-ASO contributors"

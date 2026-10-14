@@ -1,0 +1,10 @@
+torch==2.6.0
+numpy==1.26.4
+scipy==1.15.3
+pandas==2.2.3
+lightning==2.2.5
+pytorch-lightning==2.2.5
+torchmetrics==1.2.1
+ml-collections==0.1.1
+einops==0.8.1
+setuptools==80.9.0

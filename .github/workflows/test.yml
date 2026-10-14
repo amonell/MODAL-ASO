@@ -1,0 +1,99 @@
+name: Test and install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: ${{ matrix.os }} / Python 3.11
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    env:
+      OPENAI_API_KEY: test-only
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.13.1
+          enable-cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Configure persistent storage
+        shell: bash
+        run: |
+          printf '%s\n' "MODAL_ASO_DATA_DIR=$RUNNER_TEMP/modal-aso-data" "MODAL_ASO_CACHE_DIR=$RUNNER_TEMP/modal-aso-cache" "MODAL_ASO_CONFIG_FILE=$RUNNER_TEMP/modal-aso-config.json" >> "$GITHUB_ENV"
+      - name: Test prerequisites
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential zlib1g-dev libbz2-dev liblzma-dev libffi-dev poppler-utils
+          else
+            brew install poppler
+          fi
+      - name: Install locked environment
+        run: uv sync --frozen --extra splice --extra dev
+      - name: Install reusable native tools
+        run: .venv/bin/modal-aso setup --features tools
+      - name: Verify warm setup without network access
+        run: .venv/bin/python ci/check_warm_tools.py
+      - name: Regressions
+        run: .venv/bin/python -m pytest -q --junitxml=test-results.xml
+      - name: Packaged native workflow
+        env:
+          ASO_RUN_INSTALLED_SMOKE: '1'
+        run: .venv/bin/python -m pytest -q tests/integration/test_installed_runtime.py::test_packaged_tiling_from_a_directory_with_spaces
+      - name: Build and inspect wheel
+        run: |
+          uv build
+          .venv/bin/python ci/check_release_files.py dist
+      - name: Install wheel outside checkout
+        shell: bash
+        run: |
+          wheel_env="$RUNNER_TEMP/wheel-env"
+          uv venv --python 3.11 "$wheel_env"
+          uv export --frozen --extra splice --no-dev --no-emit-project --output-file "$RUNNER_TEMP/constraints.txt"
+          uv pip install --python "$wheel_env/bin/python" --constraint "$RUNNER_TEMP/constraints.txt" "./dist/modal_aso-0.1.0-py3-none-any.whl[splice]"
+          cd "$RUNNER_TEMP"
+          "$wheel_env/bin/modal-aso" --help
+          "$wheel_env/bin/python" "$GITHUB_WORKSPACE/ci/check_installed_package.py" --source-root "$GITHUB_WORKSPACE"
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: results-${{ matrix.os }}
+          path: test-results.xml
+
+  wsl:
+    name: Windows / WSL2 Ubuntu
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Ubuntu in WSL2
+        shell: pwsh
+        run: |
+          wsl --version
+          wsl --install --distribution Ubuntu-24.04 --web-download --no-launch
+          if ($LASTEXITCODE -ne 0) { throw "WSL installation failed" }
+          wsl --list --verbose
+      - name: Clean installation inside WSL2
+        shell: pwsh
+        run: |
+          $linuxSource = (wsl --distribution Ubuntu-24.04 --user root --exec wslpath -a '${{ github.workspace }}').Trim()
+          wsl --distribution Ubuntu-24.04 --user root --cd "$linuxSource" --exec bash ci/wsl-install-smoke.sh
+          if ($LASTEXITCODE -ne 0) { throw "WSL installation check failed" }
