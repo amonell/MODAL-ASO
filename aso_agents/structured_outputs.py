@@ -507,6 +507,7 @@ GOAL_CONTRACT_AUDIT_OUTPUT_SCHEMA: Dict[str, Any] = {
         },
         "patches": {
             "type": "array",
+            "uniqueItems": True,
             "items": {
                 "type": "object",
                 "properties": {

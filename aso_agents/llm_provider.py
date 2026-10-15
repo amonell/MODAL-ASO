@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from openai import OpenAI
 
+from aso_agents.structured_stream import consume_guarded_response, root_array_constraints
 from aso_agents.resource_limits import acquire_resource, defer_resource, scoped_resource_name
 from aso_agents.llm_transport import (
     TransportRetryPolicy,
@@ -581,6 +582,7 @@ def create_response(
         # provider-wide cooldown instead of multiplying hidden SDK retries.
         resolved_config = replace(resolved_config, max_retries=0)
     prepared, attribution = prepare_responses_payload(payload, resolved_config)
+    stream_constraints = root_array_constraints(payload)
 
     if not resolved_config.api_key.strip():
         credential_name = _credential_variable(resolved_config.name)
@@ -622,7 +624,13 @@ def create_response(
             call_prepared = copy.deepcopy(prepared)
             instrument_openrouter_request(call_prepared, pending_call)
             try:
-                response = client.responses.create(**call_prepared)
+                if stream_constraints:
+                    call_prepared["stream"] = True
+                    response = consume_guarded_response(
+                        client.responses.create(**call_prepared), stream_constraints,
+                    )
+                else:
+                    response = client.responses.create(**call_prepared)
             except Exception as exc:
                 details = transport_error_details(exc)
                 delay = retry_policy.delay(attempt, details) if retry_policy.retries else 0.0

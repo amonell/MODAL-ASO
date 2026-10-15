@@ -347,6 +347,7 @@ goal_contract_audit_agent = Agent(
         CANONICAL_DESIGN_GOAL_INSTRUCTIONS
         + "Audit a proposed V3 request envelope against the supplied evidence sources.\n"
         "Return only the compact audit object required by the response schema. Always include patches, goal_replacements, field_dispositions, and unresolved arrays; use empty arrays when a channel is unused. Never reproduce or summarize the request envelope.\n"
+        "Emit each necessary patch exactly once. Repeated patches are invalid; do not fill the audit with repeated defaults or re-audit patches you have just proposed.\n"
         "Use status='valid' only when the complete request is represented canonically and no patch or clarification is needed. "
         "Use status='repairable' when evidence supports one or more goal replacements, exact JSON Pointer patches, or field dispositions. "
         "Use status='needs_clarification' only when required information is absent from every supplied evidence source.\n"

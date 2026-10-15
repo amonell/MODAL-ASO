@@ -514,6 +514,21 @@ class Runner:
 
             status = data.get("status")
             if status == "incomplete":
+                rejection = data.get("structured_output_rejection")
+                if (
+                    (data.get("incomplete_details") or {}).get("reason") == "invalid_structured_output"
+                    and isinstance(rejection, dict)
+                ):
+                    return _RunResult(final_output={
+                        "error": "invalid_structured_output",
+                        "reason": (
+                            f"Array {rejection.get('property')!r} violated "
+                            f"{rejection.get('keyword')} at item {rejection.get('item_index')}. "
+                            "Generation stopped; emit a complete JSON object with only "
+                            "distinct necessary entries within its schema limits."
+                        ),
+                        "structured_output_rejection": rejection,
+                    }, responses=response_history[:])
                 return _RunResult(final_output={
                     "error": "incomplete_response",
                     "status": status,
