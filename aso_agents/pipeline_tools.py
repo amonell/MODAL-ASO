@@ -15715,6 +15715,49 @@ def _executor_capability_issues(
                 if name in tasks_by_id:
                     pending.append(name)
         return False
+
+    # A missing file cannot be both a task's input and its own future output.
+    # Compare explicit absolute paths only: relative inputs and outputs use
+    # different runtime roots, which are not available during graph planning.
+    # Existing files permit in-place analysis, and a declared ancestor producer
+    # can make the same path available before this task runs.
+    def absolute_declared_path(value: Any) -> Optional[Path]:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value.strip()).expanduser()
+        return Path(os.path.normpath(str(path))) if path.is_absolute() else None
+
+    producers_by_path: Dict[Path, Set[str]] = {}
+    for output in request_envelope.get("final_outputs") or []:
+        if not isinstance(output, dict):
+            continue
+        path = absolute_declared_path(output.get("path"))
+        producer = str(output.get("task_id") or "").strip()
+        if path is not None and producer in tasks_by_id:
+            producers_by_path.setdefault(path, set()).add(producer)
+    for index, task in enumerate(request_envelope.get("tasks") or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("task_id") or "").strip()
+        context = task.get("context") if isinstance(task.get("context"), dict) else {}
+        for field in ("artifact_refs", "provided_aso_files"):
+            for ref_index, ref in enumerate(context.get(field) or []):
+                path = absolute_declared_path(ref.get("path") if isinstance(ref, dict) else ref)
+                producers = producers_by_path.get(path, set())
+                if (path is None or task_id not in producers or path.is_file()
+                        or consumes_upstream(task_id, producers - {task_id})):
+                    continue
+                issues.append({
+                    "category": "wrong_dependency",
+                    "task_ids": [task_id],
+                    "path": f"/tasks/{index}/context/{field}/{ref_index}",
+                    "reason": f"The input {path} does not exist and is declared as this task's "
+                              "own output, with no earlier producer at that path. Consume the "
+                              "recorded artifacts of an explicitly connected upstream task, "
+                              "or declare an upstream operation that creates the input before "
+                              "this task runs. Keep the requested calculation and final output; "
+                              "do not invent placeholder source records or future input paths.",
+                })
     classifications = {
         str(item).strip().casefold().replace(" ", "_")
         for item in request_envelope.get("request_classifications") or []

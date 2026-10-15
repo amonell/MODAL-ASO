@@ -368,7 +368,7 @@ REQUEST_WORKBENCH_OUTPUT_SCHEMA: Dict[str, Any] = {
                                     "source_artifact": {
                                         "type": ["string", "null"],
                                         "enum": [None, *NATIVE_EXPORT_FORMATS],
-                                        "description": "Existing native output of task_id to export unchanged. Use design_panel_csv for the selected candidate table, generated_aso_set_json for full candidate evidence, or report_md/report_html for its completed report. Null means a custom transformation rather than a native artifact export.",
+                                        "description": "Existing native output of task_id to export unchanged. Use design_panel_csv for the selected candidate table, generated_aso_set_json for full candidate evidence, or report_md/report_html for its completed report only when its existing contents satisfy the requested output. This role does not add requested calculations or annotations. When custom content is required, use null with kind=file and describe the required transformation, or bind an explicit analysis task that produces it. Ordinary native fields do not require a custom transformation.",
                                     },
                                     "source_scope": {
                                         "type": ["object", "null"],
