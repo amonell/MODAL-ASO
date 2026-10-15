@@ -264,6 +264,8 @@ def execute_analysis_program(
                 raise ValueError('No executable analysis program was returned')
             from .analysis_dependencies import validate_program_dependencies
             validate_program_dependencies(code)
+            from .analysis_control_flow import validate_program_control_flow
+            validate_program_control_flow(code)
             inexact_lines = _inexact_decimal_boundary_lines(code)
             if inexact_lines:
                 raise ValueError(
