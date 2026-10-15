@@ -1010,6 +1010,7 @@ def _region_constraint_entry_requests_localization(entry: Dict[str, Any]) -> boo
         "miRNAs",
         "mirna_family_or_id",
         "miRNA_family_or_id",
+        "splice_relative_window",
         "rows",
         "bed_rows",
         "genomic_rows",
@@ -1074,12 +1075,12 @@ def _site_constraint_coordinates_required(structured_goal: Dict[str, Any]) -> bo
 
     raw_constraints = structured_goal.get("region_constraints")
     if isinstance(raw_constraints, list) and raw_constraints:
-        normalized_constraints = _normalize_region_constraints(raw_constraints)
+        normalized_constraints = _normalize_region_constraints(raw_constraints, context=structured_goal)
         for entry in raw_constraints:
             if (
                 isinstance(entry, dict)
                 and _region_constraint_entry_requests_localization(entry)
-                and not _normalize_region_constraints([entry])
+                and not _normalize_region_constraints([entry], context=structured_goal)
             ):
                 return True
         if any(_motif_constraint_request_unresolved(entry) for entry in normalized_constraints):
@@ -1089,12 +1090,12 @@ def _site_constraint_coordinates_required(structured_goal: Dict[str, Any]) -> bo
         raw_program_constraints = program.get("region_constraints")
         if not isinstance(raw_program_constraints, list) or not raw_program_constraints:
             continue
-        normalized_program_constraints = _normalize_region_constraints(raw_program_constraints)
+        normalized_program_constraints = _normalize_region_constraints(raw_program_constraints, context=program)
         for entry in raw_program_constraints:
             if (
                 isinstance(entry, dict)
                 and _region_constraint_entry_requests_localization(entry)
-                and not _normalize_region_constraints([entry])
+                and not _normalize_region_constraints([entry], context=program)
             ):
                 return True
         if any(_motif_constraint_request_unresolved(entry) for entry in normalized_program_constraints):
@@ -4366,7 +4367,9 @@ def _splice_relative_window_from_constraint_text(entry: Dict[str, Any]) -> Optio
     return normalized
 
 
-def _normalize_region_constraints(value: Any) -> List[Dict[str, Any]]:
+def _normalize_region_constraints(
+    value: Any, *, context: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     from aso_agents.region_overlap import normalize_constraint_operator
     if not isinstance(value, list):
         return []
@@ -4374,6 +4377,21 @@ def _normalize_region_constraints(value: Any) -> List[Dict[str, Any]]:
     for idx, entry in enumerate(value, start=1):
         if not isinstance(entry, dict):
             continue
+        window = entry.get("splice_relative_window")
+        if (isinstance(window, dict) and isinstance(context, dict)
+                and not any(obj.get(key) not in (None, "", [], {})
+                            for obj in (window, entry)
+                            for key in ("exon_label", "junction_exon_label", "target_exon", "exon", "exon_number"))):
+            # A typed relative window can inherit its containing scope's one
+            # explicit exon. Do not infer a window from an outcome, prose or
+            # sibling program, and do not choose among multiple exon labels.
+            labels = list(context.get("exon_labels") or []) if isinstance(context.get("exon_labels"), list) else []
+            if context.get("exon_label") not in (None, "", [], {}):
+                labels.append(context["exon_label"])
+            resolved = [_coerce_standard_exon_constraint_label(label) for label in labels]
+            if resolved and all(label is not None for label in resolved) and len(set(resolved)) == 1:
+                entry = deepcopy(entry)
+                entry["splice_relative_window"]["exon_label"] = resolved[0]
         norm: Dict[str, Any] = {}
         constraint_id = str(entry.get("constraint_id") or entry.get("id") or f"constraint_{idx:02d}").strip()
         norm["constraint_id"] = constraint_id
@@ -4684,7 +4702,7 @@ def _normalize_region_constraints_in_goal(structured_goal: Optional[Dict[str, An
             and not entry.get("rows")
         )
 
-    top_level = _normalize_region_constraints(structured_goal.get("region_constraints"))
+    top_level = _normalize_region_constraints(structured_goal.get("region_constraints"), context=structured_goal)
     # The empty interval can be evidence for a typed-exon recovery when no
     # region was resolved. Once concrete region rows exist, it has no target
     # content and must not act as a second, empty filter over those rows.
@@ -4735,7 +4753,7 @@ def _normalize_region_constraints_in_goal(structured_goal: Optional[Dict[str, An
     for program in raw_programs:
         if not isinstance(program, dict):
             continue
-        program_constraints = _normalize_region_constraints(program.get("region_constraints"))
+        program_constraints = _normalize_region_constraints(program.get("region_constraints"), context=program)
         if _normalize_region_rows(program.get("region_rows")):
             program_constraints = [
                 entry for entry in program_constraints if not _empty_explicit_placeholder(entry)
@@ -20885,7 +20903,7 @@ def _constraint_fingerprint(entry: Dict[str, Any]) -> Tuple[Any, ...]:
 def _goal_region_constraints(structured_goal: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(structured_goal, dict):
         return []
-    constraints = _normalize_region_constraints(structured_goal.get("region_constraints"))
+    constraints = _normalize_region_constraints(structured_goal.get("region_constraints"), context=structured_goal)
     default_overlap_requirement = _normalize_aso_overlap_requirement(
         structured_goal.get("aso_overlap_requirement")
     )
@@ -21019,13 +21037,13 @@ def _named_motif_splice_relative_constraints(structured_goal: Dict[str, Any]) ->
         if relative_window.get("reference_transcript_id"):
             constraint["exon_numbering_transcript_id"] = relative_window.get("reference_transcript_id")
         constraints.append(constraint)
-    return _normalize_region_constraints(constraints)
+    return _normalize_region_constraints(constraints, context=structured_goal)
 
 
 def _program_region_constraints(program: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(program, dict):
         return []
-    return _normalize_region_constraints(program.get("region_constraints"))
+    return _normalize_region_constraints(program.get("region_constraints"), context=program)
 
 
 def _normalize_rbp_assay(value: Any) -> str:
