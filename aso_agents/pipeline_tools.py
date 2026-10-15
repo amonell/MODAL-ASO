@@ -28607,27 +28607,9 @@ def _compact_existing_aso_evaluation_for_response(payload: Dict[str, Any]) -> Di
                 if orientation.get(key) not in (None, "", [], {})
             }
             or None,
-            "splice_eval_summary": {
-                key: splice_eval.get(key)
-                for key in (
-                    "delta_inclusion_deletion",
-                    "delta_inclusion_replacement",
-                    "delta_names",
-                    "delta_deletion",
-                    "delta_replacement",
-                    "shared_context_label",
-                    "shared_context_delta",
-                    "splice_eval_status",
-                    "splice_eval_skip_reason",
-                    "nearest_splice_site_label",
-                    "nearest_splice_site_kind",
-                    "nearest_splice_site_distance_bp",
-                    "nearest_splice_site_position",
-                    "site_search_scope",
-                )
-                if splice_eval.get(key) not in (None, "", [], {})
-            }
-            or None,
+            # Site identity and explicit missing values are part of the
+            # measurement. Lossless prompt encoding handles repeated records.
+            "splice_eval_summary": deepcopy(splice_eval) or None,
             "stage_statuses": stage_statuses or None,
             "near_match_skipped_reason": row.get("near_match_skipped_reason"),
             "off_target_genes": row.get("Off_target_genes") or row.get("off_target_genes"),
@@ -31532,11 +31514,13 @@ def _summary_row_has_splice_score(row: Dict[str, Any]) -> bool:
 
 
 def _summary_row_skip_delta(row: Dict[str, Any]) -> Optional[float]:
-    values = [_summary_splice_delta(row, key) for key in _SPLICE_DELTA_KEYS]
-    present = [value for value in values if value is not None]
-    if not present:
-        return None
-    return min(present)
+    return _summary_row_skip_measurement(row)[1]
+
+
+def _summary_row_skip_measurement(row: Dict[str, Any]) -> Tuple[Optional[str], Optional[float]]:
+    present = [(key, _summary_splice_delta(row, key)) for key in _SPLICE_DELTA_KEYS]
+    present = [(key, value) for key, value in present if value is not None]
+    return min(present, key=lambda item: item[1]) if present else (None, None)
 
 
 def _summary_splice_site_label(row: Dict[str, Any]) -> str:
@@ -31815,12 +31799,12 @@ def _provided_aso_knockdown_answer_paragraphs(
     splice_top = _summary_top_splice_rows(splice_rows, limit=1)
     if splice_top:
         row = splice_top[0]
-        skip_delta = _summary_row_skip_delta(row)
+        metric, skip_delta = _summary_row_skip_measurement(row)
         paragraphs.append(
             f"The strongest splice signal is `{_summary_candidate_name(row) or 'candidate'}` at "
             f"{_summary_splice_site_label(row) or 'the scored splice site'}: "
             f"{_summary_effect_size_label(skip_delta)} predicted perturbation"
-            f"{f' (`delta_inclusion_deletion` = {skip_delta:.4f})' if skip_delta is not None and _summary_splice_delta(row, 'delta_inclusion_deletion') is not None else ''}."
+            f"{f' (`{metric}` = {skip_delta:.4f})' if skip_delta is not None else ''}."
         )
     return paragraphs
 
@@ -36910,6 +36894,12 @@ def _merge_scored_tiles_into_provided_asos(
 
 
 def _splice_summary_from_scored_row(scored_row: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep each prediction under its recorded metric and reference identity.
+
+    Primary/selected deltas can describe an individual donor or acceptor. They
+    are not substitutes for an absent paired exon-inclusion proxy. Preserve
+    the per-site records so report composition can resolve that distinction.
+    """
     summary: Dict[str, Any] = {
         "delta_inclusion_deletion": scored_row.get("delta_inclusion_deletion"),
         "delta_inclusion_replacement": scored_row.get("delta_inclusion_replacement"),
@@ -36920,6 +36910,17 @@ def _splice_summary_from_scored_row(scored_row: Dict[str, Any]) -> Dict[str, Any
         "shared_context_delta": scored_row.get("shared_context_delta"),
     }
     for key in (
+        "splice_site_deltas",
+        "primary_label",
+        "primary_direction",
+        "primary_delta_deletion",
+        "primary_delta_replacement",
+        "selected_label",
+        "selected_direction",
+        "selected_site_kind",
+        "selected_site_position",
+        "selected_delta_deletion",
+        "selected_delta_replacement",
         "splice_eval_status",
         "splice_eval_skip_reason",
         "nearest_splice_site_distance_bp",
@@ -36933,7 +36934,7 @@ def _splice_summary_from_scored_row(scored_row: Dict[str, Any]) -> Dict[str, Any
         "aso_end",
     ):
         if scored_row.get(key) not in (None, "", [], {}):
-            summary[key] = scored_row.get(key)
+            summary[key] = deepcopy(scored_row[key])
     return summary
 
 
@@ -37464,20 +37465,9 @@ def _evaluate_existing_asos_payload(
             )
             primary_direction = preferred_reference_hit.get("primary_direction") or preferred_reference_hit.get("selected_direction")
             entry["splice_eval_summary"] = {
+                **_splice_summary_from_scored_row(preferred_reference_hit),
                 "primary_label": primary_label,
                 "primary_direction": primary_direction,
-                "delta_inclusion_deletion": (
-                    preferred_reference_hit.get("primary_delta_deletion")
-                    or preferred_reference_hit.get("selected_delta_deletion")
-                    or preferred_reference_hit.get("delta_inclusion_deletion")
-                ),
-                "delta_inclusion_replacement": (
-                    preferred_reference_hit.get("primary_delta_replacement")
-                    or preferred_reference_hit.get("selected_delta_replacement")
-                    or preferred_reference_hit.get("delta_inclusion_replacement")
-                ),
-                "shared_context_label": preferred_reference_hit.get("shared_context_label"),
-                "shared_context_delta": preferred_reference_hit.get("shared_context_delta"),
             }
             entry["stage_results"] = {
                 **(entry.get("stage_results") if isinstance(entry.get("stage_results"), dict) else {}),
