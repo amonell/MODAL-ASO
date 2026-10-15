@@ -474,6 +474,7 @@ chr1\tsource\tCDS\t500\t560\t.\t+\t2\tgene_id \"ENSG00000000001.1\"; transcript_
     assert listing["count"] == 1
     assert listing["transcripts"][0]["is_mane_select"] is True
     assert structure["id"] == "ENST00000000001"
+    assert structure["gene_symbol"] == "GENE1"
     assert [exon["index"] for exon in structure["exons_tx"]] == [1, 2]
     assert all(exon["contains_coding"] for exon in structure["exons_tx"])
 

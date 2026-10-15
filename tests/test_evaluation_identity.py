@@ -88,12 +88,60 @@ def test_missing_identity_is_not_invented_from_accession(references):
 
 def test_reference_gene_identity_survives_explicit_version_resolution():
     structure = {'id': 'TX_BETA', 'versioned_id': 'TX_BETA.2', 'version': 2,
-                 'species': 'mus_musculus', 'gene_id': 'GENE_BETA', 'seq_region_name': 'chrA',
+                 'species': 'mus_musculus', 'gene_id': 'GENE_BETA', 'gene_symbol': 'Beta', 'seq_region_name': 'chrA',
                  'strand': '+', 'exons_tx': [{'start': 1, 'end': 8}]}
     native = SimpleNamespace(get_transcript_structure=lambda _: deepcopy(structure))
     goal = {'transcript_lock': {'value': 'TX_BETA.2'}}
     isoforms, _, notes = pipeline._ensure_eval_transcript_catalog(goal, native)
     assert not notes and isoforms['TX_BETA']['metadata']['gene_id'] == 'GENE_BETA'
+    assert isoforms['TX_BETA']['metadata']['gene_symbol'] == 'Beta'
+
+
+@pytest.mark.parametrize('symbol', ['Beta', 'beta', ' BETA '])
+def test_reference_symbol_in_gene_id_is_normalized_to_stable_identity(references, symbol):
+    reference = deepcopy(references['TX_BETA'])
+    reference['metadata']['gene_symbol'] = 'Beta'
+    goal = {'species': 'mouse', 'gene_id': symbol, 'gene_symbol': 'Beta'}
+    declared = deepcopy(goal)
+    receipt = bind_primary_evaluation_identity(goal, reference, declared)
+    assert goal['gene_id'] == 'GENE_BETA'
+    assert receipt['declared_gene_id_kind'] == 'reference_attested_gene_symbol'
+    assert declared['gene_id'] == symbol
+    assert receipt['inherited_identity_changed']
+
+
+@pytest.mark.parametrize('declared_id,declared_symbol,reference_names', [
+    ('GENE_ALPHA', 'Beta', {'gene_symbol': 'Beta'}),
+    ('Beta', 'Beta', {}),
+    ('Beta', 'Beta', {'display_name': 'Beta'}),
+    ('Beta', 'Other', {'gene_symbol': 'Beta'}),
+    ('Beta', 'Beta', {'gene_symbol': 'Beta', 'gene_name': 'Other'}),
+])
+def test_symbols_do_not_override_conflicting_or_unverified_reference_identity(
+        references, declared_id, declared_symbol, reference_names):
+    reference = deepcopy(references['TX_BETA']);reference['metadata'].update(reference_names)
+    goal = {'species': 'mouse', 'gene_id': declared_id, 'gene_symbol': declared_symbol}
+    before = deepcopy(goal)
+    with pytest.raises(ValueError, match='evaluation_gene_conflicts_with_primary_transcript'):
+        bind_primary_evaluation_identity(goal, reference, deepcopy(goal))
+    assert goal == before
+
+
+def test_resolved_metadata_drops_unattested_selection_gene_names():
+    from aso_agents.transcript_metadata import resolved_transcript_metadata
+    structure = {'gene_id': 'GENE_BETA'}
+    selection = {'gene_symbol': 'Earlier', 'gene_name': 'Earlier'}
+    result = resolved_transcript_metadata(structure, selection)
+    assert 'gene_symbol' not in result and 'gene_name' not in result
+    assert result['selection_snapshot']['record'] == selection
+
+
+def test_reference_symbol_can_populate_missing_symbol_field(references):
+    reference = deepcopy(references['TX_BETA'])
+    reference['metadata']['gene_symbol'] = 'Beta'
+    goal = {'species': 'mouse', 'gene_id': 'Beta'}
+    bind_primary_evaluation_identity(goal, reference, deepcopy(goal))
+    assert goal == {'species': 'mouse', 'gene_id': 'GENE_BETA', 'gene_symbol': 'Beta'}
 
 
 @pytest.mark.parametrize('conflict', [False, True])

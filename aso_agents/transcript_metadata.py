@@ -32,7 +32,7 @@ def reference_annotation_flags(payload):
 def resolved_transcript_metadata(structure, selection_record=None):
     previous = {key: deepcopy(value) for key, value in (selection_record or {}).items() if key != 'Exon'}
     metadata = deepcopy(previous)
-    structural_fields = {'id', 'gene_id', 'transcript_id', 'version', 'versioned_id', 'reference_source',
+    structural_fields = {'id', 'gene_id', 'gene_symbol', 'gene_name', 'transcript_id', 'version', 'versioned_id', 'reference_source',
         'reference_annotation', 'species', 'assembly_name', 'seq_region_name', 'strand', 'start', 'end', 'length',
         'exon_count', 'cdna_length', 'coding_bp_length', 'translation_id', 'protein_length_aa'}
     annotation_aliases = {key for aliases in _ANNOTATION_FLAG_ALIASES.values() for key in aliases}

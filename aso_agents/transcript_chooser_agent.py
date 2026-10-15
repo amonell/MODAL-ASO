@@ -632,6 +632,7 @@ def _local_gtf_gene_payload(
                 {
                     "id": transcript_id,
                     "Parent": gene_id,
+                    "gene_symbol": str((attr_values.get("gene_name") or [""])[-1]) or None,
                     "versioned_id": source_transcript_id,
                     "version": int(source_transcript_id.rsplit(".", 1)[1])
                     if "." in source_transcript_id and source_transcript_id.rsplit(".", 1)[1].isdigit()
@@ -2511,6 +2512,7 @@ def _transcript_structure_from_payload(tx: Optional[Dict[str, Any]], transcript_
         "id": tx.get("id"),
         **_transcript_reference_identity(tx),
         "gene_id": tx.get("Parent") or tx.get("gene_id"),
+        "gene_symbol": tx.get("gene_symbol") or tx.get("gene_name"),
         "annotation_features": reference_annotation_flags(tx),
         "seq_region_name": chrom,
         "strand": strand,

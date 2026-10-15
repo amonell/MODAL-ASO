@@ -35807,7 +35807,7 @@ def _ensure_eval_transcript_catalog(goal: Dict[str, Any], runtime: Any) -> Tuple
         stable = requested.split(".")[0]
         resolved = {"transcript_id":stable, "chrom":structure.get("seq_region_name"), "strand":structure.get("strand"),
                     "exons_tx":structure.get("exons_tx"), "metadata":{key:structure.get(key) for key in
-                        ("versioned_id","version","reference_source","reference_annotation","species","assembly_name","seq_region_name","strand","gene_id")}}
+                        ("versioned_id","version","reference_source","reference_annotation","species","assembly_name","seq_region_name","strand","gene_id","gene_symbol")}}
         for catalog in (isoform_transcripts, all_transcripts_full):
             aliases = [label for label, entry in catalog.items() if str(entry.get("transcript_id") or label).split(".")[0] == stable]
             for label in aliases or [stable]:

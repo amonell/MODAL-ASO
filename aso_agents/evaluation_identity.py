@@ -53,9 +53,20 @@ def bind_primary_evaluation_identity(goal, entry, declared):
     if (reference['species_basis'] == 'reference_metadata' and declared.get('species')
             and normalize_species(declared['species']) != species):
         raise ValueError('evaluation_species_conflicts_with_primary_transcript')
-    if (gene_id and declared.get('gene_id')
-            and str(declared['gene_id']).split('.')[0] != gene_id.split('.')[0]):
-        raise ValueError('evaluation_gene_conflicts_with_primary_transcript')
+    declared_id = str(declared.get('gene_id') or '').strip()
+    declared_id_kind = ('stable_id' if gene_id else 'unverified') if declared_id else 'not_declared'
+    if gene_id and declared_id and declared_id.split('.')[0] != gene_id.split('.')[0]:
+        # Intake can place the declared symbol in the ID field. Accept only
+        # equality with the same resolved reference's explicit gene symbol,
+        # never agreement between two prompt fields or a transcript name.
+        metadata = entry.get('metadata') or {}
+        names = {str(metadata[key]).strip().casefold() for key in ('gene_symbol', 'gene_name')
+                 if metadata.get(key)}
+        symbol = str(declared.get('gene_symbol') or '').strip().casefold()
+        if len(names) == 1 and declared_id.casefold() in names and (not symbol or symbol in names):
+            declared_id_kind = 'reference_attested_gene_symbol'
+        else:
+            raise ValueError('evaluation_gene_conflicts_with_primary_transcript')
     species_changed = normalize_species(goal.get('species')) != species
     gene_changed = bool(gene_id
                         and str(previous['gene_id'] or '').split('.')[0] != gene_id.split('.')[0])
@@ -88,9 +99,12 @@ def bind_primary_evaluation_identity(goal, entry, declared):
         goal['gene_id'] = gene_id
     if declared.get('gene_symbol'):
         goal['gene_symbol'] = declared['gene_symbol']
+    elif declared_id_kind == 'reference_attested_gene_symbol':
+        goal['gene_symbol'] = str(metadata.get('gene_symbol') or metadata.get('gene_name')).strip()
     return {
         'status': 'bound', 'reference': reference, 'gene_id': gene_id or None,
         'gene_basis': 'reference_metadata' if gene_id else 'evaluation_context',
+        'declared_gene_id': declared_id or None, 'declared_gene_id_kind': declared_id_kind,
         'previous_context': previous, 'inherited_identity_changed': rebound,
         'cleared_inherited_fields': cleared,
     }
