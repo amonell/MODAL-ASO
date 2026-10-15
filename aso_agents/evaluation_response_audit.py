@@ -73,6 +73,59 @@ def response_audit_schema(response):
     }
 
 
+def splice_metric_index(source):
+    """Expose typed prediction fields before large alignment inventories.
+
+    Every value is copied from its named field at a valid source pointer. This
+    index does not infer metric equivalence, aggregate sites or judge prose.
+    Keep task/row paths even when molecule identifiers repeat across tasks.
+    """
+    fields = {
+        'delta_inclusion_deletion', 'delta_inclusion_replacement',
+        'delta_acceptor_deletion', 'delta_acceptor_replacement',
+        'delta_donor_deletion', 'delta_donor_replacement',
+        'delta_names', 'delta_deletion', 'delta_replacement',
+        'primary_label', 'primary_direction', 'primary_delta_deletion',
+        'primary_delta_replacement', 'selected_label', 'selected_direction',
+        'selected_site_kind', 'selected_site_position',
+        'selected_delta_deletion', 'selected_delta_replacement',
+        'label', 'canonical_label', 'site_kind', 'isoform_label',
+        'reference_transcript_id', 'reference_binding_status', 'exon_index',
+        'window_bp', 'evaluation_status', 'splice_eval_status',
+        'splice_eval_skip_reason',
+    }
+    index = []
+
+    def visit(value, path):
+        if isinstance(value, dict):
+            summary = value.get('splice_eval_summary')
+            if isinstance(summary, dict):
+                pointer = path + '/splice_eval_summary'
+                records = [(pointer, summary)]
+                sites = summary.get('splice_site_deltas')
+                if isinstance(sites, list):
+                    records.extend((pointer + '/splice_site_deltas/' + str(i), site)
+                                   for i, site in enumerate(sites) if isinstance(site, dict))
+                index.append({
+                    'row_source_pointer': path,
+                    'row_identity': {key: deepcopy(value[key]) for key in
+                                     ('input_row_id', 'name', 'transcript_id') if key in value},
+                    'measurements': [
+                        {'source_pointer': ref, 'recorded_fields': {
+                            key: deepcopy(item) for key, item in record.items() if key in fields}}
+                        for ref, record in records],
+                })
+            for key, item in value.items():
+                if key not in {'measurement_evidence', 'splice_eval_summary'}:
+                    visit(item, path + '/' + _escape(key))
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                visit(item, path + '/' + str(i))
+
+    visit(source, '')
+    return index
+
+
 def response_audit_context(source, response):
     """Index recorded scope/provenance facts without replacing the full source.
 
@@ -111,6 +164,8 @@ def response_audit_context(source, response):
         elif isinstance(value, list):
             stack.extend(reversed([(path + '/' + str(i), item) for i, item in enumerate(value)]))
     return {
+        'splice_metric_instructions': 'Check splice_metric_index first when the draft discusses splice predictions. Each recorded_fields entry is an exact subset of the record at source_pointer. Bind each number to its original metric, perturbation, site and task. An individual donor/acceptor delta cannot supply an absent or different inclusion proxy. Null stays unrecorded and zero stays recorded. This navigation index adds no prediction or interpretation; cite the complete source paths.',
+        'splice_metric_index': splice_metric_index(source),
         'scope_index_instructions': 'Navigation only: each recorded_value exactly copies its source_pointer in the complete source. Reconcile evidence existence, requested-feature naming, search/retention/count scope and unmeasured activity separately. Cite source_pointer values, never the index itself. The complete source below remains authoritative and contains all records.',
         'evidence_scope_index': index,
         'draft_response': deepcopy(response),

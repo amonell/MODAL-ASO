@@ -67,3 +67,28 @@ def test_absent_metrics_stay_unknown_and_zero_stays_recorded():
     assert pipeline._summary_row_skip_measurement({}) == (None, None)
     row = {'splice_eval_summary': {'delta_inclusion_deletion': None, 'delta_deletion': 0.0}}
     assert pipeline._summary_row_skip_measurement(row) == ('delta_deletion', 0.0)
+
+
+def test_audit_navigation_keeps_named_metrics_and_repeated_rows_in_their_tasks():
+    from aso_agents.evaluation_response_audit import response_audit_context, pointer_value
+    row = {'name': 'neutral', 'input_row_id': 'same-row', 'splice_eval_summary': {
+        'delta_inclusion_replacement': None, 'splice_site_deltas': [
+            {'site_kind': 'acceptor', 'delta_acceptor_replacement': -0.73,
+             'delta_inclusion_replacement': None, 'delta_donor_replacement': 0.0}]}}
+    other = deepcopy(row)
+    other['splice_eval_summary'] = {'delta_inclusion_replacement': 0.0}
+    source = {'completed_tasks': [{'payload': {'provided_asos': [row]}},
+                                  {'payload': {'provided_asos': [other]}}]}
+    before = deepcopy(source)
+    context = response_audit_context(source, {'markdown': 'Recorded predictions only.'})
+    index = context['splice_metric_index']
+    assert len(index) == 2
+    assert index[0]['row_source_pointer'] != index[1]['row_source_pointer']
+    for entry in index:
+        assert entry['row_identity']['input_row_id'] == 'same-row'
+        for record in entry['measurements']:
+            actual = pointer_value(source, record['source_pointer'])
+            assert all(actual[key] == value for key, value in record['recorded_fields'].items())
+    assert index[0]['measurements'][0]['recorded_fields']['delta_inclusion_replacement'] is None
+    assert index[1]['measurements'][0]['recorded_fields']['delta_inclusion_replacement'] == 0.0
+    assert context['source'] == source == before
