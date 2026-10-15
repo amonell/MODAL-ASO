@@ -209,14 +209,13 @@ def region_minimum_delivery(goal, candidate_set, binding_sets, intervals_for_row
     if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum <= 0:
         return {"status": "not_requested", "groups": [], "errors": []}
     groups = requested_region_minimums(goal)
-    # When the user requested a per-site *selected panel*, its count must
+    # When the user requested a bounded selected panel, its count must
     # stand on its own. A larger scored binding-set appendix cannot fill
     # missing entries in that panel. Other binding-set deliverables retain
     # their existing complete-pool semantics.
-    selected_panel_required = (
-        isinstance(goal.get("candidate_limit_per_site") or goal.get("per_site_candidate_limit"), int)
-        and (goal.get("candidate_limit_per_site") or goal.get("per_site_candidate_limit")) > 0
-    )
+    selected_panel_required = any(isinstance(goal.get(key), int)
+        and not isinstance(goal.get(key), bool) and goal[key] > 0
+        for key in ("candidate_limit", "candidate_limit_per_site", "per_site_candidate_limit"))
     if selected_panel_required and "rows" in candidate_set:
         rows = list(candidate_set.get("rows") or [])
     else:
@@ -248,4 +247,5 @@ def region_minimum_delivery(goal, candidate_set, binding_sets, intervals_for_row
     errors = (["requested_per_site_scope_unresolved"] if not results else
               ["requested_per_site_candidate_count_not_delivered"]
               if any(group["shortfall"] for group in results) else [])
-    return {"status": "unfulfilled" if errors else "fulfilled", "groups": results, "errors": errors}
+    return {"status": "unfulfilled" if errors else "fulfilled", "groups": results, "errors": errors,
+            "count_scope": "selected_panel" if selected_panel_required and "rows" in candidate_set else "complete_binding_pool"}

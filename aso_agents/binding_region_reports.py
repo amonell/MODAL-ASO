@@ -275,6 +275,8 @@ def build_binding_region_report(goal, final, run_dir, intervals_for_row, constra
         'ranking':'Recorded selection_rank when available, otherwise descending native Score; if neither field is recorded, retain source-file order. This is a within-pool computational ordering, not cross-gene potency or a direction-specific splice-efficacy ranking.'}
     from .candidate_minimums import region_minimum_delivery
     result['minimum_delivery'] = region_minimum_delivery(goal, {}, result, intervals_for_row)
+    from .region_interval_summary import nominated_region_interval_summary
+    result['nominated_region_geometry'] = nominated_region_interval_summary(goal)
     exception_records = sum(bool(row.get('default_gc_preference_exception'))
                             for group in sets for row in group['rows'])
     result['default_gc_preference_exception_records'] = exception_records
@@ -321,8 +323,14 @@ def binding_region_markdown(result):
              'Counts distinguish binding records from distinct molecules (antisense sequence plus chemistry). Full containment and any overlap define different populations; counts under those rules are not interchangeable.',
              f"Full candidate sets and measured annotations: `{result['artifact_path']}`."]
     minimum = result.get('minimum_delivery') or {}
+    for geometry in result.get('nominated_region_geometry') or []:
+        lines += ['', f"Nominated regions on {geometry['reference_id']} ({geometry['coordinate_space']}, "
+                  f"0-based half-open): union {json.dumps(geometry['union_intervals'])}, {geometry['union_length_nt']} nt; "
+                  f"intersection of all listed regions {json.dumps(geometry['intersection_of_all_regions'])}, "
+                  f"{geometry['intersection_length_nt']} nt."]
     if minimum.get('status') not in (None, 'not_requested'):
-        lines += ['', 'Requested minimum count status: **' + minimum['status'] + '**.']
+        lines += ['', 'Complete-pool minimum count status: **' + minimum['status'] + '**. '
+                  'The final selected panel is checked separately; pool membership does not establish selected-panel coverage.']
         for group in minimum.get('groups') or []:
             lines.append(f"- {group.get('label') or group['group_id']}: {group['distinct_molecules']} distinct molecules; minimum {group['minimum']}; shortfall {group['shortfall']}.")
     if result.get('complete_table_relative_path'):

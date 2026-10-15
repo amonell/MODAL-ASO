@@ -29104,7 +29104,20 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         else {}
     )
     candidate_selection: Dict[str, Any] = persisted_candidate_selection
-    if candidate_limit is not None or candidate_limit_per_site:
+    if physical_site_groups:
+        from .region_panel_selection import select_region_minimum_panel
+        ranked_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+        eligible_rows, candidate_selection = select_region_minimum_panel(
+            ranked_rows, physical_site_groups, _goal_runtime_module()._tile_row_overlap_intervals,
+            global_limit=_coerce_positive_int(structured_goal.get("candidate_limit")),
+            per_site_limit=_coerce_positive_int(structured_goal.get("candidate_limit_per_site")
+                                               or structured_goal.get("per_site_candidate_limit")),
+            program_limits={program["program_id"]: limit
+                for program in structured_goal.get("design_programs") or []
+                if program.get("program_id")
+                and (limit := _coerce_positive_int(program.get("candidate_limit"))) is not None},
+        )
+    elif candidate_limit is not None or candidate_limit_per_site:
         if candidate_group_scope == "physical_region":
             intervals_for_row = _goal_runtime_module()._tile_row_overlap_intervals
             eligible_rows = _bind_candidate_physical_site_groups(

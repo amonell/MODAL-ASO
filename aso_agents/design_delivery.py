@@ -507,6 +507,14 @@ def design_delivery(goal, candidate_set, branches, *, binding_sets=None, interva
     rows = list(selected_rows)
     for group in (binding_sets or {}).get("sets") or []:
         rows.extend(group.get("rows") or [])
+    from .candidate_presentation import molecule_key
+    selected_molecules = {molecule_key(row) for row in selected_rows
+                          if molecule_key(row)[0] and not set(molecule_key(row)[0]) - set("ACGT")}
+    pool_molecules = {molecule_key(row) for row in rows
+                      if molecule_key(row)[0] and not set(molecule_key(row)[0]) - set("ACGT")}
+    selected_panel_required = "rows" in candidate_set and any(
+        isinstance(goal.get(key), int) and not isinstance(goal.get(key), bool) and goal[key] > 0
+        for key in ("candidate_limit", "candidate_limit_per_site", "per_site_candidate_limit"))
     molecules = set()
     for row in rows:
         target = str(row.get("target_binding_sequence") or row.get("sequence") or "").upper()
@@ -525,16 +533,13 @@ def design_delivery(goal, candidate_set, branches, *, binding_sets=None, interva
         minimum = goal.get("candidate_minimum")
         if minimum is None:
             minimum = 1
-        if len(molecules) < minimum:
+        if len(selected_molecules if selected_panel_required else pool_molecules) < minimum:
             errors.append("requested_candidate_count_not_delivered")
         if minimum == 0 and not molecules and any(
                 branch.get("status") not in {"no_candidates_after_constraints", "no_candidates_found"}
                 for branch in required.values()):
             errors.append("empty_result_search_completion_unestablished")
         maximum = goal.get("candidate_limit")
-        selected_molecules = {str(row.get("synthesized_antisense_sequence") or row.get("Synthesis") or "").upper()
-                              for row in selected_rows}
-        selected_molecules.discard("")
         if maximum is not None and len(selected_molecules) > maximum:
             errors.append("requested_candidate_limit_exceeded")
     from .candidate_minimums import region_minimum_delivery
@@ -543,6 +548,10 @@ def design_delivery(goal, candidate_set, branches, *, binding_sets=None, interva
     errors.extend(region_delivery["errors"])
     return {"status": "unfulfilled" if errors else "fulfilled_with_limitations" if warnings else "fulfilled", "requested_design_branches": list(required),
             "candidate_rows": len(selected_rows), "delivered_binding_records": len(rows), "distinct_oligos": len(molecules),
+            "distinct_oligos_scope": "all_delivered_binding_records_sequence_only",
+            "selected_panel_distinct_molecules": len(selected_molecules),
+            "complete_pool_distinct_molecules": len(pool_molecules),
+            "minimum_count_scope": "selected_panel" if selected_panel_required else "complete_binding_pool",
             "per_site_minimum_delivery": region_delivery,
             "errors": list(dict.fromkeys(errors)), "warnings": list(dict.fromkeys(warnings))}
 
