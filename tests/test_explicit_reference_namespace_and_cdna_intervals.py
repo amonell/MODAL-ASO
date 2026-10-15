@@ -1,7 +1,48 @@
 """Explicit transcript intervals and gene identifiers retain their reference spaces."""
 
 import run_goal_intake as native
+import pytest
 from aso_agents.species_targets import resolve_explicit_target
+
+
+def test_explicit_cdna_reference_binds_matching_chromosome_without_changing_bounds(tmp_path):
+    from aso_agents.region_projection import genomic_sources
+    transcript = {'transcript_id': 'TX.4', 'chrom': 'chrFixture', 'strand': '-',
+                  'exons_tx': [{'index': 1, 'start': 1001, 'end': 1200}]}
+    goal = {'design_programs': [{'program_id': 'region', 'transcript_id': 'TX.4'}],
+            'isoform_transcripts': {'TX.4': transcript}}
+    constraint = {'source_type': 'explicit_rows', 'coordinate_space': 'cdna',
+                  'intervals_bed0_half_open': [{'chrom': 'Fixture', 'start': 19, 'end': 60}]}
+    result = native._materialize_region_constraint_entry(
+        structured_goal=goal, final_payload={}, run_dir=str(tmp_path),
+        constraint=constraint, isoform_transcripts=goal['isoform_transcripts'])
+    assert result['materialized_rows'][0][:3] == ['TX.4', 19, 60]
+    assert result['materialization_summary']['transcript_reference_binding'][0]['original_reference'] == 'Fixture'
+    assert genomic_sources(goal, result)[0]['genomic_rows'][0][:3] == ['chrFixture', 1140, 1181]
+    assert constraint['intervals_bed0_half_open'][0]['chrom'] == 'Fixture'
+
+
+@pytest.mark.parametrize('defect', ['ambiguous', 'no_declared_transcript', 'wrong_chromosome', 'wrong_version', 'out_of_bounds'])
+def test_cdna_reference_binding_does_not_guess_through_conflicts(tmp_path, defect):
+    transcript = {'transcript_id': 'TX.4', 'chrom': 'chrFixture', 'strand': '+',
+                  'exons_tx': [{'start': 1001, 'end': 1200}]}
+    goal = {'design_programs': [{'program_id': 'region', 'transcript_id': 'TX.4'}]}
+    constraint = {'source_type': 'explicit_rows', 'coordinate_space': 'cdna',
+                  'intervals_bed0_half_open': [{'chrom': 'Fixture', 'start': 19, 'end': 60}]}
+    if defect == 'ambiguous':
+        goal['design_programs'].append({'program_id': 'other', 'transcript_id': 'TX.5'})
+    elif defect == 'no_declared_transcript':
+        goal.clear()
+    elif defect == 'wrong_chromosome':
+        constraint['intervals_bed0_half_open'][0]['chrom'] = 'Different'
+    elif defect == 'wrong_version':
+        goal['design_programs'][0]['transcript_id'] = 'TX.8'
+    else:
+        constraint['intervals_bed0_half_open'][0]['end'] = 201
+    result = native._materialize_region_constraint_entry(
+        structured_goal=goal, final_payload={}, run_dir=str(tmp_path),
+        constraint=constraint, isoform_transcripts={'TX.4': transcript})
+    assert result['materialized_rows'] == []
 
 
 def test_mature_transcript_interval_is_not_treated_as_a_genomic_chromosome(tmp_path):

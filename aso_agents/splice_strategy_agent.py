@@ -213,28 +213,6 @@ _target_ranker_agent = Agent(
 )
 
 
-_strategy_report_agent = Agent(
-    name="Splice Strategy Author",
-    instructions=(
-        "Compose the final splice strategy report in concise Markdown.\n"
-        "Input JSON: {\"context\": string, \"ranked_targets\": [...], \"global_notes\": string?}.\n"
-        "Output MUST include the headings 'Strategy Overview' and 'Ranked Steric Hindrance Targets'. Include 'Routing Notes' only when you have actionable guidance.\n"
-        "Formatting requirements:\n"
-        "- Under Strategy Overview, list one bullet per isoform objective: '<isoform>: <increase|decrease> - <<=140 char rationale>'.\n"
-        "- Under Ranked Steric Hindrance Targets, enumerate every bundle in order. Each entry must follow exactly this template:\n"
-        "  <rank>) <direction> <isoform> <acceptor|donor> usage (include 'acceptor and donor' when both appear)\n"
-        "  - Primary targets: <comma-separated labels with direction in parentheses>\n"
-        "  - Safeguards: <comma-separated guard summaries>\n"
-        "  - Notes: <<=120 char note clarifying whether this is the main bundle or a fallback>\n"
-        "- Routing Notes (when present) should summarize how combined bundles and singles should be treated; omit the section if there is nothing new to add.\n"
-        "- Do not invent extra ranks or auxiliary commentary. Keep the wording tight and actionable."
-    ),
-    tools=[],
-    model="gpt-5.2-2025-12-11",
-    model_settings=HIGH_REASONING,
-)
-
-
 def generate_splice_strategy_report(
     context_prompt: str,
     context_data: Dict[str, Any],
@@ -276,8 +254,6 @@ def generate_splice_strategy_report(
         candidate_map[str(key)] = entry
 
     ranked_targets = ranked.get("ranked_targets", []) or []
-
-    global_notes: Optional[str] = None
 
     bond_map: Dict[str, Dict[str, Any]] = {}
     for site in context_data.get("splice_site_plan") or []:
@@ -347,34 +323,13 @@ def generate_splice_strategy_report(
             safeguards.append(guard_entry)
         entry["safeguards"] = safeguards
 
-    final_result = Runner._run_sync(
-        _strategy_report_agent,
-        input=json.dumps(
-            {
-                "context": context_prompt,
-                "ranked_targets": ranked.get("ranked_targets", []),
-                "global_notes": global_notes,
-            },
-            ensure_ascii=False,
-        ),
-        max_steps=6,
-
-    )
-
-    output = final_result.final_output
-    if not isinstance(output, str):
-        raise RuntimeError("Splice Strategy Author returned non-string output.")
-    diagnostic_trace.append(
-        {
-            "agent": _strategy_report_agent.name,
-            "kind": "report_agent",
-            "prompt": {
-                "context": context_prompt,
-                "ranked_targets": ranked.get("ranked_targets", []),
-                "global_notes": global_notes,
-            },
-            "final_output": output,
-            "responses": final_result.responses,
-        }
-    )
-    return output.strip(), diagnostic_trace
+    from .splice_plan_report import render_splice_plan
+    output = render_splice_plan(context_data, ranked.get("ranked_targets", []))
+    diagnostic_trace.append({
+        "kind": "reference_bound_plan_rendering",
+        "method": "typed_objectives_priorities_and_reference_scope",
+        "ranked_targets": ranked.get("ranked_targets", []),
+        "scope": "Planning directions are not ASO-effect evidence; unvalidated narrative claims are not promoted.",
+        "final_output": output,
+    })
+    return output, diagnostic_trace

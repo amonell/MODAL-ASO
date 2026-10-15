@@ -22291,6 +22291,9 @@ def _materialize_region_constraint_entry(
         convention = str(materialized.get("coordinate_convention") or "").strip().lower()
         from aso_agents.gapmer_selectivity import resolve_catalog_label
         catalog = isoform_transcripts if isinstance(isoform_transcripts, dict) else {}
+        from aso_agents.region_projection import bind_transcript_interval_reference
+        explicit_interval_rows, reference_binding = bind_transcript_interval_reference(
+            explicit_interval_rows, materialized, catalog, default_transcript_id)
         reference_labels = [resolve_catalog_label(row[0], catalog, catalog)
                             for row in explicit_interval_rows]
         reference_bound = bool(reference_labels) and all(
@@ -22328,6 +22331,7 @@ def _materialize_region_constraint_entry(
                 "status": "materialized" if len(valid_rows) == len(explicit_interval_rows) else "partially_materialized" if valid_rows else "unresolved",
                 "coordinate_space": "cdna", "validated_reference_rows": len(valid_rows),
                 "reference_identity_resolution": reference_labels,
+                "transcript_reference_binding": reference_binding,
                 "original_declared_coordinate_space": constraint.get("coordinate_space"),
                 "rejected_rows": rejected, "row_count": len(valid_rows),
             }
@@ -25075,59 +25079,11 @@ def _build_steric_program_site_window_rows(
     up_bp, down_bp = _design_program_window_flanks(program, structured_goal)
 
     def _window_for_entry(entry: Dict[str, Any]) -> Optional[Tuple[int, int]]:
-        position = entry.get("position")
-        if not isinstance(position, int):
-            return None
-        strand = _strand_char(entry.get("strand"), default="+")
-        entry_site_kind = str(entry.get("site") or "").strip().lower()
-        context = site_context
-        if context == "upstream_intron" and entry_site_kind != "acceptor":
-            context = "site_window"
-        if context == "downstream_intron" and entry_site_kind != "donor":
-            context = "site_window"
-
-        if context == "site_window":
-            span_start = position - up_bp
-            span_end = position + down_bp
-        elif context == "upstream_intron":
-            if strand == "+":
-                span_start = position - up_bp
-                span_end = position
-            else:
-                span_start = position
-                span_end = position + down_bp
-        elif context == "downstream_intron":
-            if strand == "+":
-                span_start = position
-                span_end = position + down_bp
-            else:
-                span_start = position - up_bp
-                span_end = position
-        elif context == "exon_body":
-            if entry_site_kind == "acceptor":
-                if strand == "+":
-                    span_start = position
-                    span_end = position + down_bp
-                else:
-                    span_start = position - up_bp
-                    span_end = position
-            elif entry_site_kind == "donor":
-                if strand == "+":
-                    span_start = position - up_bp
-                    span_end = position
-                else:
-                    span_start = position
-                    span_end = position + down_bp
-            else:
-                span_start = position - up_bp
-                span_end = position + down_bp
-        else:
-            span_start = position - up_bp
-            span_end = position + down_bp
-
-        span_start = max(1, int(span_start))
-        span_end = max(span_start + 1, int(span_end))
-        return span_start, span_end
+        from aso_agents.splice_site_geometry import splice_site_window
+        return splice_site_window(
+            entry.get("position"), _strand_char(entry.get("strand"), default="+"),
+            str(entry.get("site") or "").strip().lower(), site_context, up_bp, down_bp,
+        )
 
     rows: List[List[Any]] = []
     seen: Set[Tuple[str, int, int, str]] = set()

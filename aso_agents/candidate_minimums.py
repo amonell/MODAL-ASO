@@ -105,6 +105,9 @@ def requested_region_minimums(goal):
             job.get("targeting_policy") == "explicit_user_region"
             and not metadata.get("constraint_count")
         )
+        if not explicit_scope_resolved:
+            from .splice_site_geometry import verified_reference_window_scope
+            explicit_scope_resolved = verified_reference_window_scope(goal, job)
         group["selectors"].append({
             "rows": deepcopy(job.get("tile_filter_rows") or job.get("region_rows") or []),
             "requirement": job.get("tile_overlap_requirement") or "any_overlap",

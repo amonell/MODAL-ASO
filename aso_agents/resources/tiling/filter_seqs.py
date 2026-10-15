@@ -50,7 +50,7 @@ def apply_configuration(aso, chemistry):
     # The CLI is also executed with the tiler directory as cwd. Import the
     # dependency-free shared molecular encoder from the enclosing application.
     from pathlib import Path
-    root = str(Path(__file__).resolve().parents[2])
+    root = str(Path(__file__).resolve().parents[3])
     if root not in sys.path:
         sys.path.insert(0, root)
     from aso_chemistry import encode_idt_oligo
