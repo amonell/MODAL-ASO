@@ -35668,7 +35668,7 @@ def _ensure_eval_transcript_catalog(goal: Dict[str, Any], runtime: Any) -> Tuple
         stable = requested.split(".")[0]
         resolved = {"transcript_id":stable, "chrom":structure.get("seq_region_name"), "strand":structure.get("strand"),
                     "exons_tx":structure.get("exons_tx"), "metadata":{key:structure.get(key) for key in
-                        ("versioned_id","version","reference_source","reference_annotation","species","assembly_name","seq_region_name","strand")}}
+                        ("versioned_id","version","reference_source","reference_annotation","species","assembly_name","seq_region_name","strand","gene_id")}}
         for catalog in (isoform_transcripts, all_transcripts_full):
             aliases = [label for label, entry in catalog.items() if str(entry.get("transcript_id") or label).split(".")[0] == stable]
             for label in aliases or [stable]:
@@ -37039,13 +37039,45 @@ def _evaluate_existing_asos_payload(
     )
     eval_goal["evaluation_targets"] = deepcopy(evaluation_targets)
     isoform_transcripts, all_transcripts_full, catalog_notes = _ensure_eval_transcript_catalog(eval_goal, runtime)
-    primary_catalog_labels = set(all_transcripts_full) | set(isoform_transcripts)
     transcript_id, iso_label, transcript_entry = _choose_eval_transcript(
         eval_goal,
         isoform_transcripts,
         all_transcripts_full,
         runtime,
     )
+    from .evaluation_identity import (
+        declared_evaluation_context, bind_primary_evaluation_identity, screening_catalog_labels,
+    )
+    declared_context, declared_basis = declared_evaluation_context(state, request_envelope, task_id)
+    try:
+        identity_binding = bind_primary_evaluation_identity(eval_goal, transcript_entry, declared_context)
+    except ValueError as exc:
+        return {"error": str(exc), "task_type": "evaluate_existing_aso_set",
+                "transcript_id": transcript_id, "declared_context_basis": declared_basis}
+    identity_binding["declared_context_basis"] = declared_basis
+    species = normalize_species(eval_goal.get("species"))
+    if identity_binding.get("inherited_identity_changed"):
+        loader = getattr(runtime, "_load_all_transcripts_for_gene", None)
+        refresh_goal = deepcopy(eval_goal)
+        refresh_goal.pop("isoform_transcripts", None)
+        refresh_goal.pop("all_transcripts_full", None)
+        try:
+            refreshed = loader(refresh_goal) if callable(loader) and eval_goal.get("gene_id") else {}
+        except Exception as exc:
+            refreshed = {}
+            catalog_notes.append(f"primary_evaluation_catalog_refresh_failed:{exc}")
+        accepted = screening_catalog_labels(refreshed or {}, None, eval_goal, identity_binding)
+        # Existing explicitly resolved records retain their version and geometry.
+        for label in accepted:
+            all_transcripts_full.setdefault(label, deepcopy(refreshed[label]))
+        identity_binding["refreshed_catalog_labels"] = sorted(accepted)
+    primary_catalog_labels = screening_catalog_labels(
+        {**all_transcripts_full, **isoform_transcripts}, iso_label, eval_goal, identity_binding,
+    )
+    eval_goal["isoform_transcripts"] = {label: deepcopy(entry) for label, entry in
+        {**all_transcripts_full, **isoform_transcripts}.items() if label in primary_catalog_labels}
+    eval_goal["all_transcripts_full"] = deepcopy(eval_goal["isoform_transcripts"])
+    identity_binding["screening_catalog_labels"] = sorted(primary_catalog_labels)
     from .evaluation_feature_identity import resolve_evaluation_target_identities
     evaluation_targets = resolve_evaluation_target_identities(
         evaluation_targets, {**all_transcripts_full, **isoform_transcripts}, transcript_id,
@@ -37547,6 +37579,7 @@ def _evaluate_existing_asos_payload(
             "transcript_id": transcript_id,
             "isoform_label": iso_label,
             "target_context": target_context_text,
+            "primary_identity_binding": identity_binding,
             **evaluation_reference_context(
                 get_species_config(primary_reference_species), genomes_by_label.get(iso_label), transcript_id, primary_reference_entry,
                 request_envelope.get("transcript_id")
