@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List
 
+from .coordinate_contract import COORDINATE_ORIGIN_INSTRUCTIONS
+
 
 CANONICAL_TARGET_TYPES = frozenset({
     "gene", "transcript", "transcript_cohort", "isoform", "isoform_cohort",
@@ -234,7 +236,7 @@ CANONICAL_GOAL_COLLECTION_REQUIRED_FIELDS = {
 _REGION_INTERVAL_SCHEMA = {
     "type": "object",
     "properties": {
-        "chrom": {"type": "string"},
+        "chrom": {"type": "string", "description": "Coordinate reference: chromosome for coordinate_space=genomic; exact transcript identifier for coordinate_space=cdna. The field name does not force genomic coordinates."},
         "genome_build": {"type": "string"},
         "end": {"type": "integer", "minimum": 0},
         "label": {"type": "string"},
@@ -242,6 +244,7 @@ _REGION_INTERVAL_SCHEMA = {
         "start": {"type": "integer", "minimum": 0},
         "strand": {"type": "string", "enum": ["+", "-", "."]},
     },
+    "required": ["chrom", "start", "end"],
     "additionalProperties": False,
 }
 
@@ -563,7 +566,7 @@ _REGION_CONSTRAINT_SCHEMA = {
         },
         "constraint_id": {"type": "string"},
         "coordinate_convention": {"type": "string"},
-        "coordinate_space": {"type": "string", "enum": ["genomic", "cdna"]},
+        "coordinate_space": {"type": "string", "enum": ["genomic", "cdna"], "description": "Origin of the supplied interval numbers. Mature-RNA/transcript positions are cdna even when a genome assembly is named. Preserve this origin independently of zero/one-based indexing."},
         "exon_label": {"type": ["string", "integer"]},
         "exon_numbering_transcript_id": {"type": "string"},
         "gene_symbol": {"type": "string"},
@@ -1311,6 +1314,7 @@ def canonical_resolution_capability_catalog() -> List[Dict[str, str]]:
 
 CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS
+    + COORDINATE_ORIGIN_INSTRUCTIONS
     + "Canonical executable design-goal contract:\n"
     "- chemistry_policy is a permission decision, not a record of whether the user named a chemical formula. select authorizes platform selection and is the meaning of delegated/default chemistry. leave_unspecified prohibits selecting modifications, backbone and synthesis platform and is used only when the user deliberately defers that choice. If the user simply omits chemistry, omit the policy so ordinary platform selection remains available. Preserve an explicit chemical formula separately in chemistry. Scope different policies to their own programs.\n"
     "- Treat the user request and recorded clarification answers as evidence. Preserve every explicitly supplied design fact. Do not use biological background knowledge to invent a gene, species, transcript, isoform, exon, coordinate, route, direction, length, chemistry, or target context. The species field contains only an organism supported by request or clarification evidence, or an organism established from an explicit identifier by an authoritative source; never store a lookup instruction, uncertainty note, or resolution plan in species. Omit unresolved species during intake and let authoritative resolution supply it instead of encoding how to find it as though it were an organism.\n"

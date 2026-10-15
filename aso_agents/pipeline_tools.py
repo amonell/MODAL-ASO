@@ -23856,6 +23856,7 @@ def _goal_audit_prompt(
         requirement_catalog["context.structured_goal"] = sorted(
             set(requirement_catalog["context.structured_goal"]) | set(required_goal_fields))
     from .region_overlap import constraint_execution_summary
+    from .coordinate_contract import coordinate_execution_summary, COORDINATE_ORIGIN_INSTRUCTIONS
     audit_input = {
         "required_goal_fields": required_goal_fields or [],
         "audit_mode": (
@@ -23887,6 +23888,13 @@ def _goal_audit_prompt(
             "junction_crossing": "At least U bases before and D after a junction requires contains_feature over the U+D base core: acceptor offsets -U..D-1, donor offsets 1-U..D, both in transcript orientation. Do not place a longer ASO fully inside this core.",
         },
         "reference_scope_semantics": "A transcript supplied only to locate an exon does not imply an isoform-abundance objective. Preserve its identity in transcript_lock and the program; default_exon_context remains valid for the structural splice objective.",
+        "coordinate_origin_semantics": COORDINATE_ORIGIN_INSTRUCTIONS,
+        "coordinate_execution": [
+            {"goal_pointer": location["json_pointer"], **summary}
+            for location in design_goal_locations
+            if (summary := coordinate_execution_summary(
+                request_envelope["tasks"][location["task_index"]].get("context", {}).get("structured_goal") or {}))
+        ],
         "canonical_requirement_catalog": (
             [] if issue_records else requirement_catalog
         ),
@@ -26174,6 +26182,23 @@ def _repair_request_envelope_if_needed(
                     break
             if audited.get("status") == "model_failure":
                 return audited
+
+            if str(audited.get("status") or "").lower() == "valid":
+                for entry in protocol.get("coordinate_execution") or []:
+                    focused_prompt = _goal_audit_prompt(
+                        request_envelope=request_envelope, validation_issues=[], issue_records=[],
+                        evidence_sources=evidence_sources, semantic_audit=True,
+                        post_repair_verification=repairs_applied,
+                        required_goal_fields=required_goal_fields,
+                        semantic_scope_pointers=[entry["goal_pointer"] + pointer
+                                                 for pointer in entry["audit_scope_pointers"]],
+                    )
+                    focused = _run_goal_audit_sync(focused_prompt)
+                    if str(focused.get("status") or "").lower() != "valid":
+                        audited = focused
+                        break
+                if audited.get("status") == "model_failure":
+                    return audited
 
         audit_status = str(audited.get("status") or "").strip().lower()
         raw_patches = (
