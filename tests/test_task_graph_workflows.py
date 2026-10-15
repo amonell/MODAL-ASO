@@ -708,7 +708,10 @@ def test_chooser_focused_v2_markdown_summarizes_provided_aso_evaluation(tmp_path
     assert "v2_tasks/normal_scoring/provided_aso_scoring/provided_aso_scored_uniqueness.json" in markdown
     assert "v2_tasks/splice_eval/scored_tiles.json" in markdown
     assert "2/2 ASO(s) were scored as `gene_wide`" in markdown
-    assert "Splice evaluation scored 1/2 row(s) and skipped 1/2 row(s)." in markdown
+    # The sibling score file is linked separately; its unbound skip status
+    # cannot fill the missing status in this evaluation payload.
+    assert "Splice evaluation scored 1/2 row(s) and skipped 0/2 row(s)." in markdown
+    assert "1/2 row(s) have neither a usable splice delta nor a recorded skip status in this evaluation." in markdown
     assert "| 1 | OTUD4_46 | CAAATGAGAACAGAGTGCAA | gene_wide | 1.0000 | NA / NA | NA | 0 |" in markdown
     assert "Sequence Orientation" not in markdown
     assert str(run_dir) not in markdown

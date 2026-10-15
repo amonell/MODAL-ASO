@@ -31475,54 +31475,14 @@ def _summary_genomic_span_text(row: Dict[str, Any]) -> str:
 
 
 def _summary_splice_rows_from_payload(payload: Dict[str, Any], run_dir: str) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    run_path = Path(run_dir)
-    for path in sorted(_glob_run_paths(run_path, "v2_tasks/*/scored_tiles.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        for row in data.get("rows") if isinstance(data, dict) and isinstance(data.get("rows"), list) else []:
-            if isinstance(row, dict):
-                rows.append(row)
-    if rows:
-        return rows
-    provided_rows = payload.get("provided_asos") if isinstance(payload.get("provided_asos"), list) else []
-    return [row for row in provided_rows if isinstance(row, dict)]
+    """Use only the delivered evaluation's rows, preserving each input identity.
 
-
-def _summary_merge_provided_with_splice(
-    provided_rows: List[Dict[str, Any]],
-    splice_rows: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    splice_by_key: Dict[str, Dict[str, Any]] = {}
-    for row in splice_rows:
-        name = _summary_candidate_name(row)
-        sequence = _summary_candidate_sequence(row)
-        if name:
-            splice_by_key[name] = row
-        if sequence:
-            splice_by_key.setdefault(sequence, row)
-    merged: List[Dict[str, Any]] = []
-    for row in provided_rows:
-        extra = splice_by_key.get(_summary_candidate_name(row)) or splice_by_key.get(_summary_candidate_sequence(row))
-        if not extra:
-            merged.append(row)
-            continue
-        combined = dict(row)
-        for key, value in extra.items():
-            if combined.get(key) in (None, "", [], {}) and value not in (None, "", [], {}):
-                combined[key] = value
-        summary = dict(combined["splice_eval_summary"]) if isinstance(combined.get("splice_eval_summary"), dict) else {}
-        extra_summary = extra.get("splice_eval_summary") if isinstance(extra.get("splice_eval_summary"), dict) else extra
-        if isinstance(extra_summary, dict):
-            for key in (*_SPLICE_DELTA_KEYS, "delta_names", "splice_eval_status", "splice_eval_skip_reason"):
-                if summary.get(key) in (None, "", [], {}) and extra_summary.get(key) not in (None, "", [], {}):
-                    summary[key] = extra_summary.get(key)
-        if summary:
-            combined["splice_eval_summary"] = summary
-        merged.append(combined)
-    return merged
+    A parent run can hold several evaluations of the same physical ASO at
+    different requested sites. Name/sequence equality cannot bind their score
+    or skip status to this evaluation. Missing fields stay unrecorded.
+    """
+    provided = payload.get("provided_asos")
+    return [row for row in provided if isinstance(row, dict)] if isinstance(provided, list) else []
 
 
 def _summary_top_splice_rows(rows: List[Dict[str, Any]], limit: int = 6) -> List[Dict[str, Any]]:
@@ -31999,7 +31959,7 @@ def _provided_aso_summary_markdown(
     target = _provided_aso_primary_target(payload)
     splice_request = _provided_aso_is_splice_request(payload)
     splice_rows = _summary_splice_rows_from_payload(payload, run_dir)
-    merged_rows = _summary_merge_provided_with_splice(provided_rows, splice_rows)
+    merged_rows = splice_rows
     request_text = _summary_run_request(run_dir)
     limitations = _summary_unique_text_items(
         [
@@ -32065,7 +32025,7 @@ def _provided_aso_summary_markdown(
     gene_wide = sum(1 for row in provided_rows if _summary_text(row.get("isoform_uniqueness_class")).lower() == "gene_wide")
     zero_off = sum(1 for row in provided_rows if _summary_offtarget_count(row) == 0)
     ranked = sum(1 for row in provided_rows if _summary_candidate_rank(row) != 10**9)
-    splice_skipped = sum(1 for row in splice_rows if _summary_text(row.get("splice_eval_status")).startswith("skipped"))
+    splice_skipped = sum(1 for row in splice_rows if _summary_text(_summary_splice_lookup(row, "splice_eval_status")).startswith("skipped"))
     splice_scored = sum(1 for row in splice_rows if _summary_row_has_splice_score(row))
     lines.extend(
         [
@@ -32081,6 +32041,10 @@ def _provided_aso_summary_markdown(
         lines.append(
             f"- Splice evaluation scored {splice_scored}/{len(splice_rows)} row(s) and skipped {splice_skipped}/{len(splice_rows)} row(s)."
         )
+        unrecorded = sum(1 for row in splice_rows if not _summary_row_has_splice_score(row)
+                         and not _summary_text(_summary_splice_lookup(row, "splice_eval_status")).startswith("skipped"))
+        if unrecorded:
+            lines.append(f"- {unrecorded}/{len(splice_rows)} row(s) have neither a usable splice delta nor a recorded skip status in this evaluation.")
     run_name = Path(run_dir).name
     if run_name:
         lines.append(f"- Output folder: `{run_name}`.")
