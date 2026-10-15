@@ -58,7 +58,9 @@ def _nearest_splice_site_for_mid(
             or str(site.get("display_label") or "").strip()
             or str(site.get("label") or "").strip()
         )
-        for site_kind in ("acceptor", "donor"):
+        declared_kind = str(site.get("site_kind") or "").strip().lower()
+        kinds = (declared_kind,) if declared_kind in {"acceptor", "donor"} else ("acceptor", "donor")
+        for site_kind in kinds:
             payload = site.get(site_kind)
             if not isinstance(payload, Mapping):
                 continue

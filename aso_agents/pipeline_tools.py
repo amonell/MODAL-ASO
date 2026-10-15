@@ -28555,6 +28555,7 @@ def _compact_existing_aso_evaluation_for_response(payload: Dict[str, Any]) -> Di
                     "nearest_splice_site_kind",
                     "nearest_splice_site_distance_bp",
                     "nearest_splice_site_position",
+                    "site_search_scope",
                 )
                 if splice_eval.get(key) not in (None, "", [], {})
             }
@@ -36210,6 +36211,8 @@ def _best_locus_near_matches(
 def _build_transcript_splice_sites_for_eval(
     transcript_entry: Optional[Dict[str, Any]],
     window_bp: int = 10,
+    *,
+    include_terminal_boundaries: bool = True,
 ) -> List[Dict[str, Any]]:
     if not isinstance(transcript_entry, dict):
         return []
@@ -36227,7 +36230,7 @@ def _build_transcript_splice_sites_for_eval(
         return []
     strand = _transcript_entry_strand_char(transcript_entry)
     sites: List[Dict[str, Any]] = []
-    for exon in exons_tx:
+    for ordinal, exon in enumerate(exons_tx):
         try:
             exon_index = int(exon.get("index"))
             exon_start = int(exon.get("start"))
@@ -36241,6 +36244,11 @@ def _build_transcript_splice_sites_for_eval(
             acceptor_pos = min(exon_start, exon_end)
             donor_pos = max(exon_start, exon_end)
         for site_kind, position in (("acceptor", acceptor_pos), ("donor", donor_pos)):
+            if not include_terminal_boundaries and (
+                (site_kind == "acceptor" and ordinal == 0)
+                or (site_kind == "donor" and ordinal == len(exons_tx) - 1)
+            ):
+                continue
             sites.append(
                 {
                     "label": f"{site_kind}@{position}",
@@ -36367,13 +36375,27 @@ def _select_relevant_splice_sites(
     entries: List[Dict[str, Any]],
     max_sites_per_entry: int = 2,
 ) -> List[Dict[str, Any]]:
+    from .splicing_agent import SPLICE_EVAL_NEARBY_SITE_RADIUS_BP
     if not splice_sites:
         return []
     targeted_sites = _filter_splice_sites_by_targets(splice_sites, evaluation_targets)
-    if targeted_sites:
-        return targeted_sites
     selected: List[Dict[str, Any]] = []
-    seen_labels: Set[str] = set()
+    seen: Set[Tuple[Any, ...]] = set()
+
+    def include(site: Dict[str, Any]) -> None:
+        kind = _normalize_eval_site_kind(site.get("site_kind"))
+        point = site.get(kind) if kind else None
+        if not isinstance(point, dict) or not isinstance(point.get("position"), int):
+            return
+        key = (str(point.get("chrom") or "").removeprefix("chr"),
+               str(point.get("strand") or ""), str(site.get("transcript_id") or ""),
+               kind, point["position"])
+        if key not in seen:
+            seen.add(key)
+            selected.append(site)
+
+    for site in targeted_sites:
+        include(site)
     for entry in entries:
         genomic_span = entry.get("genomic_span") if isinstance(entry.get("genomic_span"), dict) else {}
         start = genomic_span.get("start")
@@ -36381,6 +36403,10 @@ def _select_relevant_splice_sites(
         chrom = str(genomic_span.get("chrom") or "").strip()
         if not isinstance(start, int) or not isinstance(end, int) or not chrom:
             continue
+        # Match the scoring backend's midpoint convention (input span is 1-based).
+        midpoint = (start - 1 + end) // 2 + 1
+        entry_tid = str(entry.get("transcript_id") or "")
+        entry_strand = str(entry.get("strand") or "")
         ranked: List[Tuple[int, int, str, Dict[str, Any]]] = []
         for site in splice_sites:
             site_kind = _normalize_eval_site_kind(site.get("site_kind")) or str(site.get("site_kind") or "").strip().lower()
@@ -36389,24 +36415,30 @@ def _select_relevant_splice_sites(
                 continue
             site_chrom = str(site_payload.get("chrom") or "").strip()
             site_position = site_payload.get("position")
-            if site_chrom != chrom or not isinstance(site_position, int):
+            if site_chrom.removeprefix("chr") != chrom.removeprefix("chr") or not isinstance(site_position, int):
+                continue
+            site_tid = str(site.get("transcript_id") or "")
+            if entry_tid and (not site_tid or entry_tid.split(".")[0] != site_tid.split(".")[0]
+                              or ("." in entry_tid and entry_tid != site_tid)):
+                continue
+            if entry_strand and site_payload.get("strand") and entry_strand != str(site_payload["strand"]):
                 continue
             ranked.append(
                 (
-                    _span_distance(int(start), int(end), int(site_position)),
+                    abs(midpoint - site_position),
                     0 if site_kind == "acceptor" else 1,
                     str(site.get("canonical_label") or site.get("label") or ""),
                     site,
                 )
             )
         ranked.sort(key=lambda item: (item[0], item[1], item[2]))
-        for _distance, _kind_rank, label, site in ranked[:max_sites_per_entry]:
-            canonical = str(label or site.get("label") or "").strip()
-            if not canonical or canonical in seen_labels:
-                continue
-            seen_labels.add(canonical)
-            selected.append(site)
-    return selected or splice_sites
+        # Requested outcomes do not replace collateral binding-site context.
+        # Retain every boundary the backend can score, plus nearest boundaries
+        # for an explicit distance observation when all are outside its radius.
+        for rank, (distance, _kind_rank, _label, site) in enumerate(ranked):
+            if rank < max_sites_per_entry or distance <= SPLICE_EVAL_NEARBY_SITE_RADIUS_BP:
+                include(site)
+    return selected
 
 
 def _fallback_splice_sites_for_eval(
@@ -36414,9 +36446,77 @@ def _fallback_splice_sites_for_eval(
     evaluation_targets: List[Dict[str, Any]],
     window_bp: int = 10,
 ) -> List[Dict[str, Any]]:
-    splice_sites = _build_transcript_splice_sites_for_eval(transcript_entry, window_bp=window_bp)
-    targeted = _filter_splice_sites_by_targets(splice_sites, evaluation_targets)
-    return targeted or splice_sites
+    return _build_transcript_splice_sites_for_eval(
+        transcript_entry, window_bp=window_bp, include_terminal_boundaries=False,
+    )
+
+
+def _provided_splice_site_context(
+    transcript_entry: Optional[Dict[str, Any]],
+    transcript_id: str,
+    planned_sites: List[Dict[str, Any]],
+    evaluation_targets: List[Dict[str, Any]],
+    entries: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    from .splicing_agent import SPLICE_EVAL_NEARBY_SITE_RADIUS_BP
+    from .explicit_target_identity import chromosome, strand_symbol
+
+    reference_tid = str(((transcript_entry or {}).get("metadata") or {}).get("versioned_id")
+                        or (transcript_entry or {}).get("versioned_id")
+                        or (transcript_entry or {}).get("transcript_id")
+                        or (transcript_entry or {}).get("id") or transcript_id)
+    reference_compatible = (reference_tid.split(".")[0] == transcript_id.split(".")[0]
+                            and ("." not in transcript_id or reference_tid == transcript_id))
+    annotated = (_fallback_splice_sites_for_eval(transcript_entry, evaluation_targets)
+                 if reference_compatible else [])
+    locus = _transcript_locus_descriptor(transcript_entry) if transcript_entry else {}
+    planned = []
+    for site in planned_sites:
+        if not isinstance(site, dict):
+            continue
+        tid = str(site.get("transcript_id") or reference_tid)
+        if not reference_compatible or tid.split(".")[0] != reference_tid.split(".")[0] or ("." in tid and tid != reference_tid):
+            continue
+        points = [site.get(kind) for kind in ("acceptor", "donor")]
+        if not all(isinstance(point, dict) for point in points):
+            continue
+        if locus and any(
+            chromosome(point.get("chrom")) != chromosome(locus.get("chrom"))
+            or strand_symbol(point.get("strand")) not in (None, strand_symbol(locus.get("strand")))
+            for point in points
+        ):
+            continue
+        planned.append({**site, "transcript_id": reference_tid})
+    sites = _select_relevant_splice_sites(
+        splice_sites=[*planned, *annotated], evaluation_targets=evaluation_targets, entries=entries,
+    )
+    scope = {
+        "transcript_id": reference_tid if reference_compatible else transcript_id,
+        "reference_identity_compatible": reference_compatible,
+        "coordinate_system": "1based_inclusive",
+        "annotated_internal_boundary_count": len(annotated),
+        "planned_site_count": len(planned),
+        "excluded_incompatible_planned_site_count": len(planned_sites) - len(planned),
+        "nearby_radius_from_aso_midpoint_bp": SPLICE_EVAL_NEARBY_SITE_RADIUS_BP,
+        "selection_policy": "Requested target boundaries plus all annotated internal exon boundaries within the scoring radius of each mapped ASO, and its two nearest available boundaries. Transcript terminal ends are not added as annotated splice junctions. Explicit planned sites may also be present.",
+        "selected_sites": [{
+            "label": site.get("canonical_label") or site.get("label"),
+            "site_kind": site.get("site_kind"), "exon_index": site.get("exon_index"),
+            "transcript_id": site.get("transcript_id"),
+            **{key: (site.get(site.get("site_kind")) or {}).get(key)
+               for key in ("chrom", "strand", "position")},
+        } for site in sites],
+        "coverage": "annotated_transcript_and_planned_sites" if annotated else "planned_sites_only" if planned else "unavailable",
+        "interpretation": "Scope of candidate measurement sites, not proof that every site was scored for every ASO. Use each row's recorded deltas and skip reason; unannotated cryptic sites and unsearched transcripts are not exhaustively assessed.",
+    }
+    return sites, scope
+
+
+def _record_provided_splice_skip(entry: Dict[str, Any], reason: str) -> None:
+    summary = {"splice_eval_status": f"skipped_{reason}", "splice_eval_skip_reason": reason}
+    entry["splice_eval_summary"] = summary
+    stages = entry.setdefault("stage_results", {})
+    stages["splice_eval"] = _splice_stage_from_scored_row(summary)
 
 
 _PROVIDED_ASO_SCORED_TILE_FIELDS: Tuple[str, ...] = (
@@ -37410,10 +37510,12 @@ def _evaluate_existing_asos_payload(
             stage_results["splice_eval"] = splice_stage
             entry["stage_results"] = stage_results
         elif splice_related and preferred_hit and not bool(preferred_hit.get("is_contiguous_genomic_span")):
+            _record_provided_splice_skip(entry, "discontinuous_genomic_mapping")
             limitations.append(
                 f"{entry.get('name') or entry.get('aso_id')}: mapping spans discontinuous genomic segments, so splice scoring was skipped."
             )
         elif splice_related and not preferred_hit and not preferred_reference_hit:
+            _record_provided_splice_skip(entry, "no_exact_binding_mapping")
             near_matches = entry.get("near_match_candidates") if isinstance(entry.get("near_match_candidates"), list) else []
             if near_matches:
                 best_near = near_matches[0] if isinstance(near_matches[0], dict) else {}
@@ -37463,13 +37565,18 @@ def _evaluate_existing_asos_payload(
                     splice_sites = build_splice_sites(local_goal, local_iso_label, window_bp=10) or []
                 except Exception:
                     splice_sites = []
-            if not splice_sites:
-                splice_sites = _fallback_splice_sites_for_eval(local_transcript_entry, evaluation_targets, window_bp=10)
-            splice_sites = _select_relevant_splice_sites(
-                splice_sites=splice_sites,
-                evaluation_targets=evaluation_targets,
-                entries=group_entries,
+            splice_sites, site_scope = _provided_splice_site_context(
+                local_transcript_entry, group_transcript_id, splice_sites,
+                evaluation_targets, group_entries,
             )
+            for entry in group_entries:
+                entry.setdefault("splice_eval_summary", {})["site_search_scope"] = deepcopy(site_scope)
+            if not splice_sites:
+                for entry in group_entries:
+                    _record_provided_splice_skip(entry, "splice_site_context_unavailable")
+                    entry["splice_eval_summary"]["site_search_scope"] = deepcopy(site_scope)
+                limitations.append(f"{group_transcript_id}: no compatible splice-site coordinates were available for scoring.")
+                continue
             splice_sites_json = json.dumps({"sites": splice_sites}, ensure_ascii=False) if splice_sites else None
 
             tiles_rows: List[Dict[str, Any]] = []
@@ -37514,7 +37621,7 @@ def _evaluate_existing_asos_payload(
             if skipped_count:
                 denominator = f"/{result_count}" if result_count else ""
                 limitations.append(
-                    f"{group_transcript_id}: splice evaluation skipped {skipped_count}{denominator} ASOs because no splice site was within 2000 bp."
+                    f"{group_transcript_id}: splice evaluation skipped {skipped_count}{denominator} submitted ASOs; consult each ASO's recorded splice_eval_skip_reason and site_search_scope."
                 )
             scored_tiles_path = str(splice_eval.get("scored_tiles_path") or "").strip()
             if not scored_tiles_path or not Path(scored_tiles_path).exists():
@@ -37531,6 +37638,7 @@ def _evaluate_existing_asos_payload(
                     continue
                 entry = by_name[name]
                 entry["splice_eval_summary"] = _splice_summary_from_scored_row(scored_row)
+                entry["splice_eval_summary"]["site_search_scope"] = deepcopy(site_scope)
                 stage_results = entry.get("stage_results") if isinstance(entry.get("stage_results"), dict) else {}
                 stage_results["splice_eval"] = _splice_stage_from_scored_row(scored_row)
                 entry["stage_results"] = stage_results
