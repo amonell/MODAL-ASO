@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import pytest
 
 from aso_agents.analysis_execution import execute_analysis_program, _inexact_decimal_boundary_lines
@@ -413,6 +414,68 @@ def test_stale_files_do_not_satisfy_current_execution(tmp_path):
     result = execute_analysis_program(directory=tmp_path, payload={},
         generate=lambda _: {'python_code':"print('I created a report')"}, required_outputs=[], max_attempts=1)
     assert not result['ok'] and 'did not produce' in result['error']
+
+
+def test_identical_outputs_must_be_recreated_and_previous_bytes_are_preserved(tmp_path):
+    code = ("from pathlib import Path\n"
+            "Path('sandbox_result.json').write_text('{}')\n"
+            "Path('sandbox_summary.md').write_text('Same correct result.')\n")
+    for _ in range(2):
+        result = execute_analysis_program(directory=tmp_path, payload={},
+            generate=lambda _: {'python_code': code}, required_outputs=[], max_attempts=1)
+        assert result['ok']
+    archives = result['attempts'][0]['previous_output_archives']
+    assert len(archives) == 2
+    for item in archives:
+        assert Path(item['archive']).read_bytes() == Path(item['path']).read_bytes()
+        assert json.loads(Path(item['archive']).with_suffix('.json').read_text()) == item
+
+
+def test_metadata_change_alone_cannot_promote_a_stale_alias(tmp_path):
+    work = tmp_path / 'work'
+    work.mkdir()
+    old = work / 'audit.csv'
+    old.write_text('old,wrong\n')
+    requested = tmp_path / 'delivered' / 'audit.csv'
+    code = ("import os\nfrom pathlib import Path\n"
+            "os.utime('audit.csv', (1234567890, 1234567890))\n"
+            "Path('sandbox_result.json').write_text('{}')\n"
+            "Path('sandbox_summary.md').write_text('No new export.')\n")
+    result = execute_analysis_program(directory=work, payload={},
+        generate=lambda _: {'python_code': code}, required_outputs=[requested], max_attempts=1)
+    assert not result['ok'] and 'not created' in result['error']
+    assert not requested.exists() and old.read_text() == 'old,wrong\n'
+
+
+def test_dependency_error_is_repaired_before_program_side_effects(tmp_path):
+    seen = []
+    def generate(payload):
+        seen.append(payload)
+        if len(seen) == 1:
+            return {'python_code': "from pathlib import Path\nPath('side_effect').touch()\nmissing_helper()"}
+        return {'python_code': "from pathlib import Path\nPath('sandbox_result.json').write_text('{}')\nPath('sandbox_summary.md').write_text('Corrected self-contained program.')"}
+    result = execute_analysis_program(directory=tmp_path, payload={}, generate=generate,
+                                      required_outputs=[], max_attempts=2)
+    assert result['ok'] and len(seen) == 2
+    assert 'missing_helper' in seen[1]['execution_repair']['error']
+    assert not (tmp_path / 'side_effect').exists()
+
+
+def test_initial_syntax_error_uses_the_existing_repair_path(tmp_path):
+    result = execute_analysis_program(directory=tmp_path, payload={},
+        generate=lambda _: {'python_code': 'def broken('}, required_outputs=[], max_attempts=1)
+    assert not result['ok'] and 'SyntaxError' in result['error']
+
+
+def test_declared_outputs_cannot_replace_protected_inputs(tmp_path):
+    protected = tmp_path / 'measurements.csv'
+    protected.write_text('id,value\na,1\n')
+    import pytest
+    with pytest.raises(ValueError, match='read-only input'):
+        execute_analysis_program(directory=tmp_path, payload={},
+            generate=lambda _: {'python_code': "print('unused')"},
+            required_outputs=[protected], readonly_outputs=[protected])
+    assert protected.read_text() == 'id,value\na,1\n'
 
 
 def test_execution_repair_receives_real_runtime_types_and_failed_history(tmp_path):

@@ -44,6 +44,8 @@ def apply_program_repair(previous_plan, code, repair):
     if revised == code.strip():
         raise ValueError("The repair did not change the failed program.")
     compile(revised, "generated_code.py", "exec")
+    from .analysis_dependencies import validate_program_dependencies
+    validate_program_dependencies(revised)
     result = deepcopy(previous_plan)
     result["python_code"] = revised
     result["native_code_repair"] = deepcopy(repair)

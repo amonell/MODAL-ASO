@@ -5,6 +5,7 @@ import ast
 import csv
 import json
 import hashlib
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -79,16 +80,52 @@ def _inexact_decimal_boundary_lines(code: str) -> list[int]:
     return sorted(lines)
 
 
-def _file_signature(path: Path) -> tuple[int, int] | None:
-    """Identify a regular file written in this attempt; never follow aliases."""
+def _file_signature(path: Path) -> tuple[int, str] | None:
+    """Fingerprint content; cached network timestamps cannot prove a write."""
     if path.is_symlink() or not path.is_file():
         return None
-    stat = path.stat()
-    return stat.st_mtime_ns, stat.st_size
+    digest = hashlib.sha256()
+    size = 0
+    with path.open('rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            size += len(block)
+            digest.update(block)
+    return size, digest.hexdigest()
+
+
+def _archive_previous_outputs(paths: list[Path], local: Path, archived: list[dict]) -> None:
+    """Preserve existing declared outputs before requiring new files to appear.
+
+    Only explicit outputs are removed from their old locations. Conventional
+    basename aliases may be inputs and are never moved by this helper.
+    """
+    for path in dict.fromkeys(paths):
+        if not path.exists():
+            continue
+        signature = _file_signature(path)
+        if signature is None:
+            raise ValueError(f'Declared output is not a regular file: {path}')
+        backup = local / 'previous_outputs' / str(len(archived))
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('rb') as source, backup.open('xb') as destination:
+            shutil.copyfileobj(source, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        if _file_signature(backup) != signature or _file_signature(path) != signature:
+            raise ValueError(f'Previous output changed while being archived: {path}')
+        entry = {'path': str(path), 'archive': str(backup), 'sha256': signature[1]}
+        # Keep recovery provenance even if a subsequent output cannot be moved
+        # or the process exits before its final execution receipt is written.
+        with backup.with_suffix('.json').open('x') as metadata:
+            metadata.write(json.dumps(entry, indent=2))
+            metadata.flush()
+            os.fsync(metadata.fileno())
+        archived.append(entry)
+        path.unlink()
 
 
 def _promote_same_named_exports(
-    directory: Path, required_outputs: list[Path], before: dict[Path, tuple[int, int] | None],
+    directory: Path, required_outputs: list[Path], before: dict[Path, tuple[int, str] | None],
 ) -> list[tuple[Path, Path]]:
     """Deliver only fresh, unambiguous files saved in conventional work locations.
 
@@ -183,6 +220,9 @@ def execute_analysis_program(
         raise ValueError('Report source tables must be protected read-only inputs')
     directory.mkdir(parents=True, exist_ok=True)
     result_path, summary_path = directory / 'sandbox_result.json', directory / 'sandbox_summary.md'
+    expected_outputs = [result_path, summary_path, *required_outputs]
+    if set(expected_outputs) & set(readonly_outputs):
+        raise ValueError('Generated output paths must not replace read-only input files')
     errors, attempts = [], []
     request = dict(payload)
     request['requested_output_paths'] = [str(p) for p in required_outputs]
@@ -210,9 +250,6 @@ def execute_analysis_program(
         code_path = directory / 'generated_code.py'
         code_path.write_text(code)
         (local / 'generated_code.py').write_text(code)
-        # Do not accept stale outputs from a failed preceding attempt.
-        before = {str(p): (p.stat().st_mtime_ns, p.stat().st_size) for p in
-                  [result_path, summary_path, *required_outputs] if p.is_file()}
         same_named_before = {
             source: _file_signature(source)
             for path in required_outputs
@@ -221,9 +258,12 @@ def execute_analysis_program(
         stdout = stderr = ''
         exit_code = 1
         promoted: list[tuple[Path, Path]] = []
+        archived_outputs: list[dict] = []
         try:
             if not code:
                 raise ValueError('No executable analysis program was returned')
+            from .analysis_dependencies import validate_program_dependencies
+            validate_program_dependencies(code)
             inexact_lines = _inexact_decimal_boundary_lines(code)
             if inexact_lines:
                 raise ValueError(
@@ -234,6 +274,10 @@ def execute_analysis_program(
                     'convert only for final display or serialization.'
                 )
             diagnostic_path = local / "runtime_error.json"
+            # A file's presence after a clean start proves creation without
+            # relying on delayed/coarse/unstable filesystem timestamps. Keep
+            # the previous bytes as evidence, including on unsuccessful retries.
+            _archive_previous_outputs(expected_outputs, local, archived_outputs)
             process = subprocess.run([sys.executable, str(Path(__file__).with_name("analysis_runtime.py")),
                 str(code_path.resolve()), str(diagnostic_path.resolve())], cwd=directory,
                 capture_output=True, text=True, timeout=timeout_seconds)
@@ -248,11 +292,9 @@ def execute_analysis_program(
                     promoted = _promote_same_named_exports(directory, required_outputs, same_named_before)
             missing = [str(p) for p in [result_path, summary_path, *required_outputs] if not p.is_file()]
             if missing:
+                if any(item['path'] in missing for item in archived_outputs):
+                    raise ValueError('The current attempt did not produce its output files: ' + ', '.join(missing))
                 raise ValueError('Requested output files were not created: ' + ', '.join(missing))
-            stale = [str(p) for p in [result_path, summary_path, *required_outputs]
-                     if str(p) in before and before[str(p)] == (p.stat().st_mtime_ns, p.stat().st_size)]
-            if stale:
-                raise ValueError('The current attempt did not produce its output files: ' + ', '.join(stale))
             result = json.loads(result_path.read_text())
             if not isinstance(result, dict):
                 raise ValueError('sandbox_result.json must contain an object')
@@ -269,7 +311,7 @@ def execute_analysis_program(
             if not summary:
                 raise ValueError('Analysis summary is empty')
             error = None
-        except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        except (ValueError, SyntaxError, OSError, subprocess.TimeoutExpired) as exc:
             error = f'{type(exc).__name__}: {exc}'
             for _, output in promoted:
                 output.unlink(missing_ok=True)
@@ -315,6 +357,8 @@ def execute_analysis_program(
                    'code_sha256': hashlib.sha256(code.encode()).hexdigest(),
                    'runtime_diagnostics': diagnostics,
                    'required_outputs':[str(p) for p in required_outputs]}
+        if archived_outputs:
+            receipt['previous_output_archives'] = archived_outputs
         if promoted:
             receipt['promoted_same_named_exports'] = [
                 {'source': str(source), 'requested_output': str(output)} for source, output in promoted]
