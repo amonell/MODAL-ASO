@@ -32410,7 +32410,8 @@ def _native_evaluation_table_rows(payload: Dict[str, Any]) -> List[Dict[str, Any
 
 
 def _requested_output_paths(run_dir: str, requested_outputs: Optional[List[Dict[str, Any]]]) -> List[Path]:
-    """Resolve only explicit requested filenames; no inferred table semantics."""
+    """Resolve filenames or explicit directories without inferring table semantics."""
+    from .requested_artifacts import requested_file_destination
     paths: List[Path] = []
     for item in requested_outputs or []:
         if not isinstance(item, dict):
@@ -32425,6 +32426,8 @@ def _requested_output_paths(run_dir: str, requested_outputs: Optional[List[Dict[
             path = Path(name).expanduser()
             if not path.is_absolute():
                 path = Path(run_dir) / path
+            if explicit:
+                path = requested_file_destination(item, path)
             if path not in paths:
                 paths.append(path)
     return paths

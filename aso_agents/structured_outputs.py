@@ -362,8 +362,8 @@ REQUEST_WORKBENCH_OUTPUT_SCHEMA: Dict[str, Any] = {
                                 {"type": "object", "properties": {
                                     "kind": {"type": "string", "minLength": 1},
                                     "task_id": {"type": ["string", "null"]},
-                                    "path": {"type": ["string", "null"]},
-                                    "format": {"type": ["string", "null"]},
+                                    "path": {"type": ["string", "null"], "description": "Preserve an explicitly requested filename exactly. If the user specifies only an output directory, choose a concrete filename within it or retain the directory with an explicit format; an existing directory or trailing slash is resolved to a separate producer-bound file."},
+                                    "format": {"type": ["string", "null"], "description": "File extension such as csv, md, json or xlsx; required for a directory destination unless an explicit native artifact role determines it."},
                                     "label": {"type": ["string", "null"]},
                                     "source_artifact": {
                                         "type": ["string", "null"],

@@ -3,6 +3,7 @@ import json
 import csv
 import hashlib
 import shutil
+import re
 from pathlib import Path
 
 
@@ -13,6 +14,34 @@ NATIVE_EXPORT_FORMATS = {
     "comparison_table_csv": {".csv"},
     "generated_aso_set_json": {".json"},
 }
+
+
+def requested_file_destination(spec: dict, path: Path) -> Path:
+    """Give a directory request a concrete, producer-bound filename.
+
+    Only filesystem facts or a trailing separator establish a directory.
+    Extensionless filenames remain filenames; labels never establish science.
+    """
+    raw = str(spec.get("path") or "")
+    if not (path.is_dir() or raw.endswith("/")):
+        return path
+    fmt = str(spec.get("format") or "").strip().lower().lstrip(".")
+    if not fmt:
+        key = spec.get("source_artifact") or spec.get("kind")
+        suffixes = NATIVE_EXPORT_FORMATS.get(key, set())
+        if key in {"report", "design_report", "report_markdown"}:
+            fmt = "md"
+        elif suffixes:
+            fmt = sorted(suffixes, key=lambda value: (len(value), value))[0][1:]
+    if not re.fullmatch(r"[a-z0-9]{1,16}", fmt):
+        raise ValueError(f"requested_output_directory_format_required:{path}")
+    identity = {key: spec.get(key) for key in
+                ("task_id", "kind", "label", "source_artifact", "source_scope")}
+    label = spec.get("label") or spec.get("source_artifact") or spec.get("kind") or "result"
+    stem = str(spec.get("task_id") or "result") + "_" + str(label)
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_")[:80] or "result"
+    token = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:8]
+    return path / f"{stem}_{token}.{fmt}"
 
 
 def native_export_key(spec: dict, destination: Path) -> str | None:
