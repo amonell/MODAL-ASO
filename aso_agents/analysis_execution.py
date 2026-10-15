@@ -307,6 +307,8 @@ def execute_analysis_program(
                                  required=bool(payload.get('require_tabular_report_views')),
                                  source_tables=source_tables)
             _validate_completed_evaluation_export_rows(payload, required_outputs)
+            from .analysis_evidence import validate_recorded_export_facts
+            validate_recorded_export_facts(payload, required_outputs)
             if result.get('report_table_rendering'):
                 result_path.write_text(json.dumps(result, indent=2))
             summary = summary_path.read_text().strip()
