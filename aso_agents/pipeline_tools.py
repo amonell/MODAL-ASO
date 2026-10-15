@@ -4586,6 +4586,7 @@ def _apply_shared_region_constraints(
     base_rows: Any,
     output_space: str,
     program: Optional[Dict[str, Any]] = None,
+    base_overlap_requirement: str = "",
 ) -> Tuple[List[List[Any]], Dict[str, Any]]:
     normalized_rows = _normalize_region_rows(base_rows)
     from .mature_steric import uses_mature_rna, compile_regions
@@ -4604,6 +4605,24 @@ def _apply_shared_region_constraints(
         constrained_rows = normalized_rows
     if not isinstance(constraint_meta, dict):
         constraint_meta = {}
+    # A program's reference feature and its nominated binding sites have
+    # independent predicates. For example, an ASO can overlap a short site
+    # while still having to fit completely inside an annotated UTR. Keep
+    # that base predicate when a pooled result is filtered back to this job;
+    # replacing the site's overlap rule would instead overconstrain it.
+    filters = constraint_meta.get("tile_constraint_filters")
+    if normalized_rows and filters and base_overlap_requirement in {
+        "any_overlap", "full_containment", "contains_feature"
+    }:
+        base_filter = {
+            "rows": deepcopy(normalized_rows),
+            "operator": "intersect",
+            "aso_overlap_requirement": base_overlap_requirement,
+            "minimum_overlap_bp": 1,
+        }
+        constraint_meta = deepcopy(constraint_meta)
+        constraint_meta["base_region_filter"] = base_filter
+        constraint_meta["tile_constraint_filters"].append(deepcopy(base_filter))
     return _dedupe_region_rows(constrained_rows), constraint_meta
 
 
@@ -48045,7 +48064,16 @@ def tool_build_steric_regions(
                 base_rows=program_rows,
                 output_space="genomic",
                 program=program,
+                base_overlap_requirement=program_meta.get("tile_overlap_requirement") or "",
             )
+            if constraint_meta.get("error"):
+                return _tool_failure(
+                    state=state, state_path=state_path, tool_name="tool_build_steric_regions",
+                    stage_name="region_assembly", phase="tool_steric_regions_failed",
+                    error_kind="tool_steric_regions_failed", error_message=constraint_meta["error"],
+                    details={"program_id": program.get("program_id"), "region_constraints": constraint_meta},
+                    fatal=True,
+                )
             if constraint_meta:
                 program_meta = dict(program_meta)
                 program_meta["region_constraints"] = constraint_meta
@@ -48628,7 +48656,15 @@ def tool_build_gapmer_regions(
                 base_rows=program_rows,
                 output_space="cdna",
                 program=program,
+                base_overlap_requirement=program_meta.get("tile_overlap_requirement") or "",
             )
+            if constraint_meta.get("error"):
+                return _tool_failure(
+                    state=state, state_path=state_path, tool_name="tool_build_gapmer_regions",
+                    stage_name="region_assembly", phase="tool_gapmer_regions_failed",
+                    error_kind="tool_gapmer_regions_failed", error_message=constraint_meta["error"],
+                    details={"program_id": program.get("program_id"), "region_constraints": constraint_meta},
+                )
             if constraint_meta:
                 program_meta = dict(program_meta)
                 program_meta["region_constraints"] = constraint_meta

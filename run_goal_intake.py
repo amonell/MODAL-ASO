@@ -4367,6 +4367,7 @@ def _splice_relative_window_from_constraint_text(entry: Dict[str, Any]) -> Optio
 
 
 def _normalize_region_constraints(value: Any) -> List[Dict[str, Any]]:
+    from aso_agents.region_overlap import normalize_constraint_operator
     if not isinstance(value, list):
         return []
     normalized: List[Dict[str, Any]] = []
@@ -4379,7 +4380,7 @@ def _normalize_region_constraints(value: Any) -> List[Dict[str, Any]]:
         label = str(entry.get("label") or entry.get("name") or entry.get("constraint_name") or constraint_id).strip()
         if label:
             norm["label"] = label
-        operator = _normalize_bed_operator(entry.get("operator") or entry.get("region_operator"))
+        operator = normalize_constraint_operator(entry.get("operator") or entry.get("region_operator"))
         if operator:
             norm["operator"] = operator
         overlap_requirement = _normalize_aso_overlap_requirement(
@@ -22836,9 +22837,11 @@ def _constraint_rows_in_output_space(
                 return _map_genomic_bed_rows_to_cdna(rows, isoform_transcripts[iso_label_primary], iso_label_primary)
             return []
         if source_space == "cdna" and output_space_norm == "genomic":
-            if iso_label_primary and iso_label_primary in isoform_transcripts:
-                return _map_cdna_bed_rows_to_genomic(rows, isoform_transcripts[iso_label_primary], iso_label_primary)
-            return []
+            from aso_agents.region_projection import genomic_sources
+            sources = genomic_sources(
+                {"isoform_transcripts": isoform_transcripts},
+                {**constraint, "materialized_rows": rows})
+            return [row for source in sources for row in source["genomic_rows"]]
     return []
 
 
@@ -23339,6 +23342,7 @@ def _apply_region_constraints_to_rows(
     program: Optional[Dict[str, Any]] = None,
     expand_for_tile_overlap: bool = True,
 ) -> Tuple[List[List[Any]], Dict[str, Any]]:
+    from aso_agents.region_overlap import normalize_constraint_operator
     normalized_base = _normalize_region_rows(base_rows)
     constraint_entries = _constraint_entries_for_scope(structured_goal, program=program)
     # A parsed explicit-row constraint without a single supplied or
@@ -23356,6 +23360,7 @@ def _apply_region_constraints_to_rows(
         for entry in constraint_entries:
             if (isinstance(entry, dict)
                     and entry.get("source_type") == "explicit_rows"
+                    and normalize_constraint_operator(entry.get("operator")) != "exclude"
                     and entry.get("rows") in (None, [])
                     and entry.get("intervals_bed0_half_open") in (None, [])
                     and entry.get("materialized_rows") in (None, [])
@@ -23367,6 +23372,13 @@ def _apply_region_constraints_to_rows(
     if not constraint_entries:
         return normalized_base, {"constraint_count": 0, "applied_constraints": [],
                                  "ignored_empty_explicit_constraints": ignored_empty_explicit}
+    first_constraint = next((entry for entry in constraint_entries if isinstance(entry, dict)), {})
+    if not normalized_base and normalize_constraint_operator(first_constraint.get("operator")) == "exclude":
+        return [], {
+            "error": "region_constraints_missing_base_for_leading_exclusion",
+            "constraint_count": len(constraint_entries),
+            "explanation": "An initial exclusion needs a resolved base region; its excluded interval cannot define the search domain.",
+        }
 
     iso_label_primary, isoform_transcripts = _select_constraint_primary_isoform(structured_goal)
     scope_overlap_requirement = _constraint_scope_overlap_requirement(constraint_entries) or "any_overlap"
@@ -23386,7 +23398,7 @@ def _apply_region_constraints_to_rows(
     for constraint in constraint_entries:
         if not isinstance(constraint, dict):
             continue
-        operator = _normalize_bed_operator(constraint.get("operator")) or "union"
+        operator = normalize_constraint_operator(constraint.get("operator")) or "union"
         overlap_requirement = _normalize_aso_overlap_requirement(
             constraint.get("aso_overlap_requirement")
         ) or scope_overlap_requirement
@@ -23398,6 +23410,13 @@ def _apply_region_constraints_to_rows(
             isoform_transcripts=isoform_transcripts,
             iso_label_primary=iso_label_primary,
         )
+        if operator == "exclude" and not source_rows:
+            return [], {
+                "error": "region_exclusion_unresolved",
+                "constraint_count": len(constraint_entries),
+                "constraint_id": constraint.get("constraint_id"),
+                "explanation": "The exclusion has no resolved intervals in the output coordinate space; it cannot be treated as an empty forbidden region.",
+            }
         combine_rows = source_rows
         if (
             expand_for_tile_overlap
@@ -23405,14 +23424,28 @@ def _apply_region_constraints_to_rows(
             and overlap_requirement in {"any_overlap", "contains_feature"}
         ):
             combine_rows = _expand_bed_rows_for_tile_overlap(source_rows, tile_len)
-        if current_rows is None:
+        if operator == "exclude":
+            # Exclusion is a predicate on an entire ASO, including its minimum
+            # overlap. Subtracting feature bases here could discard ASOs that
+            # legally overlap fewer than that minimum. A leading exclusion
+            # searches the independent base; later exclusions retain the
+            # preceding candidate domain and are applied after tiling.
+            if current_rows is None:
+                current_rows = _dedupe_region_rows(normalized_base)
+                filter_rows_current = _dedupe_region_rows(normalized_base)
+                applied_operator = "seed_base_for_exclusion"
+            else:
+                applied_operator = "exclude_at_candidate_filter"
+        elif current_rows is None:
             current_rows = _dedupe_region_rows(combine_rows)
             applied_operator = "seed"
         else:
             current_rows = _combine_bed_rows(current_rows, combine_rows, operator)
             current_rows = _dedupe_region_rows(current_rows)
             applied_operator = operator
-        if filter_rows_current is None:
+        if operator == "exclude":
+            pass
+        elif filter_rows_current is None:
             filter_rows_current = _dedupe_region_rows(source_rows)
         else:
             filter_rows_current = _combine_bed_rows(filter_rows_current, source_rows, operator)
@@ -23437,6 +23470,11 @@ def _apply_region_constraints_to_rows(
 
     candidate_rows = _dedupe_region_rows(current_rows or [])
     filter_rows = _dedupe_region_rows(filter_rows_current or [])
+    has_exclusion = any(rule["operator"] == "exclude" for rule in tile_constraint_filters)
+    if has_exclusion:
+        # The coarse gate must not require an ASO to match the excluded site.
+        # Exact Boolean eligibility remains in tile_constraint_filters.
+        filter_rows = candidate_rows
     if not normalized_base and _constraints_can_seed_without_base(constraint_entries):
         constrained_rows = candidate_rows
         tile_filter_rows = filter_rows
@@ -23460,7 +23498,7 @@ def _apply_region_constraints_to_rows(
         "candidate_row_count": len(candidate_rows),
         "constrained_row_count": len(constrained_rows),
         "tile_filter_rows": tile_filter_rows,
-        "tile_overlap_requirement": scope_overlap_requirement,
+        "tile_overlap_requirement": "any_overlap" if has_exclusion else scope_overlap_requirement,
         "tile_constraint_filters": tile_constraint_filters,
     }
 

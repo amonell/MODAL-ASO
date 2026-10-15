@@ -2,6 +2,12 @@
 from typing import Any, Dict, Iterable, List, Tuple
 
 
+def normalize_constraint_operator(value):
+    """Candidate predicates also support include/exclude, unlike BED merging."""
+    text = str(value or "").strip().lower()
+    return text if text in {"union", "include", "intersect", "exclude"} else None
+
+
 def interval_matches(start: int, end: int, feature_start: int, feature_end: int,
                      requirement: str = "any_overlap", minimum_overlap_bp: int = 1) -> bool:
     overlap = max(0, min(end, feature_end) - max(start, feature_start))
