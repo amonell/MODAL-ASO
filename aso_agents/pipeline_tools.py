@@ -33825,7 +33825,10 @@ def _build_sandbox_declared_inputs(
                 rows = source_payload.get("rows") if isinstance(source_payload, dict) else None
                 if isinstance(rows, list):
                     reference_path = child / "artifacts/intake/structured_goal.json"
-                    reference_goal = _read_json(reference_path) if reference_path.is_file() else {}
+                    reference_bytes = reference_path.read_bytes() if reference_path.is_file() else None
+                    reference_goal = json.loads(reference_bytes) if reference_bytes is not None else {}
+                    if not isinstance(reference_goal, dict):
+                        raise ValueError(f"Recorded design contract must be a JSON object: {reference_path}")
                     native_report_path = child / "report.md"
                     native_report_text = native_report_path.read_text(encoding="utf-8", errors="replace") if native_report_path.is_file() else ""
                     evidence_fields = (
@@ -33847,6 +33850,12 @@ def _build_sandbox_declared_inputs(
                         ],
                         "rows_truncated": len(rows) > 100,
                         "source_csv_path": str(panel) if panel.is_file() and panel.resolve().is_relative_to(child.resolve()) else None,
+                        "source_design_contract": {
+                            "source_path": str(reference_path) if reference_bytes is not None else None,
+                            "source_sha256": hashlib.sha256(reference_bytes).hexdigest() if reference_bytes is not None else None,
+                            "structured_goal": deepcopy(reference_goal) if reference_bytes is not None else None,
+                            "scope": "Recorded source-run requirements and configuration. Current analysis instructions may explicitly request different criteria; keep those separate.",
+                        },
                         "reference_context": {
                             "gene_symbol": reference_goal.get("gene_symbol"),
                             "species": reference_goal.get("species"),
