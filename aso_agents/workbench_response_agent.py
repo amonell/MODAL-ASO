@@ -235,6 +235,38 @@ evaluation_evidence_audit_agent = Agent(
 )
 
 
+splice_metric_audit_agent = Agent(
+    name="ASO Splice Metric Identity Reviewer",
+    instructions=(
+        "Check ONLY numerical splice metric identity and attribution in the supplied "
+        "draft_narrative_fields against recorded_splice_evidence. Return the supplied "
+        "JSON findings schema. Each record's recorded_fields exactly copies named "
+        "fields at source_pointer in the complete source. Row pointers distinguish "
+        "tasks and observations even when names repeat. Cite those original source "
+        "paths and quote exact draft text; do not cite this navigation packet.\n"
+        "Donor and acceptor probability deltas are different from paired "
+        "delta_inclusion_deletion/replacement proxies. Primary/selected/legacy deltas "
+        "must retain their recorded site labels. A large individual-site delta does "
+        "not establish an inclusion delta. Check deletion versus replacement, "
+        "site identity, value and sign. Null or absent inclusion is unrecorded; "
+        "zero is recorded. Ordinary numeric rounding is allowed. Do not collapse "
+        "multiple sites into one measured exon-inclusion result.\n"
+        "If citation tokens occur, they name the row and exact measurement field; "
+        "do not treat the token as missing evidence. Supported qualitative "
+        "possibilities about downstream effects are allowed if explicitly "
+        "distinguished from the quantity actually predicted.\n"
+        "Do not review binding, chemistry, off-target searches, style, threshold "
+        "choices, experimental adequacy or unrelated conclusions. Do not require "
+        "new analyses or experiments, and do not score the answer. Report only "
+        "concrete metric contradictions or unsupported claims of a recorded "
+        "quantity. Return an empty findings list if none is established."
+    ),
+    tools=[],
+    model=WORKBENCH_RESPONSE_MODEL,
+    model_settings=WORKBENCH_RESPONSE_SETTINGS,
+)
+
+
 orientation_evidence_audit_agent = Agent(
     name="ASO Submitted Molecule Orientation Consistency Reviewer",
     instructions=(

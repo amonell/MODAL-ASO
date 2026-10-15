@@ -173,6 +173,36 @@ def response_audit_context(source, response):
     }
 
 
+def splice_metric_audit_packet(source, response):
+    """One compact metric check when individual splice-site values are present."""
+    index = splice_metric_index(source)
+    site_metrics = {
+        'delta_acceptor_deletion', 'delta_acceptor_replacement',
+        'delta_donor_deletion', 'delta_donor_replacement',
+        'delta_deletion', 'delta_replacement',
+        'primary_delta_deletion', 'primary_delta_replacement',
+        'selected_delta_deletion', 'selected_delta_replacement',
+    }
+    if not any(key in site_metrics and value not in (None, '', [], {})
+               for row in index for record in row['measurements']
+               for key, value in record['recorded_fields'].items()):
+        return None
+    return {'recorded_splice_evidence': index,
+            'draft_narrative_fields': narrative_fields(response),
+            'scope': 'Only metric identity, numerical value, perturbation and site attribution; no efficacy, binding, off-target or prose-style judgment.'}
+
+
+def splice_metric_finding_errors(audit, response, source):
+    errors = response_audit_contract_errors(audit, response, source)
+    pointers = {record['source_pointer'] for row in splice_metric_index(source)
+                for record in row['measurements']}
+    for finding in audit.get('findings') or []:
+        if not any(path == base or path.startswith(base + '/')
+                   for path in finding.get('evidence_paths') or [] for base in pointers):
+            errors.append('Splice metric finding must cite the recorded measurement source.')
+    return errors
+
+
 def panel_comparison_audit_packet(source, response):
     """Review comparative prose against the full recorded panel, not one batch.
 

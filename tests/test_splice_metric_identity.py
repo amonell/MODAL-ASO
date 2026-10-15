@@ -92,3 +92,66 @@ def test_audit_navigation_keeps_named_metrics_and_repeated_rows_in_their_tasks()
     assert index[0]['measurements'][0]['recorded_fields']['delta_inclusion_replacement'] is None
     assert index[1]['measurements'][0]['recorded_fields']['delta_inclusion_replacement'] == 0.0
     assert context['source'] == source == before
+
+
+def test_focused_check_only_runs_for_recorded_individual_site_metrics():
+    from aso_agents.evaluation_response_audit import splice_metric_audit_packet
+    draft = {'markdown': 'Reported prediction.'}
+    assert splice_metric_audit_packet({'provided_asos': []}, draft) is None
+    source = {'provided_asos': [{'splice_eval_summary': {'delta_inclusion_replacement': -0.3}}]}
+    assert splice_metric_audit_packet(source, draft) is None
+    source['provided_asos'][0]['splice_eval_summary']['delta_replacement'] = 0.0
+    assert splice_metric_audit_packet(source, draft)['recorded_splice_evidence']
+
+
+def test_focused_review_repairs_only_the_bound_narrative(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from aso_agents.response_context import decode_response_context
+    from aso_agents.evaluation_response_audit import splice_metric_finding_errors
+    from aso_agents.workbench_response_agent import (
+        evaluation_evidence_audit_agent, evaluation_evidence_repair_agent, splice_metric_audit_agent)
+    source = {'task_type': 'build_composite_report', 'completed_tasks': [
+        {'task_id': 'neutral', 'payload': {'provided_asos': [
+            {'name': 'neutral', 'input_row_id': 'row-1', 'splice_eval_summary': {
+                'delta_inclusion_replacement': None, 'delta_replacement': -0.73,
+                'delta_names': 'acceptor@410'}}]}}]}
+    before = deepcopy(source)
+    first = {'answer_summary': 'Recorded predictions.',
+             'markdown': 'Exon inclusion replacement delta is -0.73.'}
+    corrected = 'The acceptor-site replacement delta is -0.73; inclusion was not recorded.'
+    path = '/completed_tasks/0/payload/provided_asos/0/splice_eval_summary'
+    finding = {'response_path': '/markdown', 'quote': first['markdown'],
+               'kind': 'contradicted_fact', 'evidence_paths': [path],
+               'reason': 'An individual acceptor value was relabeled as an unrecorded inclusion proxy.'}
+    assert splice_metric_finding_errors({'findings': [finding]}, first, source) == []
+    wrong = {**finding, 'evidence_paths': ['/completed_tasks/0/task_id']}
+    assert splice_metric_finding_errors({'findings': [wrong]}, first, source)
+    calls = []
+
+    async def run(agent, **kwargs):
+        body = json.loads(kwargs['input'])
+        if body.get('context_encoding'):
+            body = decode_response_context(body)
+        calls.append(agent.name)
+        if agent.name == evaluation_evidence_audit_agent.name:
+            assert body['source'] == before
+            answer = {'findings': []}
+        elif agent.name == splice_metric_audit_agent.name:
+            assert body['recorded_splice_evidence'][0]['row_identity']['name'] == 'neutral'
+            answer = {'findings': [finding] if body['draft_narrative_fields']['/markdown'] == first['markdown'] else []}
+        elif agent.name == evaluation_evidence_repair_agent.name:
+            assert body['allowed_narrative_repair_paths'] == ['/markdown']
+            assert body['source'] == before
+            answer = {'corrections': {'/markdown': corrected}}
+        else:
+            raise AssertionError(agent.name)
+        return SimpleNamespace(final_output=json.dumps(answer))
+
+    monkeypatch.setattr(pipeline.Runner, 'run', run)
+    result = asyncio.run(pipeline._run_workbench_response_batch_once(source, initial_response=first))
+    assert result['markdown'] == corrected
+    assert result['answer_summary'] == first['answer_summary']
+    assert result['native_consistency_review']['splice_metric_identity_audit']
+    assert calls.count(splice_metric_audit_agent.name) == 2
+    assert source == before

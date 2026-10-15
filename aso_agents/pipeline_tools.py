@@ -19166,11 +19166,13 @@ async def _run_workbench_response_batch_once(payload: Dict[str, Any], *, artifac
     from .workbench_response_agent import (evaluation_evidence_audit_agent,
                                            orientation_evidence_audit_agent,
                                            panel_comparison_audit_agent,
+                                           splice_metric_audit_agent,
                                            evaluation_evidence_repair_agent)
     archive = None
     if artifact_dir is not None:
         configuration = report_configuration((workbench_response_agent, evaluation_evidence_audit_agent,
                                                orientation_evidence_audit_agent, panel_comparison_audit_agent,
+                                               splice_metric_audit_agent,
                                                evaluation_evidence_repair_agent))
         archive = ResponseArtifacts(artifact_dir, payload, configuration)
     try:
@@ -19199,11 +19201,13 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
         orientation_audit_packets, panel_comparison_audit_packet, panel_comparison_finding_errors,
         chemical_position_audit_packets, filter_chemical_position_findings,
         correct_native_chemical_position_claims,
+        splice_metric_audit_packet, splice_metric_finding_errors,
     )
     from .workbench_response_agent import (evaluation_evidence_audit_agent,
                                            orientation_evidence_audit_agent,
                                            chemical_position_audit_agent,
                                            panel_comparison_audit_agent,
+                                           splice_metric_audit_agent,
                                            evaluation_evidence_repair_agent)
     delivery_schema = evaluation_delivery_schema(payload)
     prompt = render_response_context({**payload, "output_schema": delivery_schema} if delivery_schema else payload)
@@ -19385,6 +19389,30 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
                         errors = ['Orientation evidence consistency finding: ' + json.dumps(
                             finding, ensure_ascii=False) for finding in focused_findings]
                         break
+            metric_packet = splice_metric_audit_packet(payload, response) if not errors else None
+            if metric_packet:
+                review_attempts += 1
+                metric_agent = _agent_with_strict_output_schema(
+                    splice_metric_audit_agent, schema_name='aso_splice_metric_identity', schema=audit_schema)
+                if archive:
+                    archive.record(f'round-{attempt + 1}-splice-metric-audit-request', metric_packet)
+                metric_audit = await _run_schema_validated_agent_once(
+                    agent=metric_agent, prompt=render_response_context(metric_packet), schema=audit_schema,
+                    error_prefix='splice_metric_identity_review',
+                    contract_validator=lambda result: _json_schema_validation_errors(result, audit_schema)
+                        or splice_metric_finding_errors(result, response, payload),
+                    attempt_observer=(lambda number, data: archive.record(
+                        f'round-{attempt + 1}-splice-metric-audit-call-{number}', data)) if archive else None,
+                )
+                if archive:
+                    archive.record(f'round-{attempt + 1}-splice-metric-audit', metric_audit)
+                if metric_audit.get('error'):
+                    raise RuntimeError('splice_metric_identity_review_failed: ' + str(metric_audit))
+                metric_findings = response_audit_repair_findings(metric_audit, response, payload)
+                if metric_findings:
+                    next_repair_findings = metric_findings
+                    errors = ['Splice metric identity finding: ' + json.dumps(
+                        finding, ensure_ascii=False) for finding in metric_findings]
             chemical_packets = (chemical_position_audit_packets(payload, response)
                                 if not errors and payload.get('task_type') == 'evaluate_existing_aso_set' else [])
             for packet_index, packet in enumerate(chemical_packets, 1):
@@ -19455,6 +19483,7 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
                 response['native_consistency_review']['chemical_position_audit_packets'] = len(chemical_packets)
                 response['native_consistency_review']['chemical_position_findings_rejected_as_unverified'] = rejected_focused_findings
                 response['native_consistency_review']['full_panel_comparison_audit'] = bool(panel_packet)
+                response['native_consistency_review']['splice_metric_identity_audit'] = bool(metric_packet)
                 if conservative_fields:
                     response['native_consistency_review']['conservative_narrative_fields'] = sorted(conservative_fields)
         if errors and not scoped and all('Unknown evaluation measurement reference' in error for error in errors):
