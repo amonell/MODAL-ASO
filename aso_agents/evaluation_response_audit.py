@@ -6,6 +6,7 @@ the supplied measurements. Findings must quote the draft and cite real evidence.
 from copy import deepcopy
 import hashlib
 import json
+import re
 
 
 _NARRATIVE_FIELDS = {
@@ -201,6 +202,18 @@ def splice_metric_finding_errors(audit, response, source):
                    for path in finding.get('evidence_paths') or [] for base in pointers):
             errors.append('Splice metric finding must cite the recorded measurement source.')
     return errors
+
+
+def filter_splice_metric_findings(audit):
+    """A compact metric inventory cannot establish unrelated evidence absence."""
+    admitted, rejected = [], []
+    for finding in audit.get('findings') or []:
+        quote = str(finding.get('quote') or '')
+        if re.search(r'(?<![A-Za-z])(?:splice|splicing|inclusion|acceptor|donor|delta)(?![A-Za-z])', quote, re.I):
+            admitted.append(finding)
+        else:
+            rejected.append({'finding': finding, 'reason': 'Quoted claim does not identify a splice metric; outside this focused evidence scope.'})
+    return admitted, rejected
 
 
 def panel_comparison_audit_packet(source, response):

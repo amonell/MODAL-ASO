@@ -67,6 +67,10 @@ def test_absent_metrics_stay_unknown_and_zero_stays_recorded():
     assert pipeline._summary_row_skip_measurement({}) == (None, None)
     row = {'splice_eval_summary': {'delta_inclusion_deletion': None, 'delta_deletion': 0.0}}
     assert pipeline._summary_row_skip_measurement(row) == ('delta_deletion', 0.0)
+    selected = {'splice_eval_summary': {'primary_label': 'acceptor@410', 'primary_delta_deletion': 0.0}}
+    assert pipeline._summary_row_has_splice_score(selected)
+    assert pipeline._summary_row_skip_measurement(selected) == ('primary_delta_deletion', 0.0)
+    assert pipeline._summary_splice_site_label(selected) == 'acceptor@410'
 
 
 def test_audit_navigation_keeps_named_metrics_and_repeated_rows_in_their_tasks():
@@ -102,6 +106,15 @@ def test_focused_check_only_runs_for_recorded_individual_site_metrics():
     assert splice_metric_audit_packet(source, draft) is None
     source['provided_asos'][0]['splice_eval_summary']['delta_replacement'] = 0.0
     assert splice_metric_audit_packet(source, draft)['recorded_splice_evidence']
+
+
+def test_unrelated_absence_claim_is_not_admitted_from_splice_only_packet():
+    from aso_agents.evaluation_response_audit import filter_splice_metric_findings
+    metric = {'quote': 'delta_acceptor_replacement is -0.73'}
+    unrelated = {'quote': 'The exact off-target gene count is zero.'}
+    admitted, rejected = filter_splice_metric_findings({'findings': [unrelated, metric]})
+    assert admitted == [metric]
+    assert [item['finding'] for item in rejected] == [unrelated]
 
 
 def test_focused_review_repairs_only_the_bound_narrative(monkeypatch):

@@ -19201,7 +19201,7 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
         orientation_audit_packets, panel_comparison_audit_packet, panel_comparison_finding_errors,
         chemical_position_audit_packets, filter_chemical_position_findings,
         correct_native_chemical_position_claims,
-        splice_metric_audit_packet, splice_metric_finding_errors,
+        splice_metric_audit_packet, splice_metric_finding_errors, filter_splice_metric_findings,
     )
     from .workbench_response_agent import (evaluation_evidence_audit_agent,
                                            orientation_evidence_audit_agent,
@@ -19233,6 +19233,7 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
     field_repairs = {}
     conservative_fields = set()
     rejected_focused_findings = 0
+    rejected_metric_findings = 0
     serialization_attempts = 0
     attempt = -1
     while True:
@@ -19408,7 +19409,11 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
                     archive.record(f'round-{attempt + 1}-splice-metric-audit', metric_audit)
                 if metric_audit.get('error'):
                     raise RuntimeError('splice_metric_identity_review_failed: ' + str(metric_audit))
-                metric_findings = response_audit_repair_findings(metric_audit, response, payload)
+                admissible, rejected = filter_splice_metric_findings(metric_audit)
+                rejected_metric_findings += len(rejected)
+                if archive and rejected:
+                    archive.record(f'round-{attempt + 1}-splice-metric-rejected-findings', rejected)
+                metric_findings = response_audit_repair_findings({'findings': admissible}, response, payload)
                 if metric_findings:
                     next_repair_findings = metric_findings
                     errors = ['Splice metric identity finding: ' + json.dumps(
@@ -19484,6 +19489,7 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
                 response['native_consistency_review']['chemical_position_findings_rejected_as_unverified'] = rejected_focused_findings
                 response['native_consistency_review']['full_panel_comparison_audit'] = bool(panel_packet)
                 response['native_consistency_review']['splice_metric_identity_audit'] = bool(metric_packet)
+                response['native_consistency_review']['splice_metric_findings_rejected_outside_scope'] = rejected_metric_findings
                 if conservative_fields:
                     response['native_consistency_review']['conservative_narrative_fields'] = sorted(conservative_fields)
         if errors and not scoped and all('Unknown evaluation measurement reference' in error for error in errors):
@@ -31462,6 +31468,10 @@ _SPLICE_DELTA_KEYS = (
     "delta_inclusion_replacement",
     "delta_deletion",
     "delta_replacement",
+    "primary_delta_deletion",
+    "primary_delta_replacement",
+    "selected_delta_deletion",
+    "selected_delta_replacement",
 )
 
 
@@ -31553,7 +31563,7 @@ def _summary_row_skip_measurement(row: Dict[str, Any]) -> Tuple[Optional[str], O
 
 
 def _summary_splice_site_label(row: Dict[str, Any]) -> str:
-    for key in ("delta_names", "nearest_splice_site_label", "shared_context_label"):
+    for key in ("primary_label", "selected_label", "delta_names", "nearest_splice_site_label", "shared_context_label"):
         value = _summary_text(_summary_splice_lookup(row, key))
         if value:
             return value
