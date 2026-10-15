@@ -355,6 +355,9 @@ def execute_analysis_program(
         diagnostics = json.loads(diagnostic_path.read_text()) if diagnostic_path.is_file() else {}
         receipt = {'attempt':attempt, 'exit_code':exit_code, 'error':error,
                    'code_sha256': hashlib.sha256(code.encode()).hexdigest(),
+                   'program_path': str(local / 'generated_code.py'),
+                   'plan_path': str(local / 'plan.json'),
+                   'plan_file_sha256': hashlib.sha256((local / 'plan.json').read_bytes()).hexdigest(),
                    'runtime_diagnostics': diagnostics,
                    'required_outputs':[str(p) for p in required_outputs]}
         if archived_outputs:

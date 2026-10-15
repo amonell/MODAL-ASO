@@ -19429,7 +19429,7 @@ async def _run_sandbox_analysis_agent_once(payload: Dict[str, Any]) -> Dict[str,
         from .analysis_repair import repair_schema, apply_program_repair
         from .sandbox_analysis_agent import analysis_program_repair_agent
         code = repair_context["previous_code"]
-        schema = repair_schema(code)
+        schema = repair_schema(code, repair_context.get("previous_plan") or {})
         agent = _agent_with_strict_output_schema(
             analysis_program_repair_agent, schema_name="aso_analysis_program_repair", schema=schema)
         def validate(candidate):

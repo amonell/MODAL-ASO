@@ -60,6 +60,9 @@ sandbox_analysis_agent = Agent(
         "- If execution_repair is supplied, fix that concrete execution/output error using the unchanged declared inputs and requested criteria.\n"
         "- Do not import network libraries or mutate repo code.\n"
         "- Keep the code deterministic, concise, and self-contained.\n"
+        "- Before returning, reconcile analysis_plan, assumptions, limitations and expected_outputs "
+        "with the actual program. Describe only implemented conversions, calculations and output "
+        "paths. If code violates a user requirement, fix the code rather than rewriting that requirement.\n"
         "- If a requested calculation cannot be completed from the declared inputs, write a result explaining that limitation instead of failing.\n"
         "Return JSON only."
     ),
@@ -73,12 +76,19 @@ analysis_program_repair_agent = Agent(
     name="ASO Analysis Program Repair",
     instructions=(
         "Repair the supplied failed analysis program through the supplied line-edit schema. "
-        "The program hash and one-based inclusive line spans bind edits to the exact failed code. "
+        "The program hash and one-based inclusive line spans bind edits to the exact failed code; "
+        "base_plan_sha256 binds descriptive updates to the exact previous plan. "
         "Use the concrete traceback, runtime variable types and previous failed attempts. "
         "Preserve the declared input sources, requested calculations, filtering criteria, missing-data "
-        "semantics, scientific plan and output paths. Correct execution and serialization faults; "
+        "semantics, scientific scope and user-required output paths. Correct execution and serialization faults; "
         "do not replace an unavailable observation with a number or rewrite the scientific task. "
-        "Return the structured edits, not a replacement analysis plan."
+        "Inspect the complete revised program and previous analysis_plan, assumptions, limitations "
+        "and expected_outputs. Use plan_updates for descriptive fields that no longer accurately "
+        "describe that program, including preexisting implementation claims the program never fulfilled. "
+        "Each update replaces only the named descriptive field. Keep accurate fields unchanged; "
+        "return an empty plan_updates array when none needs correction. These descriptions do not "
+        "override the execution_contract or user requirements: fix code that violates those requirements, "
+        "rather than changing text to excuse it. Return the bound structured edits, not an entire new plan."
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
