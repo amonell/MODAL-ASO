@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import math
@@ -81,6 +82,23 @@ def _remove_waiter(path: Path, handle: IO[str] | None) -> None:
         _release_lock(handle)
 
 
+def _try_exclusive_lock(handle: IO[str]) -> bool:
+    """Probe a lock without assuming one filesystem's contention errno.
+
+    Network filesystems can report EACCES for a conflicting nonblocking
+    lock where a local filesystem reports EAGAIN. Only these lock-operation
+    errors mean contention; file-open permissions and other failures propagate.
+    """
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        if exc.errno in {errno.EACCES, errno.EAGAIN}:
+            return False
+        raise
+    return True
+
+
 def _create_waiter(root: Path, resource: str) -> tuple[Path, IO[str]]:
     """Create a live, process-owned FIFO ticket for one resource request."""
 
@@ -113,16 +131,14 @@ def _ordered_live_waiters(waiter_root: Path) -> list[Path]:
             probe = path.open("r+")
         except FileNotFoundError:
             continue
-        try:
-            fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            probe.close()
-            live.append(path)
-            continue
-        try:
-            path.unlink(missing_ok=True)
-        finally:
-            _release_lock(probe)
+        with probe:
+            if not _try_exclusive_lock(probe):
+                live.append(path)
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            finally:
+                fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
     return live
 
 
@@ -202,11 +218,11 @@ def acquire_resource(
                         root / f"{normalized}.{candidate}.lock"
                     ).open("a+")
                     try:
-                        fcntl.flock(
-                            candidate_handle.fileno(),
-                            fcntl.LOCK_EX | fcntl.LOCK_NB,
-                        )
-                    except BlockingIOError:
+                        acquired = _try_exclusive_lock(candidate_handle)
+                    except BaseException:
+                        candidate_handle.close()
+                        raise
+                    if not acquired:
                         candidate_handle.close()
                         continue
                     handle = candidate_handle
