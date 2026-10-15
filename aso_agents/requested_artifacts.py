@@ -31,7 +31,8 @@ def native_export_key(spec: dict, destination: Path) -> str | None:
     return key
 
 
-def copy_native_export(source: Path, destination: Path, *, scope: dict | None = None) -> dict:
+def copy_native_export(source: Path, destination: Path, *, scope: dict | None = None,
+                       source_root: Path | None = None) -> dict:
     """Reuse the producer's exact observations and conclusions, with provenance."""
     errors = requested_artifact_errors([source])
     if errors:
@@ -77,6 +78,10 @@ def copy_native_export(source: Path, destination: Path, *, scope: dict | None = 
                     'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
                     'method':'native_artifact_row_selection','scope':scope,
                     'row_count':len(selected),'source_row_count':len(rows)}
+    if (source.resolve() != destination.resolve()
+            and source.suffix.lower() in {'.md', '.markdown', '.html', '.htm'}):
+        from .report_exports import export_native_report
+        return export_native_report(source, destination, source_root=source_root or source.parent)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source.resolve() != destination.resolve():
         shutil.copy2(source, destination)

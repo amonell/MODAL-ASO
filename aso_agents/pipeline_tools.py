@@ -32683,7 +32683,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
         if key:
             if key not in catalog:
                 raise ValueError(f"requested_output_native_source_unavailable:{task_id}:{key}")
-            native_exports.append(copy_native_export(Path(catalog[key]), path, scope=json.loads(scope_json)))
+            native_exports.append(copy_native_export(Path(catalog[key]), path, scope=json.loads(scope_json),
+                                                     source_root=Path(run_dir)))
     attempted_paths = list(pending)
     copied = {item["destination"] for item in native_exports}
     pending = [path for path in pending if str(path) not in copied]
@@ -32790,7 +32791,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                            ".markdown": "report_md"}.get(path.suffix.lower())
                     source = catalog.get(key) if key else None
                     if source and Path(source).is_file():
-                        fallback_exports.append(copy_native_export(Path(source), path))
+                        fallback_exports.append(copy_native_export(Path(source), path, source_root=Path(run_dir)))
     errors = requested_artifact_errors(requested)
     fallback_complete = bool(fallback_exports) and not errors and all(
         str(path) in {item["destination"] for item in fallback_exports}
