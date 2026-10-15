@@ -421,6 +421,8 @@ def prepare_responses_payload(
             raise TypeError(
                 "LLM request preparation failed: canonical output schema is missing."
             )
+        from aso_agents.schema_prompt import compact_schema_for_prompt
+
         schema_instruction = (
             "Return exactly one JSON value satisfying the following canonical JSON "
             "Schema. The schema is authoritative: use only its declared keys, put "
@@ -428,7 +430,7 @@ def prepare_responses_payload(
             "not add aliases or commentary.\n\n"
             f"Schema name: {output_schema_name}\n"
             + json.dumps(
-                canonical_output_schema,
+                compact_schema_for_prompt(canonical_output_schema),
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
