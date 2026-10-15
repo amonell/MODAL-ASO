@@ -85,6 +85,7 @@ def response_audit_context(source, response):
         'identity_resolution', 'reference_context', 'transcript_version_status',
         'near_match_search', 'near_match_search_scope', 'off_target_count_scope',
         'stage_statuses', 'requested_feature_membership',
+        'evaluation_targets', 'context_summary', 'splice_eval_summary',
     }
     index = []
     stack = [('', source)]

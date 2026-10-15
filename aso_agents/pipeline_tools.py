@@ -19253,7 +19253,9 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
         if errors and scoped:
             response = deepcopy(preceding_response)
             next_repair_findings = bounded_repair_findings
-        if not errors and payload.get('task_type') in {'evaluate_existing_aso_set', 'compare_aso_sets'}:
+        if not errors and payload.get('task_type') in {
+            'evaluate_existing_aso_set', 'compare_aso_sets', 'build_composite_report',
+        }:
             if payload.get('task_type') == 'evaluate_existing_aso_set':
                 corrected, chemical_corrections = correct_native_chemical_position_claims(
                     payload, response)
