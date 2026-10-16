@@ -1040,8 +1040,8 @@ def test_provided_aso_scoring_merges_duplicate_sequences_by_row_index(tmp_path: 
             return {"status": "complete", "row_count": len(payload["rows"])}
 
     rows = [
-        {"name": "duplicate", "sequence": "AAAA", "comparison_sequence": "TTTT", "stage_results": {}},
-        {"name": "duplicate", "sequence": "AAAA", "comparison_sequence": "TTTT", "stage_results": {}},
+        {"name": "duplicate", "sequence": "AAAA", "comparison_sequence": "TTTT", "chemistry": "steric-hindrance", "stage_results": {}},
+        {"name": "duplicate", "sequence": "AAAA", "comparison_sequence": "TTTT", "chemistry": "steric-hindrance", "stage_results": {}},
     ]
 
     summary = pipeline_tools._score_provided_asos_with_existing_pipeline(

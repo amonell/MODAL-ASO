@@ -18281,6 +18281,8 @@ async def _run_verified_request_workbench_agent_once(
     request_evidence: Optional[str] = None,
 ) -> Dict[str, Any]:
     user_evidence = prompt if request_evidence is None else request_evidence
+    from .request_artifact_evidence import append_request_artifact_evidence
+    prompt = append_request_artifact_evidence(sys.modules[__name__], prompt, user_evidence)
     planned = await _run_request_workbench_agent_once(prompt)
     if str(planned.get("error") or "").strip():
         return planned
