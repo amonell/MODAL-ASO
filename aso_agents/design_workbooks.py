@@ -168,6 +168,22 @@ def _source_value(row, field):
     return row[field]
 
 
+def _validate_recorded_columns(columns, catalog):
+    """Distinguish a missing row value from a nonexistent source-field name."""
+    available = {field for row in catalog for field in row["recorded_fields"]}
+    invalid = [f"{header} <- {field}" for header, field in columns.items()
+               if isinstance(field, str) and field.startswith("recorded:")
+               and field.removeprefix("recorded:") not in available]
+    if invalid:
+        canonical = sorted({field for row in catalog for field in row})
+        raise ValueError("Unknown recorded design columns: " + "; ".join(invalid)
+                         + ". These pointers are absent from every source row in this task. "
+                         "For canonical aliases use the field name directly, without recorded:/. "
+                         "Canonical fields: " + ", ".join(canonical)
+                         + ". Use recorded: only with an actual key in recorded_fields; "
+                         "observed nulls and missing values in individual rows remain unknown.")
+
+
 def write_design_catalog(declared, path):
     """Expose the renderer's exact row schema as a protected analysis input."""
     rows, sources = _catalog(declared)
@@ -255,6 +271,8 @@ class DesignWorkbook:
             raise ValueError("Duplicate design table sheet")
         if coverage not in {"subset", "all_raw", "all_final"}:
             raise ValueError("Unknown design table coverage")
+        _validate_recorded_columns(columns, [row for row in self._rows.values()
+                                            if task_id is None or row["task_id"] == task_id])
         extra_values = [{} for _ in rows] if extra_values is None else extra_values
         if len(extra_values) != len(rows):
             raise ValueError("Extra values must correspond one-to-one with source rows")
@@ -412,6 +430,8 @@ def validate_design_workbooks(payload, result, required_outputs):
                 raise ValueError("Design table is empty")
             headers = list(values[0])
             columns = table.get("columns") or {}
+            _validate_recorded_columns(columns, [row for row in rows
+                                                if table.get("task_id") is None or row["task_id"] == table["task_id"]])
             if any(columns.get(name) != name for name in CORE_COLUMNS):
                 raise ValueError("Design table must bind every core source column")
             if any(headers.count(name) != 1 for name in columns):
