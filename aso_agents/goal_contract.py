@@ -8,6 +8,33 @@ from typing import Any, Dict, List
 from .coordinate_contract import COORDINATE_ORIGIN_INSTRUCTIONS
 
 
+def canonical_gapmer_programs_exclude_splicing(goal: Any) -> bool:
+    """Explicit RNase-H programs do not imply a splice route from isoform metadata.
+
+    Keep legacy/incomplete goals and explicit splice requests with their existing
+    resolvers. Isoform abundance and preservation metadata also describe direct
+    mature-RNA knockdown and cannot alone turn its coordinates into splice sites.
+    """
+    if not isinstance(goal, dict):
+        return False
+    programs = goal.get("design_programs")
+    if not isinstance(programs, list) or not programs:
+        return False
+    if any(not isinstance(program, dict)
+           or str(program.get("modality") or "").strip().lower() != "gapmer"
+           or str(program.get("intent") or "").strip().lower() != "knockdown"
+           for program in programs):
+        return False
+    for scope in [goal, *programs]:
+        if str(scope.get("desired_effect") or "").strip().lower() in {"inclusion", "skipping"}:
+            return False
+        for flag in ("run_splice_eval", "run_splice_router"):
+            value = scope.get(flag)
+            if value is not None and str(value).strip().lower() not in {"", "false", "no", "n", "0"}:
+                return False
+    return True
+
+
 CANONICAL_TARGET_TYPES = frozenset({
     "gene", "transcript", "transcript_cohort", "isoform", "isoform_cohort",
     "exon", "splice_junction", "splice_acceptor", "splice_donor", "splice_site",

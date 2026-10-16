@@ -70,7 +70,7 @@ if (
     )
 
 from agents import Agent, Runner
-from aso_agents.goal_contract import canonical_resolution_capability_catalog
+from aso_agents.goal_contract import canonical_resolution_capability_catalog, canonical_gapmer_programs_exclude_splicing
 from aso_agents.goal_intake_agent import (
     binding_site_constraint_repair_agent,
     physical_site_scope_agent,
@@ -12075,6 +12075,8 @@ def _evaluation_targets_are_splice_scoped(structured_goal: Dict[str, Any]) -> bo
 
     if not isinstance(structured_goal, dict):
         return False
+    if canonical_gapmer_programs_exclude_splicing(structured_goal):
+        return False
     if str(structured_goal.get("intent") or "").strip().lower() == "splice_modulation":
         return True
     if structured_goal.get("run_splice_router") is True or structured_goal.get("run_splice_eval") is True:
@@ -16219,6 +16221,8 @@ def _resolve_run_splice_router(
     structured_goal: Dict[str, Any],
     user_request: str,
 ) -> bool:
+    if canonical_gapmer_programs_exclude_splicing(structured_goal):
+        return False
     program_modes = _summarize_steric_program_modes(structured_goal)
     if program_modes["has_steric_programs"]:
         return bool(program_modes["run_splice_router"] or program_modes["run_splice_eval"])
@@ -16247,6 +16251,8 @@ def _resolve_run_splice_router(
 
 
 def _resolve_run_splice_eval(structured_goal: Dict[str, Any]) -> bool:
+    if canonical_gapmer_programs_exclude_splicing(structured_goal):
+        return False
     program_modes = _summarize_steric_program_modes(structured_goal)
     if program_modes["has_steric_programs"]:
         return bool(program_modes["run_splice_eval"])
@@ -16278,6 +16284,8 @@ def _resolve_run_splice_eval(structured_goal: Dict[str, Any]) -> bool:
 def _should_skip_splice_strategy(structured_goal: Dict[str, Any]) -> bool:
     if not isinstance(structured_goal, dict):
         return False
+    if canonical_gapmer_programs_exclude_splicing(structured_goal):
+        return True
     if _coerce_bool(structured_goal.get("run_splice_router")) is True:
         return False
 
@@ -17081,6 +17089,8 @@ def _generate_splice_strategy_analysis(
     isoform_objectives: Optional[List[Dict[str, Any]]],
     user_request: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
+    if canonical_gapmer_programs_exclude_splicing(structured_goal):
+        return None
     if not isoform_transcripts or not splice_plan:
         return None
 

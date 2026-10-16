@@ -39,6 +39,7 @@ from aso_agents.goal_contract import (
     CANONICAL_GOAL_COLLECTION_FIELDS,
     CANONICAL_GOAL_FIELD_SCHEMAS,
     CANONICAL_TASK_TYPES,
+    canonical_gapmer_programs_exclude_splicing,
     canonical_goal_destination_catalog,
     canonical_goal_field_registry,
     canonical_goal_requirement_catalog,
@@ -39356,6 +39357,8 @@ def _scoped_steric_splice_requirement(final_payload, structured_goal, stage):
     jobs = _get_design_jobs(final_payload, "steric")
     programs = _design_programs(structured_goal, "steric")
     if not jobs and not programs:
+        if canonical_gapmer_programs_exclude_splicing(structured_goal):
+            return False
         return None
     resolver = (_design_request_requires_splice_eval if stage == "eval"
                 else _design_request_requires_splice_router)
@@ -40454,6 +40457,8 @@ def _explicit_splice_coordinate_intent(structured_goal: Any, authored_text: Any)
     Ambiguous cases stay with ordinary semantic intake and clarification.
     """
     goal = structured_goal if isinstance(structured_goal, dict) else {}
+    if canonical_gapmer_programs_exclude_splicing(goal):
+        return False
     programs = [p for p in goal.get("design_programs") or [] if isinstance(p, dict)]
     intents = {str(p.get("intent") or "").strip().lower() for p in [goal, *programs]}
     if "splice_modulation" in intents:
