@@ -36785,6 +36785,12 @@ def _record_provided_splice_skip(entry: Dict[str, Any], reason: str) -> None:
 
 
 _PROVIDED_ASO_SCORED_TILE_FIELDS: Tuple[str, ...] = (
+    "off_target_observed_gene_ids_by_mismatch",
+    "off_target_observed_genes_by_mismatch",
+    "off_target_unclassified_alignments",
+    "Off_target_1mm_count",
+    "Off_target_2mm_count",
+    "Off_target_3mm_count",
     "off_target_count_scope",
     "off_target_count_status",
     "off_target_query_sequence",
@@ -36990,6 +36996,7 @@ def _write_provided_aso_tiles_json(
 
 
 def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=None) -> Dict[str, Any]:
+    from .mismatch_screening import annotate_mismatch_bins
     path = Path(str(tiles_json_path or ""))
     if not path.exists():
         return {"status": "not_run", "error": "tiles_json_missing"}
@@ -37008,7 +37015,16 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
         gene_names = _normalize_text_list(row.get("Off_target_genes") or row.get("off_target_genes"))
         gene_count = _optional_int(row.get("off_target_gene_count"))
         junction = (count_scope or {}).get("junction_search_summary") or {}
-        incomplete = bool(row.get("off_target_mapping_capped") or junction.get("error") or junction.get("skipped_chrom"))
+        incomplete = bool(row.get("off_target_mapping_capped") or row.get("off_target_unclassified_alignments")
+                          or junction.get("error") or junction.get("skipped_chrom")
+                          or junction.get("skipped_ambiguous_windows"))
+        budget = (count_scope or {}).get("mismatch_budget", 0)
+        if budget:
+            annotate_mismatch_bins(row, budget, incomplete)
+            row["off_target_query_sequence"] = row.get("Sequence")
+            row["off_target_count_scope"] = deepcopy(count_scope)
+            updated += 1
+            continue
         row["off_target_observed_gene_count"] = gene_count
         row["off_target_count_status"] = "incomplete" if incomplete else "complete_within_declared_scope" if gene_count is not None else "unavailable"
         if incomplete:
@@ -37045,6 +37061,8 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
         columns["off_target_query_sequence"] = "string"
         columns["off_target_query_role"] = "string"
         columns["off_target_observed_gene_count"] = "number"
+        for mm in (1, 2, 3):
+            columns[f"Off_target_{mm}mm_count"] = "number"
     try:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
@@ -37080,7 +37098,8 @@ def _merge_scored_tiles_into_provided_asos(
                 entry[field] = deepcopy(scored[field])
         if scored.get("off_target_count_status") in {"incomplete", "unavailable"}:
             for field in ("off_target_gene_count", "Off_target_exact_count", "Times_mapped_off_target_genes",
-                          "Off_target_total_upto_mismatch_count", "Off_target_weighted_risk_score"):
+                          "Off_target_total_upto_mismatch_count", "Off_target_weighted_risk_score",
+                          "Off_target_1mm_count", "Off_target_2mm_count", "Off_target_3mm_count"):
                 entry[field] = None
         if scored.get("off_target_gene_count") is not None or scored.get("Off_target_exact_count") is not None:
             off_target_scored += 1
@@ -37092,12 +37111,13 @@ def _merge_scored_tiles_into_provided_asos(
         if scored.get("off_target_gene_count") is not None or scored.get("Off_target_exact_count") is not None:
             stage_results["off_target_mapping"] = {
                 "status": "pass",
-                "reason_code": "provided_aso_exact_offtarget",
-                "method": "exact_genome_exon_junction_mapping",
+                "reason_code": "provided_aso_scoped_offtarget",
+                "method": "ungapped_genome_exon_junction_mapping",
+                "mismatch_budget": scored.get("Off_target_mismatch_budget", 0),
             }
         elif scored.get("off_target_count_status") in {"incomplete", "unavailable"}:
             stage_results["off_target_mapping"] = {"status": scored["off_target_count_status"],
-                "reason_code": "count_search_incomplete_or_unavailable", "method": "exact_genome_exon_junction_mapping"}
+                "reason_code": "count_search_incomplete_or_unavailable", "method": "ungapped_genome_exon_junction_mapping"}
         if scored.get("isoform_uniqueness_score") is not None or scored.get("isoform_uniqueness_count") is not None:
             stage_results["uniqueness_scoring"] = {
                 "status": "pass",
@@ -37211,7 +37231,7 @@ def _score_provided_asos_with_existing_pipeline(
         "method": "provided_sequence_measurements_with_chemistry_scoped_ranking",
         "notes": [
             "Sequences are scored using their mapped transcript-oriented target-site sequence when available.",
-            "The exact gene-screening count combines exon-contained genomic matches and adjacent annotated junction matches under off_target_count_scope. It excludes the entire target gene and is not a genome-wide binding count; mismatch/indel and intronic-only selectivity are not established.",
+            "Gene-screening counts combine exon-contained genomic matches and adjacent annotated junction matches at the recorded substitution budget under off_target_count_scope. The entire target gene is excluded. Higher mismatch budgets, indels and intronic-only selectivity are not established; this is not a genome-wide binding count.",
         ],
     }
     if not rows:
@@ -37267,7 +37287,7 @@ def _score_provided_asos_with_existing_pipeline(
         except Exception as exc:
             expression_summary = {"error": f"off_target_expression_failed:{exc}"}
     elif isinstance(off_target_summary, dict) and not off_target_summary.get("error"):
-        expression_summary = {"status": "not_run", "reason": "no_exact_off_target_hits"}
+        expression_summary = {"status": "not_run", "reason": "no_off_target_hits_within_recorded_scope"}
     if isinstance(expression_summary, dict):
         scoring_summary["off_target_expression"] = expression_summary
 

@@ -24394,12 +24394,15 @@ def _collect_junction_off_targets(
     sequences: List[str],
     species_key: str,
     target_gene_id: Optional[str],
+    max_mismatches: int = 0,
 ) -> Tuple[Dict[str, Dict[str, Set[str]]], Dict[str, Any]]:
+    from aso_agents.mismatch_screening import MismatchQueryIndex, empty_hits, add_hit
     unique_seqs = sorted({seq.upper() for seq in sequences if isinstance(seq, str) and seq})
     lengths = sorted({len(seq) for seq in unique_seqs if len(seq) > 1})
     summary: Dict[str, Any] = {
         "queries": len(unique_seqs),
         "lengths": lengths,
+        "mismatch_budget": max_mismatches,
     }
     if not unique_seqs or not lengths:
         summary["error"] = "junction_no_sequences"
@@ -24419,6 +24422,7 @@ def _collect_junction_off_targets(
     queries_by_len: Dict[int, Set[str]] = {}
     for seq in unique_seqs:
         queries_by_len.setdefault(len(seq), set()).add(seq)
+    query_index = MismatchQueryIndex(unique_seqs, max_mismatches) if max_mismatches else None
 
     max_len = max(lengths) - 1
     if max_len <= 0:
@@ -24426,12 +24430,13 @@ def _collect_junction_off_targets(
         return {}, summary
 
     hits: Dict[str, Dict[str, Set[str]]] = {
-        seq: {"transcripts": set(), "gene_ids": set(), "gene_names": set()} for seq in unique_seqs
+        seq: empty_hits(max_mismatches) for seq in unique_seqs
     }
     junctions_scanned = 0
     matched_queries: Set[str] = set()
     matched_transcripts = 0
     skipped_chrom = 0
+    skipped_ambiguous_windows = 0
 
     for tx_id, entry in transcripts.items():
         if not isinstance(entry, dict):
@@ -24479,15 +24484,13 @@ def _collect_junction_off_targets(
                     continue
                 for k in range(min_k, max_k + 1):
                     seq = left_tail[-k:] + right_head[: length - k]
-                    if seq in query_set:
-                        hit = hits.get(seq)
-                        if not hit:
-                            continue
-                        hit["transcripts"].add(tx_id)
-                        hit["gene_ids"].add(gene_id_norm or gene_id)
-                        if gene_name:
-                            hit["gene_names"].add(str(gene_name))
-                        matched_queries.add(seq)
+                    if query_index and set(seq) - set("ACGT"):
+                        skipped_ambiguous_windows += 1
+                    matches = query_index.matches(seq) if query_index else [(seq, 0)] if seq in query_set else []
+                    for query, mismatches in matches:
+                        add_hit(hits[query], tx_id, gene_id_norm or gene_id,
+                                str(gene_name) if gene_name else None, mismatches)
+                        matched_queries.add(query)
                         matched_transcripts += 1
 
     summary["junctions_scanned"] = junctions_scanned
@@ -24495,6 +24498,8 @@ def _collect_junction_off_targets(
     summary["matched_transcripts"] = matched_transcripts
     if skipped_chrom:
         summary["skipped_chrom"] = skipped_chrom
+    if skipped_ambiguous_windows:
+        summary["skipped_ambiguous_windows"] = skipped_ambiguous_windows
     return hits, summary
 
 
@@ -24503,6 +24508,12 @@ def _annotate_gapmer_off_targets(
     structured_goal: Dict[str, Any],
     parameter_constraints: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
+    from aso_agents.mismatch_screening import MismatchQueryIndex, empty_hits, add_hit, sam_substitution_count, annotate_mismatch_bins
+    from aso_agents.tiling_agent import _resolve_num_mismatches
+    mismatch_goal = dict(structured_goal)
+    if not isinstance(mismatch_goal.get("constraints"), dict) and isinstance(parameter_constraints, dict):
+        mismatch_goal["constraints"] = parameter_constraints
+    mismatch_budget = _resolve_num_mismatches(mismatch_goal, default=0)
     if not tiles_json_path or not os.path.exists(tiles_json_path):
         return None
     try:
@@ -24541,6 +24552,8 @@ def _annotate_gapmer_off_targets(
         return {"error": "off_target_no_sequences"}
 
     unique_seqs = sorted({seq for seq in sequences if seq})
+    if mismatch_budget:
+        MismatchQueryIndex(unique_seqs, mismatch_budget)  # Validate before launching a search.
     qname_to_seq: Dict[str, str] = {}
     artifact_stem = Path(tiles_json_path).stem
     fasta_path = os.path.join(os.path.dirname(tiles_json_path), artifact_stem + ".offtarget_queries.fasta")
@@ -24581,7 +24594,7 @@ def _annotate_gapmer_off_targets(
         "-a",
         "-f",
         "-v",
-        "0",
+        str(mismatch_budget),
         "-y",
         "-m",
         str(mapper_alignment_cap),
@@ -24593,9 +24606,10 @@ def _annotate_gapmer_off_targets(
     cmd += ["--sam", "--sam-nohead", "--no-unal", "--seed", "1", bowtie_index, fasta_path]
 
     seq_hits: Dict[str, Dict[str, Set[str]]] = {
-        seq: {"transcripts": set(), "gene_ids": set(), "gene_names": set()} for seq in unique_seqs
+        seq: empty_hits(mismatch_budget) for seq in unique_seqs
     }
     total_alignments = 0
+    unclassified_queries: Set[str] = set()
     try:
         process = subprocess.Popen(
             cmd,
@@ -24626,6 +24640,10 @@ def _annotate_gapmer_off_targets(
         seq = qname_to_seq.get(qname)
         if not seq:
             continue
+        mismatches = sam_substitution_count(parts, mismatch_budget) if mismatch_budget else 0
+        if mismatches is None:
+            unclassified_queries.add(seq)
+            continue
         chrom_bucket = _resolve_chrom_bins(chrom_bins, rname)
         if not chrom_bucket:
             continue
@@ -24641,10 +24659,7 @@ def _annotate_gapmer_off_targets(
                 if exon_start <= start0 and exon_end >= end0:
                     if target_gene_id and gid == target_gene_id:
                         continue
-                    seq_hits[seq]["transcripts"].add(tid)
-                    seq_hits[seq]["gene_ids"].add(gid)
-                    if gname:
-                        seq_hits[seq]["gene_names"].add(gname)
+                    add_hit(seq_hits[seq], tid, gid, gname, mismatches)
         total_alignments += 1
 
     stderr = process.stderr.read() if process.stderr else ""
@@ -24670,6 +24685,7 @@ def _annotate_gapmer_off_targets(
         unique_seqs,
         species_key,
         target_gene_id,
+        **({"max_mismatches": mismatch_budget} if mismatch_budget else {}),
     )
     if junction_hits:
         for seq, hits in junction_hits.items():
@@ -24681,6 +24697,10 @@ def _annotate_gapmer_off_targets(
             seq_bucket["transcripts"].update(hits.get("transcripts", set()))
             seq_bucket["gene_ids"].update(hits.get("gene_ids", set()))
             seq_bucket["gene_names"].update(hits.get("gene_names", set()))
+            if mismatch_budget:
+                for mm, bucket in (hits.get("by_mismatch") or {}).items():
+                    for kind in ("transcripts", "gene_ids", "gene_names"):
+                        seq_bucket["by_mismatch"][mm][kind].update(bucket.get(kind, set()))
 
     columns = (tiles.get("schema") or {}).get("columns") or {}
     updated_rows: List[Dict[str, Any]] = []
@@ -24707,6 +24727,15 @@ def _annotate_gapmer_off_targets(
         gene_ids = sorted(set(existing_gene_ids).union(hits["gene_ids"]))
         gene_names = sorted(set(existing_gene_names).union(hits["gene_names"]))
         transcripts = sorted(set(existing_tx).union(hits["transcripts"]))
+        if mismatch_budget:
+            # Older lists may use a different mismatch budget or count scope.
+            gene_ids, gene_names, transcripts = [sorted(hits[k]) for k in ("gene_ids", "gene_names", "transcripts")]
+            row["off_target_observed_gene_ids_by_mismatch"] = {
+                f"{mm}mm": sorted(bucket["gene_ids"]) for mm, bucket in hits["by_mismatch"].items()}
+            row["off_target_observed_genes_by_mismatch"] = {
+                f"{mm}mm": sorted(bucket["gene_names"]) for mm, bucket in hits["by_mismatch"].items()}
+            row["Off_target_mismatch_budget"] = mismatch_budget
+            row["off_target_unclassified_alignments"] = seq in unclassified_queries
         row["Off_target_transcript_ids"] = transcripts
         row["Off_target_gene_ids"] = gene_ids
         row["Off_target_genes"] = gene_names
@@ -24718,6 +24747,10 @@ def _annotate_gapmer_off_targets(
         if seq in overmapped_sequences:
             row["off_target_mapping_count_lower_bound"] = mapper_alignment_cap + 1
             row["off_target_mapping_capped"] = True
+        if mismatch_budget:
+            annotate_mismatch_bins(row, mismatch_budget, bool(
+                seq in overmapped_sequences or seq in unclassified_queries or junction_summary.get("error")
+                or junction_summary.get("skipped_chrom") or junction_summary.get("skipped_ambiguous_windows")))
         if transcripts or gene_ids or gene_names:
             rows_with_hits += 1
         updated_rows.append(row)
@@ -24730,6 +24763,15 @@ def _annotate_gapmer_off_targets(
     columns.setdefault("Times_mapped_off_target_genes", "number")
     columns.setdefault("off_target_mapping_count_lower_bound", "number")
     columns.setdefault("off_target_mapping_capped", "boolean")
+    if mismatch_budget:
+        columns["off_target_observed_gene_ids_by_mismatch"] = "object"
+        columns["off_target_observed_genes_by_mismatch"] = "object"
+        columns["Off_target_mismatch_budget"] = "integer"
+        columns["off_target_unclassified_alignments"] = "boolean"
+        for mm in (0, 1, 2, 3):
+            columns[f"Off_target_{'exact' if mm == 0 else str(mm) + 'mm'}_count"] = "number"
+        columns["Off_target_gene_ids_by_mismatch"] = "object"
+        columns["Off_target_genes_by_mismatch"] = "object"
     tiles["rows"] = updated_rows
     tiles.setdefault("schema", {})["columns"] = columns
 
@@ -24747,13 +24789,15 @@ def _annotate_gapmer_off_targets(
         "requested_max_binding_sites": requested_limit,
         "mapper_alignment_cap": mapper_alignment_cap,
         "overmapped_queries": len(overmapped_sequences),
+        "mismatch_budget": mismatch_budget,
+        "unclassified_query_count": len(unclassified_queries),
         "junction_mapping": junction_summary,
         "search_provenance": {
             "species": species_key,
             "assembly": species_config.ensembl_assembly,
             "genomic_index": bowtie_index,
             "exon_annotation": os.fspath(species_config.gtf_path),
-            "genomic_search": "Bowtie exact 0-mismatch alignments, all reported alignments up to mapper cap",
+            "genomic_search": f"Bowtie ungapped alignments with up to {mismatch_budget} substitutions, all reported alignments up to mapper cap",
             "junction_search": (
                 "annotated transcript exon junctions from genome FASTA and GTF"
                 if not junction_summary.get("error") else "unavailable"

@@ -88,6 +88,7 @@ def exact_gene_count_scope(config, target_gene_id, mapping_summary):
     """Describe the actual two-component native screening algorithm, not efficacy."""
     annotation = Path(config.gtf_path)
     genome = Path(config.genome_fasta)
+    budget = mapping_summary.get("mismatch_budget", 0)
     return {
         "metric": "distinct annotated non-target gene screening count; not a genome-wide binding or safety count",
         "count_unit": "unique version-stripped GTF gene IDs; union of genomic-exon and adjacent-junction hits",
@@ -96,20 +97,23 @@ def exact_gene_count_scope(config, target_gene_id, mapping_summary):
         "annotation_gtf": str(annotation.resolve()),
         "annotation_bytes": annotation.stat().st_size if annotation.is_file() else None,
         "bowtie_index_prefix": str(config.bowtie_prefix),
-        "genomic_search": "Bowtie 1: -a -f -v 0 -y -m 2000 --max <overmapped.fasta> --sam --sam-nohead --no-unal --seed 1; seed length equals shortest query length",
+        "genomic_search": f"Bowtie 1: -a -f -v {budget} -y -m 2000 --max <overmapped.fasta> --sam --sam-nohead --no-unal --seed 1; seed length equals shortest query length",
         "counted_genomic_rna_universe": "Only ungapped genomic hits wholly contained within an annotated GTF exon contribute genes. Intronic-only and intergenic hits do not contribute to this count.",
         "genomic_strand_policy": "Bowtie searches both genomic strands; exon-to-gene assignment does not require the SAM alignment strand to match the GTF transcript strand. This is a screening proxy, not a strand-specific antisense binding count.",
         "junction_search": "Enumerate windows spanning each pair of adjacent annotated exons in transcript order, using reference genome bases and GTF strand; require at least one query base on each side. Windows spanning more than one junction are not enumerated.",
-        "junction_strand_policy": "Transcript-oriented junction sequence must exactly equal the recorded query sequence; the junction search does not additionally reverse-complement the query.",
-        "mismatch_policy": "0 substitutions only; 1/2/3-mismatch searches not performed",
-        "indel_policy": "ungapped exact matching; insertion/deletion alignments not searched",
+        "junction_strand_policy": f"Transcript-oriented junction sequence must match the recorded query with at most {budget} substitutions; the junction search does not additionally reverse-complement the query.",
+        "mismatch_policy": f"Ungapped substitutions from 0 through {budget}, classified by exact Hamming distance. Higher mismatch bins are unsearched.",
+        "mismatch_budget": budget,
+        "mismatch_bin_count_unit": "Distinct genes within each distance bin; a gene can occur in several bins. The total is a deduplicated union, not the sum of bins.",
+        "weighted_risk_definition": "Unvalidated screening heuristic: sum of each bin's distinct gene count divided by (1 + substitutions); not measured affinity, safety or potency.",
+        "indel_policy": "ungapped matching; insertion/deletion alignments not searched",
         "intended_target_exclusion": "Exclude the entire target gene, including all its transcripts and loci, by version-stripped gene ID; not just the requested site or transcript.",
         "excluded_gene_id": str(target_gene_id or "").split('.')[0] or None,
         "exclusion_applied": bool(target_gene_id),
         "genomic_alignment_cap_per_query": mapping_summary.get("mapper_alignment_cap", 2000),
         "overmapped_query_count": mapping_summary.get("overmapped_queries"),
         "junction_search_summary": deepcopy(mapping_summary.get("junction_mapping") or {}),
-        "limitations": "Does not establish mismatched, intronic/pre-mRNA, strand-specific or experimental selectivity. Same-gene isoform selectivity is outside this count. Inspect the per-row query sequence/role and completeness status before interpreting a zero.",
+        "limitations": "Does not establish binding outside the recorded substitution budget, intronic/pre-mRNA, strand-specific or experimental selectivity. Same-gene isoform selectivity is outside this count. Inspect the per-row query sequence/role and completeness status before interpreting a zero.",
     }
 
 
