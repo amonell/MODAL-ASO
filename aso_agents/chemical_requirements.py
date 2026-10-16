@@ -21,6 +21,11 @@ chemical_requirement_agent = Agent(
         "Record each constraint with its source_id, exact supporting quote, operator equals/one_of/excludes "
         "and a typed value. The output is a fixed object with one nullable entry per named field. "
         "Use null for unstated fields. Wing chemistry and gap chemistry are distinct fields. "
+        "Wing counts describe explicitly specified segments of a gapmer partition, not the total "
+        "oligo length or the number of modified residues. A fully modified steric chain is not one "
+        "long gapmer wing. Record its total residue count as length and an explicit absence of a "
+        "DNA gap as dna_gap=0 and gap_chemistry=none; leave unstated wing counts null. Preserve "
+        "any explicitly stated segment counts, including zeros, even if they are incompatible. "
         "Platform is functional gapmer/steric_blocker architecture, not a sugar name. "
         "Equals uses a scalar for sugars/counts/policies, arrays for "
         "position-specific linkages or attached groups. One_of uses a JSON array of alternative complete values; "
@@ -45,8 +50,10 @@ FIELD_TYPES = {
     'wing_chemistry': {'type':'string', 'description':'Wing sugar or fully modified steric sugar. Use 2MOE, 2OME, MORPHOLINO for those stated identities; preserve other identities verbatim. DNA in a gap belongs in gap_chemistry.'},
     'gap_chemistry': {'type':'string', 'description':'Sugar in the central gap: DNA, none for explicitly absent gap, or verbatim different identity.'},
     'backbone': {'type':'string', 'description':'PS, PO, PHOSPHORODIAMIDATE for these identities, or a verbatim different backbone.'},
-    'wing_5prime': {'type':'integer', 'minimum':0}, 'dna_gap': {'type':'integer', 'minimum':0, 'description':'Count of DNA nucleotides in central gap. No DNA gap means zero.'},
-    'wing_3prime': {'type':'integer', 'minimum':0}, 'length': {'type':'integer','minimum':1},
+    'wing_5prime': {'type':'integer', 'minimum':0, 'description':'Explicit residue count in the 5prime segment of a wing-gap-wing partition. A fully modified chain does not state a wing count; its total count belongs in length.'},
+    'dna_gap': {'type':'integer', 'minimum':0, 'description':'Count of DNA nucleotides in central gap. No DNA gap means zero.'},
+    'wing_3prime': {'type':'integer', 'minimum':0, 'description':'Explicit residue count in the 3prime segment of a wing-gap-wing partition. Do not infer zero or another wing count from an unpartitioned fully modified chain.'},
+    'length': {'type':'integer','minimum':1, 'description':'Total number of residues in the whole oligo, independently of whether a wing-gap-wing partition is specified.'},
     'linkages': {'type':'array', 'items':{'type':'string'}, 'description':'One 5prime-to-3prime PS/PO entry per internucleotide bond.'},
     'cytosine_methylation': {'type':'string','description':'all for all cytosines 5-methylated, none for all unmethylated, or a verbatim different policy. Never confuse OMe with base methylation.'},
     'stereochemistry': {'type':'string','description':'Explicit stereochemical requirement verbatim.'},
