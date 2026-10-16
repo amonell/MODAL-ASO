@@ -32583,6 +32583,28 @@ def _write_requested_evaluation_exports(
     return outputs
 
 
+def _native_design_producer(state: Dict[str, Any], run_dir: str, task_id: str) -> Optional[Path]:
+    """Resolve one completed design's root from its own recorded task result."""
+    envelope = state.get("request_envelope") or {}
+    tasks = envelope.get("tasks") or []
+    task = next((item for item in tasks if item.get("task_id") == task_id), None)
+    if task is None or task.get("task_type") != "design_new_asos":
+        return None
+    producer = Path(run_dir).resolve()
+    root_name = "v3_tasks" if envelope.get("schema_version") == "v3" else "v2_tasks"
+    result_path = _run_path(run_dir, root_name, task_id, "design_task_result.json")
+    if result_path.is_file():
+        result = _read_json(result_path)
+        child = Path(result.get("child_run_dir") or "").resolve()
+        child_root = producer / "child_runs"
+        if (result.get("task_id") != task_id or child == child_root
+                or not child.is_relative_to(child_root)
+                or result.get("child_status") not in {"run_complete", "completed"}):
+            raise ValueError("requested_output_native_producer_invalid:" + task_id)
+        return child
+    return producer if len(tasks) == 1 else None
+
+
 def _native_export_catalog(state: Dict[str, Any], run_dir: str, task_id: str) -> Dict[str, str]:
     """Bind artifacts to their recorded producer, without selecting a sibling."""
     envelope = state.get("request_envelope") or {}
@@ -32592,18 +32614,8 @@ def _native_export_catalog(state: Dict[str, Any], run_dir: str, task_id: str) ->
         return {}
     producer = Path(run_dir).resolve()
     if task.get("task_type") == "design_new_asos":
-        root_name = "v3_tasks" if envelope.get("schema_version") == "v3" else "v2_tasks"
-        result_path = _run_path(run_dir, root_name, task_id, "design_task_result.json")
-        if result_path.is_file():
-            result = _read_json(result_path)
-            child = Path(result.get("child_run_dir") or "").resolve()
-            child_root = producer / "child_runs"
-            if (result.get("task_id") != task_id or child == child_root
-                    or not child.is_relative_to(child_root)
-                    or result.get("child_status") not in {"run_complete", "completed"}):
-                raise ValueError("requested_output_native_producer_invalid:" + task_id)
-            producer = child
-        elif len(tasks) != 1:
+        producer = _native_design_producer(state, run_dir, task_id)
+        if producer is None:
             return {}
     elif task.get("task_type") == "compare_aso_sets" or (
         task.get("task_type") != "build_composite_report" and len(tasks) != 1
@@ -32868,6 +32880,20 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
     evaluation_evidence = _bounded_completed_evaluation_evidence(state)
     if evaluation_evidence:
         declared["completed_run"]["evaluation_evidence"] = evaluation_evidence
+    from .design_export_evidence import design_export_evidence
+    design_evidence = []
+    for task_id, task in tasks_by_id.items():
+        if task.get("task_type") != "design_new_asos":
+            continue
+        try:
+            producer = _native_design_producer(state, run_dir, task_id)
+        except ValueError as exc:
+            design_evidence.append({"task_id": task_id, "sources": [], "resolution_error": str(exc)})
+            continue
+        if producer is not None:
+            design_evidence.append(design_export_evidence(task_id, producer, _run_path))
+    if design_evidence:
+        declared["completed_run"]["design_evidence"] = design_evidence
     # The file inventory identifies the native report but does not convey its
     # scientific statements to the output writer. Include bounded source text
     # so chemistry, screening scope, unknown bins and ranking provenance can
@@ -32904,7 +32930,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
         readonly_outputs=list(dict.fromkeys(
             [path for path in requested if path not in pending]
             + [Path(path) for catalog in native_sources.values() for path in catalog.values()
-               if Path(path) not in pending])),
+               if Path(path) not in pending]
+            + [Path(source["path"]) for evidence in design_evidence for source in evidence["sources"]])),
         max_attempts=3 - len(prior_attempts),
     )
     fallback_exports = []
