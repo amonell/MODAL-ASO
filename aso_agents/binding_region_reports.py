@@ -95,6 +95,20 @@ def physical_splice_element_overlaps(intervals, transcript_catalog):
     BED0 target intervals and one-based inclusive exon coordinates are kept
     separate. A response-site prediction is never used as a binding location.
     """
+    return _splice_element_contexts(intervals, transcript_catalog, crossed_only=True)
+
+
+def annotated_splice_contexts(intervals, transcript_catalog):
+    """Reference frames for targets overlapping an exon or its adjacent intron.
+
+    Retain noncrossing targets with an observed zero overlap on the other side.
+    Multiple transcripts, boundaries and target blocks remain separate records.
+    These genomic frames do not imply splice-site binding or a functional effect.
+    """
+    return _splice_element_contexts(intervals, transcript_catalog, crossed_only=False)
+
+
+def _splice_element_contexts(intervals, transcript_catalog, *, crossed_only):
     if not isinstance(transcript_catalog, dict):
         return []
     elements, seen = [], set()
@@ -161,7 +175,9 @@ def physical_splice_element_overlaps(intervals, transcript_catalog):
                 for kind, boundary, intron_start, intron_end, intron_ordinal in boundaries:
                     intronic_bp = max(0, min(target_end, intron_end) - max(target_start, intron_start) + 1)
                     exonic_bp = max(0, min(target_end, exon_end) - max(target_start, exon_start) + 1)
-                    if not intronic_bp or not exonic_bp:
+                    if not (intronic_bp or exonic_bp):
+                        continue
+                    if crossed_only and not (intronic_bp and exonic_bp):
                         continue
                     key = (transcript_id, chrom, strand, ordinal, kind, boundary,
                            target_start, target_end)
@@ -177,6 +193,14 @@ def physical_splice_element_overlaps(intervals, transcript_catalog):
                         "exonic_overlap_bp": exonic_bp, "intronic_overlap_bp": intronic_bp,
                         "evidence_scope": "annotated_genomic_geometry_only",
                     })
+                    if not crossed_only:
+                        elements[-1].update(
+                            exon_interval_1based_inclusive=[exon_start, exon_end],
+                            intron_interval_1based_inclusive=[intron_start, intron_end],
+                            relative_interval_inclusive=(
+                                [target_start - boundary, target_end - boundary] if strand == "+"
+                                else [boundary - target_end, boundary - target_start]),
+                        )
     return elements
 
 

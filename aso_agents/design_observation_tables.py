@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .binding_region_reports import physical_splice_element_overlaps
+from .binding_region_reports import annotated_splice_contexts, physical_splice_element_overlaps
 from .candidate_presentation import molecule_key
 from .reporting_contracts import generated_sequence_fields
 from .splice_prediction_records import IDENTITY, METRICS
@@ -132,6 +132,7 @@ def _observation(row, payload, source, index, evidence, goal, intervals_for_row)
             "recorded_fields": _fields(row), "splice_predictions": _predictions(row),
             "derived_sequence_metrics": metrics,
             "physical_splice_elements": elements,
+            "annotated_splice_contexts": annotated_splice_contexts(blocks, catalog),
             "geometry_scope": "Recorded transcript catalog and native genomic mapping only; an empty list does not establish absence outside that catalog."}
 
 

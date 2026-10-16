@@ -20,6 +20,7 @@ CORE_COLUMNS = (
     "off_target_1mm_count", "off_target_search_status", "off_target_mismatch_budget",
     "primary_delta_deletion", "primary_delta_replacement", "physical_splice_elements",
     "stage_roles", "source_observation_ids", "evidence_conflicts",
+    "genomic_blocks_1based_inclusive", "annotated_splice_contexts",
 )
 PREDICTION_SHEET = "Recorded splice evidence"
 PREDICTION_COLUMNS = ("binding_id", "observation_id", "source", "source_pointer", "site_identity",
@@ -92,10 +93,14 @@ def _catalog(declared):
                **{name: deepcopy(identity.get(name)) for name in (
                    "target_5to3", "antisense_5to3", "program_ids", "transcript_ids", "strand", "recorded_chemistry")},
                "genomic_blocks_bed0_half_open": deepcopy(identity["binding_intervals_bed0_half_open"]),
+               "genomic_blocks_1based_inclusive": [[chrom, start + 1, end]
+                   for chrom, start, end in identity["binding_intervals_bed0_half_open"]],
                "length_nt": metrics.get("length"), "gc_bases": metrics.get("gc_bases"),
                "gc_fraction": metrics["gc_bases"] / metrics["length"] if metrics.get("length") else None,
                "longest_homopolymer": metrics.get("longest_homopolymer_run"),
                "physical_splice_elements": _unique([element for item in group for element in item["physical_splice_elements"]]),
+               "annotated_splice_contexts": _unique([element for item in group
+                   for element in item.get("annotated_splice_contexts", [])]),
                "stage_roles": sorted({role for item in group for role in item["stage_roles"]}),
                "source_observation_ids": [item["observation_id"] for item in group],
                "source_row_fingerprints": sorted({_fingerprint(item["recorded_fields"]) for item in group}),
@@ -134,6 +139,25 @@ def _catalog(declared):
 
 
 def _source_value(row, field):
+    if isinstance(field, dict):
+        # The writer selects an attested reference frame, never supplies an
+        # anchor or recalculates offsets. Exact IDs preserve transcript versions.
+        required = {"kind", "transcript_id", "exon_ordinal", "element", "field"}
+        values = {"relative_interval_inclusive", "target_interval_1based_inclusive",
+                  "boundary_1based", "exonic_overlap_bp", "intronic_overlap_bp",
+                  "exon_interval_1based_inclusive", "intron_interval_1based_inclusive"}
+        if (set(field) != required or field["kind"] != "splice_context"
+                or not isinstance(field["transcript_id"], str)
+                or type(field["exon_ordinal"]) is not int or field["exon_ordinal"] < 1
+                or field["element"] not in {"donor", "acceptor"} or field["field"] not in values):
+            raise ValueError("Invalid annotated splice context source column")
+        matches = [element for element in row["annotated_splice_contexts"]
+                   if all(element.get(key) == field[key] for key in ("transcript_id", "exon_ordinal", "element"))]
+        if len(matches) > 1:
+            raise ValueError("Annotated splice context is ambiguous across target blocks or source observations; retain the complete context array")
+        return matches[0].get(field["field"]) if matches else None
+    if not isinstance(field, str):
+        raise ValueError("Design source column must be a catalog field or an annotated context selector")
     if field.startswith("recorded:"):
         pointer = field.removeprefix("recorded:")
         if pointer not in row["recorded_fields"]:
