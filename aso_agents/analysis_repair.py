@@ -1,5 +1,7 @@
 """Apply bound code edits and reconcile descriptive metadata for that revision."""
 from copy import deepcopy
+import ast
+from collections import Counter
 import hashlib
 import json
 
@@ -38,6 +40,57 @@ def repair_schema(code, previous_plan):
         "additionalProperties": False}
 
 
+def _duplicate_statement_pairs(code):
+    pairs = []
+    for parent in ast.walk(ast.parse(code)):
+        for _field, children in ast.iter_fields(parent):
+            if not isinstance(children, list):
+                continue
+            for left, right in zip(children, children[1:]):
+                if not isinstance(left, ast.stmt) or not isinstance(right, ast.stmt):
+                    continue
+                key = ast.dump(left, include_attributes=False)
+                if key == ast.dump(right, include_attributes=False):
+                    pairs.append((key, left, right))
+    return pairs
+
+
+def _validate_repair_boundaries(original, revised, origins):
+    """Reject copied executable context; never silently remove observations.
+
+    A replacement can accidentally include the unchanged statement immediately
+    outside its declared line span. Intentional repetition remains possible by
+    explicitly replacing the entire repeated span. Existing repetitions and
+    identical statements in different control-flow branches are unaffected.
+    """
+    try:
+        original_pairs = _duplicate_statement_pairs(original)
+    except SyntaxError:
+        # A syntax repair has no valid AST baseline for this comparison. The
+        # revised program still has to compile and pass dependency validation.
+        return
+    before = Counter(key for key, _left, _right in original_pairs)
+    pairs = _duplicate_statement_pairs(revised)
+    after = Counter(key for key, _left, _right in pairs)
+    for key, left, right in pairs:
+        if after[key] <= before[key]:
+            continue
+        left_sources = set(origins[left.lineno - 1:left.end_lineno])
+        right_sources = set(origins[right.lineno - 1:right.end_lineno])
+        crosses_boundary = (
+            left_sources == {None} and right_sources and None not in right_sources
+            or right_sources == {None} and left_sources and None not in left_sources
+        )
+        if crosses_boundary:
+            raise ValueError(
+                f"Code repair duplicated an unchanged neighboring statement at lines "
+                f"{left.lineno} and {right.lineno}. Replacements contain only their "
+                "declared inclusive span, without copied context. Remove the copied "
+                "statement, or include the original statement in the explicit edit "
+                "span if repetition is intended."
+            )
+
+
 def apply_program_repair(previous_plan, code, repair):
     if repair.get("base_sha256") != code_digest(code):
         raise ValueError("Code repair is not bound to the failed program.")
@@ -62,6 +115,7 @@ def apply_program_repair(previous_plan, code, repair):
             raise ValueError('Plan repair has an invalid descriptive field type.')
         seen.add(field)
     lines = code.splitlines(keepends=True)
+    origins = [None] * len(lines)
     patches = repair.get("patches")
     if not isinstance(patches, list) or not patches:
         raise ValueError("Code repair must contain explicit line replacements.")
@@ -75,9 +129,13 @@ def apply_program_repair(previous_plan, code, repair):
     normalized.sort()
     if any(left[1] >= right[0] for left, right in zip(normalized, normalized[1:])):
         raise ValueError("Code repair spans must not overlap.")
-    for start, end, replacement in reversed(normalized):
-        lines[start - 1:end] = [replacement.rstrip("\n") + "\n"] if replacement else []
-    revised = "".join(lines).strip()
+    for patch_index, (start, end, replacement) in reversed(list(enumerate(normalized))):
+        replacement_lines = (replacement.rstrip("\n") + "\n").splitlines(keepends=True) if replacement else []
+        lines[start - 1:end] = replacement_lines
+        origins[start - 1:end] = [patch_index] * len(replacement_lines)
+    revised = "".join(lines)
+    _validate_repair_boundaries(code, revised, origins)
+    revised = revised.strip()
     if revised == code.strip():
         raise ValueError("The repair did not change the failed program.")
     compile(revised, "generated_code.py", "exec")

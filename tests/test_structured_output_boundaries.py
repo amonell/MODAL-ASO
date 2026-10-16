@@ -677,12 +677,14 @@ def test_goal_unresolved_adjudication_requires_one_verdict_per_item() -> None:
                     "unresolved_index": 0,
                     "disposition": "repair_from_evidence",
                     "canonical_path": "/tasks/0/context/structured_goal/target_context",
+                    "evidence_value_json": '"user-defined cells"',
                     "reason": "The supplied clarification already provides the value.",
                 },
                 {
                     "unresolved_index": 0,
                     "disposition": "user_input",
                     "canonical_path": None,
+                    "evidence_value_json": None,
                     "reason": "A required user-specific input is absent.",
                 },
             ]

@@ -228,11 +228,17 @@ goal_unresolved_adjudication_agent = Agent(
         "remove_model_authored_field when the unsupported optional ancestor already exists. "
         "Use canonical_path_context to distinguish schema requiredness from an actual "
         "request requirement. "
-        "Classify those as remove_model_authored_field or repair_from_evidence and identify "
-        "the exact canonical JSON Pointer the auditor must change. Classify an item as "
-        "repair_from_evidence when supplied local evidence directly supports the value, or "
-        "when exactly one schema-valid value is compatible with the explicit request and "
-        "supplied execution facts. Classify it as source_retrieval only when the required "
+        "First compare the current value with the evidence-supported value. If they already "
+        "agree, classify the item as nonblocking; rejecting a clarification does not require "
+        "changing the contract. Otherwise classify a model-authored contradiction as "
+        "remove_model_authored_field or repair_from_evidence and identify the exact canonical "
+        "JSON Pointer the auditor must change. Use repair_from_evidence when supplied local "
+        "evidence directly supports a missing or different value, or exactly one schema-valid "
+        "value is compatible with the explicit request and supplied execution facts. For "
+        "repair_from_evidence, evidence_value_json must encode that complete supported value "
+        "as a JSON literal, including quotes for a string. For every other disposition, "
+        "evidence_value_json must be null. Do not invent a difference or duplicate a constraint "
+        "to justify a repair. Classify an item as source_retrieval only when the required "
         "fact is absent locally but an authoritative configured public/reference source can "
         "resolve it without a user preference. Classify optional or already-satisfied items "
         "as nonblocking. Do not answer scientific questions, invent facts, create aliases, "
@@ -16844,6 +16850,22 @@ def _goal_validation_issue_localization_contract_errors(
 
 
 def _goal_unresolved_adjudication_schema(item_count: int) -> Dict[str, Any]:
+    def verdict_schema(dispositions: List[str], *, repair: bool, value: bool) -> Dict[str, Any]:
+        properties = {
+            "unresolved_index": {
+                "type": "integer", "enum": list(range(max(0, int(item_count)))),
+            },
+            "disposition": {"type": "string", "enum": dispositions},
+            "canonical_path": {"type": "string", "minLength": 1} if repair else {"type": "null"},
+            "evidence_value_json": {
+                "type": "string", "minLength": 1,
+                "description": "Complete evidence-supported value at canonical_path encoded as a JSON literal.",
+            } if value else {"type": "null"},
+            "reason": {"type": "string", "minLength": 1},
+        }
+        return {"type": "object", "properties": properties,
+                "required": list(properties), "additionalProperties": False}
+
     return {
         "type": "object",
         "properties": {
@@ -16852,38 +16874,39 @@ def _goal_unresolved_adjudication_schema(item_count: int) -> Dict[str, Any]:
                 "minItems": max(0, int(item_count)),
                 "maxItems": max(0, int(item_count)),
                 "items": {
-                    "type": "object",
-                    "properties": {
-                        "unresolved_index": {
-                            "type": "integer",
-                            "enum": list(range(max(0, int(item_count)))),
-                        },
-                        "disposition": {
-                            "type": "string",
-                            "enum": [
-                                "user_input",
-                                "source_retrieval",
-                                "repair_from_evidence",
-                                "remove_model_authored_field",
-                                "nonblocking",
-                            ],
-                        },
-                        "canonical_path": {"type": ["string", "null"]},
-                        "reason": {"type": "string", "minLength": 1},
-                    },
-                    "required": [
-                        "unresolved_index",
-                        "disposition",
-                        "canonical_path",
-                        "reason",
+                    # Put disposition-dependent rules in the schema sent to
+                    # the model, not just in post-response validation.
+                    "anyOf": [
+                        verdict_schema(["user_input", "source_retrieval", "nonblocking"],
+                                       repair=False, value=False),
+                        verdict_schema(["repair_from_evidence"], repair=True, value=True),
+                        verdict_schema(["remove_model_authored_field"], repair=True, value=False),
                     ],
-                    "additionalProperties": False,
                 },
             }
         },
         "required": ["verdicts"],
         "additionalProperties": False,
     }
+
+
+def _goal_adjudication_evidence_value(encoded: Any) -> Any:
+    """Decode one unambiguous JSON value without accepting nonfinite numbers."""
+    if not isinstance(encoded, str):
+        raise ValueError("an encoded JSON value is required")
+
+    def unique_members(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON member")
+            result[key] = value
+        return result
+
+    value = json.loads(encoded, object_pairs_hook=unique_members)
+    # json.loads accepts NaN/Infinity and can overflow large JSON exponents.
+    json.dumps(value, allow_nan=False)
+    return value
 
 
 def _goal_unresolved_adjudication_contract_errors(
@@ -16910,13 +16933,26 @@ def _goal_unresolved_adjudication_contract_errors(
         disposition = str(verdict.get("disposition") or "").strip()
         canonical_path = str(verdict.get("canonical_path") or "").strip()
         if disposition in {"repair_from_evidence", "remove_model_authored_field"}:
-            if not canonical_path.startswith("/"):
+            if not _json_pointer_tokens(canonical_path):
                 errors.append(
                     f"$.verdicts[{index}].canonical_path: repair verdict requires a JSON Pointer"
                 )
         elif canonical_path:
             errors.append(
                 f"$.verdicts[{index}].canonical_path: must be null unless a repair is required"
+            )
+        if disposition == "repair_from_evidence":
+            try:
+                _goal_adjudication_evidence_value(verdict.get("evidence_value_json"))
+            except (TypeError, ValueError):
+                errors.append(
+                    f"$.verdicts[{index}].evidence_value_json: repair verdict requires "
+                    "one unambiguous finite JSON value supported by the supplied evidence"
+                )
+        elif verdict.get("evidence_value_json") is not None:
+            errors.append(
+                f"$.verdicts[{index}].evidence_value_json: must be null unless "
+                "disposition is repair_from_evidence"
             )
     return errors
 
@@ -19196,7 +19232,7 @@ async def _run_goal_unresolved_adjudication_agent_once(
         schema_name="aso_goal_unresolved_adjudication",
         schema=schema,
     )
-    return await _run_schema_validated_agent_once(
+    result = await _run_schema_validated_agent_once(
         agent=agent,
         prompt=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         schema=schema,
@@ -19209,6 +19245,29 @@ async def _run_goal_unresolved_adjudication_agent_once(
             )
         ),
     )
+    if result.get("error"):
+        return result
+    # The model can correctly identify the required value yet label that fact
+    # as a repair even when the envelope already contains it. Do not force a
+    # mutation in that case. This resolves only this proposed clarification;
+    # canonical and execution validators and every other audit finding remain
+    # active. Genuine changes still go through the existing evidence-bound
+    # repair protocol. Raw model responses stay unchanged in the trace.
+    result = deepcopy(result)
+    envelope = payload.get("current_request_envelope")
+    for verdict in result.get("verdicts") or []:
+        if verdict.get("disposition") != "repair_from_evidence":
+            continue
+        exists, current = _json_pointer_value(
+            envelope, _json_pointer_tokens(verdict.get("canonical_path"))
+        )
+        expected = _goal_adjudication_evidence_value(verdict["evidence_value_json"])
+        if exists and json.dumps(current, sort_keys=True, allow_nan=False) == json.dumps(
+            expected, sort_keys=True, allow_nan=False
+        ):
+            verdict.update(disposition="nonblocking", canonical_path=None,
+                           evidence_value_json=None)
+    return result
 
 
 async def _run_goal_validation_issue_localization_agent_once(
