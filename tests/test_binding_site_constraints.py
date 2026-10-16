@@ -430,6 +430,11 @@ def test_constraint_notes_with_downstream_feature_range_normalize_to_exact_splic
 
 
 def test_user_provided_binding_intervals_are_materialized_verbatim(monkeypatch: Any, tmp_path: Path) -> None:
+    # This unit exercises supplied genomic intervals with no reference catalog.
+    # Reference retrieval has separate controls; an external Ensembl request
+    # must not determine whether these explicit coordinates are preserved.
+    monkeypatch.setattr(runtime, "_pick_canonical_transcript_id", lambda **kwargs: None)
+
     def fail_rbp(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("RBP lookup should not run for explicit intervals")
 
