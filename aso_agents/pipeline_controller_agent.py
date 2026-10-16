@@ -95,6 +95,7 @@ pipeline_controller_agent = Agent(
         "- Use inspect_run_outputs only when planning.next_actions requests it.\n"
         "- Include run_dir and state_path in final output whenever available.\n"
         "- Include planning.stop_reason and last_error in final output when available.\n"
+        "- A missing reference, unsupported execution path, tool error, or exhausted retry budget is an execution limitation, not evidence that the requested biology or sequence design is infeasible. Report the observed limitation and unresolved feasibility. Claim infeasibility only when completed reference-bound analysis establishes it.\n"
         "- Return strictly one JSON object as the final response.\n"
         "- Do not include prose outside JSON.\n"
     ),

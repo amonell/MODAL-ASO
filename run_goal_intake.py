@@ -28656,6 +28656,11 @@ def _ensure_isoform_transcripts_for_target_region(
     if target_region not in allowed_regions:
         return
 
+    from aso_agents.declared_reference_catalog import complete_target_references
+    import sys
+    if complete_target_references(sys.modules[__name__], structured_goal, final_payload):
+        return
+
     isoform_transcripts = structured_goal.get("isoform_transcripts")
     if isinstance(isoform_transcripts, dict) and isoform_transcripts:
         return
