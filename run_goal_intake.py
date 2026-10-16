@@ -3586,6 +3586,17 @@ async def _audit_request_obligations(
         _normalize_requested_accessibility_provenance(goal, source_text)
         return intake_out
 
+    from aso_agents.request_evidence_repair import repair_audit_quotes
+    audit, quote_repair = await repair_audit_quotes(
+        audit, source_text, {'original_request': user_request, 'clarification_history': qa_history},
+        Runner.run, _parse_agent_json)
+    if quote_repair['status'] == 'unresolved':
+        intake_out['status'] = 'need_clarification'
+        intake_out['questions'] = ['Please restate the design requirement whose supporting text could not be verified.']
+        intake_out['request_obligation_audit'] = {'status': 'unresolved', 'quote_repair': quote_repair}
+        _normalize_requested_accessibility_provenance(goal, source_text)
+        return intake_out
+
     synchronized_fields = {"target_accessibility", "target_accessibility_request_quote"}
     count = audit.get("candidate_count")
     per_site = audit.get('per_site_count')
@@ -3722,6 +3733,7 @@ async def _audit_request_obligations(
         "target_accessibility": accessibility if _quoted_request_obligation(accessibility, source_text) else None,
         "conditional_exon_skip_events": events,
         "program_obligations": program_obligations,
+        "quote_repair": quote_repair,
     }
     return intake_out
 
