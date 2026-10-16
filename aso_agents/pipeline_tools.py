@@ -10325,6 +10325,15 @@ def _deterministic_artifact_analysis_envelope(
     raw = raw_envelope if isinstance(raw_envelope, dict) else {}
     raw_default_context = raw.get("default_context") if isinstance(raw.get("default_context"), dict) else {}
     raw_tasks = raw.get("tasks") if isinstance(raw.get("tasks"), list) else []
+    # This legacy repair may replace an incorrectly proposed design-only
+    # graph. A no-design constraint does not authorize replacing a reviewed
+    # analysis graph or discarding its computations, dependencies and exports.
+    # With no complete proposal, leave classification to semantic intake.
+    if not raw_tasks or any(
+        not isinstance(task, dict) or task.get("task_type") != "design_new_asos"
+        for task in raw_tasks
+    ):
+        return None
     artifact_refs = _merge_artifact_refs(
         raw.get("artifact_refs"),
         raw_default_context.get("artifact_refs"),
