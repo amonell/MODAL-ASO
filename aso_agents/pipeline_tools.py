@@ -29237,18 +29237,34 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         else {}
     )
     candidate_selection: Dict[str, Any] = persisted_candidate_selection
-    if physical_site_groups:
+    hard_nonoverlap = structured_goal.get("candidate_selection_policy") == "nonoverlapping_target_sites"
+    hard_minimum = structured_goal.get("candidate_minimum", 1)
+    if type(hard_minimum) is not int or hard_minimum < 0:
+        hard_minimum = 1
+    if hard_nonoverlap and candidate_limit_per_site and not physical_site_groups:
+        from .candidate_minimums import requested_region_minimums
+        physical_site_groups = requested_region_minimums(structured_goal)
+    if physical_site_groups or hard_nonoverlap:
         from .region_panel_selection import select_region_minimum_panel
         ranked_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+        per_site_limit = _coerce_positive_int(structured_goal.get("candidate_limit_per_site")
+                                            or structured_goal.get("per_site_candidate_limit"))
+        program_limits = {}
+        for program in structured_goal.get("design_programs") or []:
+            bounds = [_coerce_positive_int(program.get("candidate_limit"))]
+            if hard_nonoverlap and candidate_limit_per_site:
+                bounds.append(per_site_limit)
+            bounds = [value for value in bounds if value is not None]
+            if program.get("program_id") and bounds:
+                program_limits[program["program_id"]] = min(bounds)
         eligible_rows, candidate_selection = select_region_minimum_panel(
-            ranked_rows, physical_site_groups, _goal_runtime_module()._tile_row_overlap_intervals,
+            ranked_rows, physical_site_groups,
+            (_candidate_binding_intervals_for_exon_annotation if hard_nonoverlap
+             else _goal_runtime_module()._tile_row_overlap_intervals),
             global_limit=_coerce_positive_int(structured_goal.get("candidate_limit")),
-            per_site_limit=_coerce_positive_int(structured_goal.get("candidate_limit_per_site")
-                                               or structured_goal.get("per_site_candidate_limit")),
-            program_limits={program["program_id"]: limit
-                for program in structured_goal.get("design_programs") or []
-                if program.get("program_id")
-                and (limit := _coerce_positive_int(program.get("candidate_limit"))) is not None},
+            per_site_limit=per_site_limit, program_limits=program_limits,
+            global_minimum=hard_minimum if hard_nonoverlap else 0,
+            nonoverlap=hard_nonoverlap,
         )
     elif candidate_limit is not None or candidate_limit_per_site:
         if candidate_group_scope == "physical_region":
@@ -54473,11 +54489,33 @@ def _apply_gapmer_constraints_to_result(
         from aso_agents.target_accessibility import select_panel_rows
         diversify = structured_goal.get("candidate_selection_policy") == "diverse_target_sites"
         candidate_minimum = _coerce_positive_int(structured_goal.get("candidate_minimum"))
-        selected_rows = select_panel_rows(
-            selection_rows, candidate_limit, diversify=diversify,
-            minimum=candidate_minimum if diversify else None)
-        selected_ids = {id(row) for row in selected_rows}
-        unselected_rows = [row for row in selection_rows if id(row) not in selected_ids]
+        hard_nonoverlap = structured_goal.get("candidate_selection_policy") == "nonoverlapping_target_sites"
+        hard_selection = {}
+        if hard_nonoverlap:
+            from .region_panel_selection import select_region_minimum_panel
+            hard_minimum = structured_goal.get("candidate_minimum", 1)
+            if type(hard_minimum) is not int or hard_minimum < 0:
+                hard_minimum = 1
+            selected_rows, hard_selection = select_region_minimum_panel(
+                selection_rows, [], _candidate_binding_intervals_for_exon_annotation,
+                global_limit=candidate_limit, global_minimum=hard_minimum,
+                nonoverlap=True)
+        else:
+            selected_rows = select_panel_rows(
+                selection_rows, candidate_limit, diversify=diversify,
+                minimum=candidate_minimum if diversify else None)
+        # The constrained selector returns independent evidence records. Match
+        # their serialized values with multiplicity, rather than object IDs,
+        # so the unselected appendix never contains the selected panel again.
+        from collections import Counter
+        retained = Counter(json.dumps(row, sort_keys=True) for row in selected_rows)
+        unselected_rows = []
+        for row in selection_rows:
+            record = json.dumps(row, sort_keys=True)
+            if retained[record]:
+                retained[record] -= 1
+            else:
+                unselected_rows.append(row)
         candidate_selection: Dict[str, Any] = {
             "status": "complete",
             "method": ("ranked_nonoverlapping_targets_then_minimum_fill"
@@ -54489,6 +54527,10 @@ def _apply_gapmer_constraints_to_result(
             "selected_count": len(selected_rows),
             "unselected_count": len(unselected_rows),
             "output_path": final_path,
+            "eligible_record_count": eligible_count,
+            "selected_record_count": len(selected_rows),
+            "unselected_record_count": len(unselected_rows),
+            **hard_selection,
         }
         if unselected_rows:
             input_path = Path(final_path)

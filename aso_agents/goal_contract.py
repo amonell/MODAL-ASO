@@ -734,7 +734,7 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     "candidate_limit": {"type": ["integer", "null"], "minimum": 1},
     "candidate_limit_per_site": {"type": "integer", "minimum": 1},
     "candidate_minimum": {"type": "integer", "minimum": 0},
-    "candidate_selection_policy": {"type": "string", "enum": ["ranked", "diverse_target_sites"]},
+    "candidate_selection_policy": {"type": "string", "enum": ["ranked", "diverse_target_sites", "nonoverlapping_target_sites"]},
     "conditional_exon_skip_events": {"type": "array", "items": {"type": "object", "properties": {
         "exon_label": {"type": "integer", "minimum": 1},
         "transcript_id": {"type": ["string", "null"]},
@@ -937,7 +937,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "candidate_limit": "Maximum candidate count for the complete goal or one design program. Use null when no maximum applies to this scope; independent per-site limits retain their own field.",
     "candidate_limit_per_site": "Maximum candidate count independently retained for each target site.",
     "candidate_minimum": "Minimum number of distinct oligonucleotide sequences required in the complete panel; paired with candidate_limit for an acceptable count range. Omission requires at least one. Set zero only when the user permits a documented empty result after the requested search; unavailable evidence must remain a limitation, never a claim of biological absence.",
-    "candidate_selection_policy": "ranked retains the best individual candidates; diverse_target_sites prioritizes nonoverlapping physical target windows in rank order and adds nearby alternatives only when needed to meet an explicit candidate_minimum. If no minimum is stated, it fills to candidate_limit as before.",
+    "candidate_selection_policy": "ranked retains the best individual candidates; diverse_target_sites is a soft preference for separated targets and may add overlapping alternatives to meet a count. nonoverlapping_target_sites is required when the user makes mutual target nonoverlap a hard condition: choose distinct physical molecules jointly, preserve all count constraints, never fill with overlapping targets, and report unmet counts only for the verified eligible pool. Keep exact requested counts in candidate_minimum and candidate_limit; separate program labels do not guarantee different molecules.",
     "target_accessibility": "Whether candidate selection requires sequence-based target RNA accessibility predictions. This measures full binding-window unpaired probability on the target transcript, separately from oligo self-folding. It provides relative ranking, not an experimentally validated efficacy threshold.",
     "target_accessibility_request_quote": "An exact passage from the user's request explicitly requiring sequence-based target RNA accessibility prediction. Required when target_accessibility is true; generic evidence or accessibility of a genomic region is insufficient.",
     "oligoai_evaluation": "Explicit OligoAI efficacy prediction conditions: enabled, positive dosage_nm and supported transfection_method. Omit any unstated field; runtime labels missing conditions as an assumed reference scenario. This does not measure efficacy or alter physical chemistry, candidate selection or safeguards.",

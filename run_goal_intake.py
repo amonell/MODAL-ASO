@@ -3668,7 +3668,10 @@ async def _audit_request_obligations(
     diversity = audit.get("candidate_site_diversity")
     if _quoted_request_obligation(diversity, source_text) and diversity.get("required") is True:
         synchronized_fields.add("candidate_selection_policy")
-        goal["candidate_selection_policy"] = "diverse_target_sites"
+        if diversity.get("hard_nonoverlap") is True:
+            goal["candidate_selection_policy"] = "nonoverlapping_target_sites"
+        elif goal.get("candidate_selection_policy") != "nonoverlapping_target_sites":
+            goal["candidate_selection_policy"] = "diverse_target_sites"
 
     events = []
     for event in audit.get("conditional_exon_skip_events") or []:
