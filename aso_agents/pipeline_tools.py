@@ -18,7 +18,7 @@ import time
 import importlib
 from pathlib import Path
 from aso_agents.reporting_contracts import generated_sequence_fields, exact_count_unit, ISOFORM_SCORE_DEFINITION
-from aso_agents.sequence_orientation import molecule_key, preferred_binding_hits, interpret_orientation
+from aso_agents.sequence_orientation import SEQUENCE_ROLES, molecule_key, preferred_binding_hits, interpret_orientation
 from aso_agents.input_rows import assign_input_row_ids, reconcile_file_expansions, reconcile_file_row_references, assessment_row_lookup
 from aso_agents.feature_identity import exon_number
 from aso_agents.objective_roles import explicit_biological_role
@@ -9964,6 +9964,7 @@ _REQUEST_CONTEXT_SCALAR_FIELDS: Tuple[str, ...] = (
     "target_context",
     "chemistry",
     "platform",
+    "provided_sequence_role",
     "transcript_policy",
     "isoform_scope",
     "isoform_scope_source",
@@ -21570,6 +21571,9 @@ def _headered_aso_row_columns(headers: List[str], fields: List[str]) -> Dict[str
         columns["name"] = name_idx
     if chemistry_idx is not None:
         columns["chemistry"] = chemistry_idx
+    role_idx = _find({"sequence_role"})
+    if role_idx is not None:
+        columns["sequence_role"] = role_idx
     return columns
 
 
@@ -21608,7 +21612,7 @@ def _provided_aso_entry_from_fields(
             header_text = str(header or "").strip()
             if header_text:
                 metadata[header_text] = fields[idx]
-    return {
+    entry = {
         "name": name,
         "sequence": sequence,
         "chemistry": chemistry or None,
@@ -21616,6 +21620,16 @@ def _provided_aso_entry_from_fields(
         "source_row": source_row,
         "input_metadata": metadata or None,
     }
+    role = _safe_field(fields, columns.get("sequence_role"))
+    if role:
+        entry["sequence_role"] = role
+    elif headers and sequence_idx is not None:
+        selected_header = _normalize_aso_table_column_key(headers[sequence_idx])
+        if selected_header in {"aso_sequence", "oligo_sequence"}:
+            entry["sequence_role"] = "antisense_oligo_sequence"
+        elif selected_header in {"target_sequence", "target_site_sequence"}:
+            entry["sequence_role"] = "target_site_sequence"
+    return entry
 
 
 def _read_provided_aso_json_file(path: Path) -> List[Dict[str, Any]]:
@@ -21767,10 +21781,9 @@ def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str,
                 "notes": str(base.get("notes") or base.get("Notes") or "").strip() or None,
                 **seq_payload,
             }
-            # A declared oligo sequence or physical oligo chemistry describes
-            # the submitted molecule independently of whether any exact site
-            # exists. A target_sequence field instead declares a target-site
-            # string whose complement is the prospective molecule.
+            # Preserve explicit row roles independently of mapping outcomes.
+            # A task-wide declaration applies only to rows without their own
+            # declaration; chemistry is a weaker, legacy input-role hint.
             target_string_was_selected = (
                 base.get("target_sequence") not in (None, "", [], {})
                 and all(base.get(key) in (None, "", [], {}) for key in (
@@ -21779,17 +21792,19 @@ def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str,
             )
             if target_string_was_selected:
                 entry["declared_sequence_role"] = "target_site_sequence"
-            elif any(base.get(key) not in (None, "", [], {}) for key in (
-                "aso_sequence", "oligo_sequence", "chemistry", "Chemistry", "platform", "Platform",
-            )):
+            elif any(base.get(key) not in (None, "", [], {}) for key in ("aso_sequence", "oligo_sequence")):
                 entry["declared_sequence_role"] = "antisense_oligo_sequence"
+            if base.get("sequence_role") in SEQUENCE_ROLES:
+                entry["declared_sequence_role"] = base["sequence_role"]
+            if "declared_sequence_role" in entry:
+                entry["sequence_role_source"] = "supplied_row"
             for field in ("source_file", "source_row", "input_metadata", "input_origin", "input_reconciliation"):
                 if base.get(field) not in (None, "", [], {}):
                     entry[field] = deepcopy(base.get(field))
             identity_keys = {"name", "id", "aso_id", "Name", "sequence", "aso_sequence",
                 "oligo_sequence", "target_sequence", "Sequence", "seq", "chemistry", "Chemistry",
                 "platform", "Platform", "notes", "Notes", "source_file", "source_row",
-                "input_metadata", "input_origin", "input_row_id", "input_reconciliation"}
+                "input_metadata", "input_origin", "input_row_id", "input_reconciliation", "sequence_role"}
             extra_metadata = {k: deepcopy(v) for k, v in base.items() if k not in identity_keys}
             if extra_metadata:
                 entry["input_metadata"] = {**extra_metadata, **(entry.get("input_metadata") or {})}
@@ -21810,9 +21825,20 @@ def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str,
     normalized = reconcile_file_expansions(normalized, len(file_rows), request_envelope.get("request_text"))
     assign_input_row_ids(normalized)
     for entry in normalized:
+        shared_role = request_envelope.get("provided_sequence_role")
+        if "declared_sequence_role" not in entry:
+            if shared_role in SEQUENCE_ROLES:
+                entry["declared_sequence_role"] = shared_role
+                entry["sequence_role_source"] = "task_context"
+            elif entry.get("chemistry") or entry.get("platform"):
+                entry["declared_sequence_role"] = "antisense_oligo_sequence"
+                entry["sequence_role_source"] = "supplied_row_chemistry"
         sequence = str(entry.get("sequence") or "")
         entry["reverse_complement_sequence"] = _dna_reverse_complement(sequence) if sequence else ""
-        entry["comparison_sequence"] = sequence
+        entry["comparison_sequence"] = (
+            entry["reverse_complement_sequence"]
+            if entry.get("declared_sequence_role") == "antisense_oligo_sequence" else sequence
+        )
     return normalized
 
 
@@ -22023,6 +22049,7 @@ def _task_context_provided_asos(context: Dict[str, Any]) -> List[Dict[str, Any]]
     return _normalize_provided_asos(
         {
             "provided_asos": deepcopy(context.get("provided_asos")),
+            "provided_sequence_role": context.get("provided_sequence_role"),
             "provided_aso_files": deepcopy(context.get("provided_aso_files")),
             "artifact_refs": deepcopy(context.get("artifact_refs")),
         }
@@ -36761,6 +36788,11 @@ def _maybe_resolve_eval_gene_id(
 
 
 def _provided_aso_scoring_sequence(entry: Dict[str, Any]) -> str:
+    role = interpret_orientation(entry).get("provided_sequence_role")
+    if role in {"antisense_oligo_sequence", "target_site_sequence"}:
+        sequence = str(_normalize_aso_sequence(entry.get("sequence")).get("sequence") or "")
+        if sequence:
+            return _dna_reverse_complement(sequence) if role == "antisense_oligo_sequence" else sequence
     for field in ("comparison_sequence", "normalized_sequence", "target_sequence", "sequence"):
         sequence = _normalize_aso_sequence(entry.get(field)).get("sequence")
         text = str(sequence or "").strip().upper()
@@ -36784,6 +36816,14 @@ def _build_provided_aso_scoring_tiles(rows: List[Dict[str, Any]]) -> Tuple[List[
         chrom = str(genomic_span.get("chrom") or "").strip()
         start = _optional_int(genomic_span.get("start"))
         end = _optional_int(genomic_span.get("end"))
+        role = interpret_orientation(entry).get("provided_sequence_role")
+        query_role = (
+            "Transcript-oriented reverse complement of the supplied antisense molecule; an exact binding site need not be established."
+            if role == "antisense_oligo_sequence" else
+            "Supplied transcript-oriented target-site sequence."
+            if role == "target_site_sequence" else
+            "Input role unresolved; junction interpretation is conditional on the recorded query's orientation."
+        )
         tile_row: Dict[str, Any] = {
             "id": f"provided_{idx + 1:05d}",
             "Name": name or f"provided_aso_{idx + 1:02d}",
@@ -36791,6 +36831,7 @@ def _build_provided_aso_scoring_tiles(rows: List[Dict[str, Any]]) -> Tuple[List[
             "provided_row_index": idx,
             "provided_input_sequence": entry.get("sequence"),
             "Sequence": sequence,
+            "off_target_query_role": query_role,
             "GC": seq_payload.get("gc_fraction"),
             "source": "provided_aso_evaluation",
             "mapping_status": entry.get("mapping_status"),
@@ -36833,6 +36874,7 @@ def _write_provided_aso_tiles_json(
         "provided_row_index": "integer",
         "provided_input_sequence": "string",
         "Sequence": "string",
+        "off_target_query_role": "string",
         "GC": "number",
         "source": "string",
         "mapping_status": "string",
@@ -36900,7 +36942,7 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
         row["Off_target_gene_ids_by_mismatch"] = {"0mm": gene_ids, "1mm": None, "2mm": None, "3mm": None}
         row["Off_target_genes_by_mismatch"] = {"0mm": gene_names, "1mm": None, "2mm": None, "3mm": None}
         row["off_target_query_sequence"] = row.get("Sequence")
-        row["off_target_query_role"] = "Mapped transcript-oriented target site when available; otherwise the supplied sequence as received. Genomic matching tests both strands; junction interpretation is conditional on the recorded query's role."
+        row.setdefault("off_target_query_role", "Mapped transcript-oriented target site when available; otherwise the supplied sequence as received. Genomic matching tests both strands; junction interpretation is conditional on the recorded query's role.")
         if count_scope:
             row["off_target_count_scope"] = deepcopy(count_scope)
         updated += 1

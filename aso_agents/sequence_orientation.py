@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 
+SEQUENCE_ROLES = frozenset({'antisense_oligo_sequence', 'target_site_sequence', 'unknown'})
+
 
 def molecule_key(row: dict) -> str:
     identity = str(row.get('aso_id') or row.get('name') or '')
@@ -38,11 +40,14 @@ def interpret_orientation(row: dict) -> dict:
                            and role == 'unknown')
     needs_confirmation = bool(same_strand and not binding and role == 'unknown' and not confirmation)
     match = binding[0] if binding else (same_strand[0] if same_strand else {})
-    if binding and role == 'unknown':
+    explicitly_unknown = confirmation.get('role') == 'unknown' or (not confirmation and declared_role == 'unknown')
+    if binding and role == 'unknown' and not explicitly_unknown:
         role = 'antisense_oligo_sequence'
     actual = complement if role == 'target_site_sequence' else sequence
     if role == 'target_site_sequence':
-        note = 'The user confirmed a target-site string. Its reverse complement is the evaluated antisense molecule.'
+        note = 'The supplied string is declared or confirmed as a target site. Its reverse complement is the evaluated antisense molecule.'
+    elif binding and explicitly_unknown:
+        note = 'An exact reverse-complement match supports a conditional antisense interpretation; the supplied sequence role remains explicitly unresolved.'
     elif binding:
         note = 'An antisense binding match supports evaluating the original supplied molecule; its identity is unchanged.'
     elif same_strand:
@@ -63,6 +68,7 @@ def interpret_orientation(row: dict) -> dict:
         'provided_sequence_role': role, 'input_sequence': sequence,
         'evaluated_molecule_sequence': actual,
         'sequence_role_confirmation': confirmation,
+        'sequence_role_source': 'user_confirmation' if confirmation else row.get('sequence_role_source'),
         'requires_confirmation': needs_confirmation,
         'original_molecule_exact_binding': bool(preferred_binding_hits({**row, 'sequence_role_confirmation': {},
             'declared_sequence_role': 'antisense_oligo_sequence'}, hits)),
@@ -72,7 +78,7 @@ def interpret_orientation(row: dict) -> dict:
     if match:
         result['match_orientation'] = match.get('match_orientation')
         result['matched_target_sequence'] = match.get('matched_target_sequence')
-    if binding or role == 'antisense_oligo_sequence' or role == 'target_site_sequence':
+    if role == 'antisense_oligo_sequence' or role == 'target_site_sequence':
         result['synthesized_antisense_sequence'] = actual
     if same_strand and not binding:
         result['conditional_reverse_complement_sequence'] = complement

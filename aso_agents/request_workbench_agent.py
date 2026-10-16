@@ -185,6 +185,7 @@ request_workbench_agent = Agent(
         "appropriate native or analysis operation. "
         "For a file-backed ASO panel, retain the file reference; do not copy its rows into provided_asos, because native ingestion reads them. "
         "provided_asos is for additional molecules literally supplied inline by the user. Preserve explicitly additional observations with input_origin=inline_user; do not infer extra observations from file previews. "
+        "When the user explicitly identifies the supplied strings as 5-prime to 3-prime ASO molecules or target-site strings, preserve that fact in context.provided_sequence_role as antisense_oligo_sequence or target_site_sequence, respectively. This applies to the task's attached rows as well as inline strings. For mixed roles, use provided_asos[*].sequence_role for each inline row's explicit declaration. Omit an unstated role or use unknown for explicit uncertainty; never infer an input role from whether a sequence maps. "
         "Preserve artifact paths, identifiers, accession values, and supplied ASO "
         "values character-for-character. Before returning, compare every opaque "
         "literal in the envelope with the original input. Never invent or alter an "
