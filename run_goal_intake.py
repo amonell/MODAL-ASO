@@ -4437,7 +4437,17 @@ def _normalize_region_constraints(
         rbp_binding = entry.get("rbp_binding")
         motif_tiling = entry.get("motif_tiling")
         mirna_binding = entry.get("mirna_binding") or entry.get("miRNA_binding")
-        if source_type_hint in {
+        if source_type_hint in {"transcript_feature", "reference_feature"}:
+            from aso_agents.transcript_features import normalize_feature_name
+            if interval_rows_payload is not None or entry.get("rows") is not None:
+                raise ValueError("transcript_feature_conflicting_explicit_intervals")
+            source_type = "transcript_feature"
+            coordinate_space = "cdna"
+            norm["feature_name"] = normalize_feature_name(entry.get("feature_name"))
+            for key in ("reference_transcript_id", "transcript_id", "isoform_label"):
+                if entry.get(key):
+                    norm[key] = deepcopy(entry[key])
+        elif source_type_hint in {
             "user_provided_bed_intervals",
             "user_provided_intervals",
             "explicit_bed_intervals",
@@ -20834,6 +20844,11 @@ def _constraint_fingerprint(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     if not isinstance(entry, dict):
         return ()
     source_type = str(entry.get("source_type") or "").strip()
+    if source_type == "transcript_feature":
+        return (source_type, entry.get("feature_name"), entry.get("reference_transcript_id"),
+                entry.get("transcript_id"), entry.get("isoform_label"),
+                entry.get("operator"), entry.get("aso_overlap_requirement"),
+                entry.get("minimum_overlap_bp"))
     if source_type == "rbp_binding":
         rbp_binding = entry.get("rbp_binding") if isinstance(entry.get("rbp_binding"), dict) else {}
         return (
@@ -22251,6 +22266,9 @@ def _materialize_region_constraint_entry(
     materialized = deepcopy(constraint) if isinstance(constraint, dict) else {}
     source_type = str(materialized.get("source_type") or "").strip()
     summary: Dict[str, Any] = {}
+    if source_type == "transcript_feature":
+        from aso_agents.transcript_features import materialize_feature
+        return materialize_feature(materialized, isoform_transcripts or {}, iso_label_primary)
 
     # An empty explicit interval list is not a genomic interval. Intake may
     # nevertheless emit one alongside two agreeing, typed exon selectors. In
@@ -22774,6 +22792,11 @@ def _constraint_rows_in_output_space(
 ) -> List[List[Any]]:
     source_type = str(constraint.get("source_type") or "").strip()
     output_space_norm = _normalize_region_coordinate_space(output_space) or "genomic"
+    if source_type == "transcript_feature":
+        from aso_agents.transcript_features import materialize_feature
+        resolved = materialize_feature(constraint, isoform_transcripts, iso_label_primary)
+        key = "materialized_cdna_rows" if output_space_norm == "cdna" else "materialized_genomic_rows"
+        return deepcopy(resolved[key])
     if source_type == "rbp_binding":
         genomic_rows = _normalize_region_rows(constraint.get("materialized_rows"))
         if output_space_norm == "genomic":
@@ -22947,7 +22970,7 @@ def _iter_target_feature_constraints(structured_goal: Dict[str, Any]) -> List[Di
     feature_entries: List[Dict[str, Any]] = []
     for entry in entries:
         source_type = str(entry.get("source_type") or "").strip()
-        if source_type in {"rbp_binding", "motif_tiling", "mirna_binding", "exon", "explicit_rows", "splice_relative_window"}:
+        if source_type in {"rbp_binding", "motif_tiling", "mirna_binding", "exon", "explicit_rows", "splice_relative_window", "transcript_feature"}:
             feature_entries.append(entry)
     return feature_entries
 
@@ -22960,10 +22983,12 @@ def _normalize_overlap_chromosome(value: Any) -> str:
     return str(chrom_pref or chrom_short or text)
 
 
-def _merge_overlap_intervals(intervals: List[Tuple[str, int, int]]) -> List[Tuple[str, int, int]]:
+def _merge_overlap_intervals(
+    intervals: List[Tuple[str, int, int]], *, coordinate_space: str = "genomic",
+) -> List[Tuple[str, int, int]]:
     grouped: Dict[str, List[Tuple[int, int]]] = {}
     for chrom_raw, start_raw, end_raw in intervals:
-        chrom = _normalize_overlap_chromosome(chrom_raw)
+        chrom = str(chrom_raw or "").strip() if coordinate_space == "cdna" else _normalize_overlap_chromosome(chrom_raw)
         if not chrom:
             continue
         try:
@@ -23125,7 +23150,7 @@ def _target_feature_interval_index(
     features: Dict[str, List[Tuple[str, int, int]]] = {}
     for constraint in _iter_target_feature_constraints(structured_goal):
         source_type = str(constraint.get("source_type") or "").strip()
-        if source_type not in {"rbp_binding", "motif_tiling", "mirna_binding", "exon", "explicit_rows", "splice_relative_window"}:
+        if source_type not in {"rbp_binding", "motif_tiling", "mirna_binding", "exon", "explicit_rows", "splice_relative_window", "transcript_feature"}:
             continue
         if output_space_norm == "cdna":
             if source_type == "motif_tiling":
@@ -23134,7 +23159,7 @@ def _target_feature_interval_index(
                 )
             elif source_type == "mirna_binding":
                 rows = _normalize_region_rows(constraint.get("materialized_cdna_rows"))
-            elif source_type == "exon":
+            elif source_type in {"exon", "transcript_feature"}:
                 rows = _normalize_region_rows(constraint.get("materialized_cdna_rows"))
             elif source_type == "splice_relative_window":
                 rows = _normalize_region_rows(constraint.get("materialized_cdna_rows"))
@@ -23148,7 +23173,9 @@ def _target_feature_interval_index(
             else:
                 rows = []
         else:
-            if source_type == "explicit_rows":
+            if source_type == "transcript_feature":
+                rows = _normalize_region_rows(constraint.get("materialized_genomic_rows"))
+            elif source_type == "explicit_rows":
                 source_space = _normalize_region_coordinate_space(constraint.get("coordinate_space")) or "genomic"
                 rows = (
                     _normalize_region_rows(constraint.get("materialized_rows") if "materialized_rows" in constraint else constraint.get("rows"))
@@ -23171,13 +23198,13 @@ def _target_feature_interval_index(
                 continue
             if end0 <= start0:
                 continue
-            chrom = _normalize_overlap_chromosome(row[0])
+            chrom = str(row[0] or "").strip() if output_space_norm == "cdna" else _normalize_overlap_chromosome(row[0])
             if not chrom:
                 continue
             feature_name = _constraint_feature_name(constraint, row[3] if len(row) > 3 else None)
             features.setdefault(feature_name, []).append((chrom, start0, end0))
     return {
-        feature_name: _merge_overlap_intervals(intervals)
+        feature_name: _merge_overlap_intervals(intervals, coordinate_space=output_space_norm)
         for feature_name, intervals in features.items()
         if intervals
     }
@@ -23193,7 +23220,7 @@ def _tile_row_overlap_intervals(
     output_space_norm = _normalize_region_coordinate_space(output_space) or "genomic"
 
     def _append_interval(chrom_value: Any, start_value: Any, end_value: Any, *, one_based: bool = True) -> None:
-        chrom = _normalize_overlap_chromosome(chrom_value)
+        chrom = str(chrom_value or "").strip() if output_space_norm == "cdna" else _normalize_overlap_chromosome(chrom_value)
         if not chrom or start_value is None or end_value is None:
             return
         try:
@@ -23240,7 +23267,7 @@ def _tile_row_overlap_intervals(
             one_based=(row.get("coordinate_system") == "1based_inclusive" or row.get("source") in {"gapmer_cdna", "junction_gapmer"}),
         )
 
-    return _merge_overlap_intervals(intervals)
+    return _merge_overlap_intervals(intervals, coordinate_space=output_space_norm)
 
 
 def _annotate_tiles_target_feature_overlaps(

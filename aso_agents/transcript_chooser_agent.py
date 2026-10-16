@@ -652,6 +652,7 @@ def _local_gtf_gene_payload(
                     "is_mane_select": False,
                     "is_mane_plus_clinical": False,
                     "Exon": [],
+                    "start_codon_genomic_intervals": [],
                     "_tags": set(),
                     "_coding_start": None,
                     "_coding_end": None,
@@ -673,6 +674,10 @@ def _local_gtf_gene_payload(
                         "end_phase": None,
                     }
                 )
+            elif feature == "start_codon":
+                transcript["start_codon_genomic_intervals"].append(
+                    [int(parts[3]), int(parts[4])]
+                )
             elif feature == "CDS":
                 cds_start = int(parts[3])
                 cds_end = int(parts[4])
@@ -693,6 +698,7 @@ def _local_gtf_gene_payload(
 
     for transcript in transcripts.values():
         tags = transcript.pop("_tags")
+        transcript["annotation_tags"] = sorted(tags)
         transcript["is_mane_select"] = "MANE_Select" in tags
         transcript["is_mane_plus_clinical"] = "MANE_Plus_Clinical" in tags
         transcript["is_canonical"] = int("Ensembl_canonical" in tags)
@@ -2514,6 +2520,8 @@ def _transcript_structure_from_payload(tx: Optional[Dict[str, Any]], transcript_
         "gene_id": tx.get("Parent") or tx.get("gene_id"),
         "gene_symbol": tx.get("gene_symbol") or tx.get("gene_name"),
         "annotation_features": reference_annotation_flags(tx),
+        **{key: deepcopy(tx[key]) for key in ("annotation_tags", "start_codon_genomic_intervals")
+           if key in tx},
         "seq_region_name": chrom,
         "strand": strand,
         "start": int(tx.get("start", 0)),

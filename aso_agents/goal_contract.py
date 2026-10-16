@@ -537,6 +537,7 @@ CANONICAL_REGION_CONSTRAINT_FIELDS = frozenset(
         "coordinate_space",
         "exon_label",
         "exon_numbering_transcript_id",
+        "feature_name",
         "gene_symbol",
         "genome_build",
         "intervals_bed0_half_open",
@@ -572,6 +573,7 @@ _REGION_CONSTRAINT_SCHEMA = {
         "coordinate_space": {"type": "string", "enum": ["genomic", "cdna"], "description": "Origin of the supplied interval numbers. Mature-RNA/transcript positions are cdna even when a genome assembly is named. Preserve this origin independently of zero/one-based indexing."},
         "exon_label": {"type": ["string", "integer"]},
         "exon_numbering_transcript_id": {"type": "string"},
+        "feature_name": {"type": "string", "enum": ["start_codon", "cds"]},
         "gene_symbol": {"type": "string"},
         "genome_build": {"type": "string"},
         "intervals_bed0_half_open": {
@@ -609,6 +611,7 @@ _REGION_CONSTRAINT_SCHEMA = {
                 "exon",
                 "explicit_rows",
                 "splice_relative_window",
+                "transcript_feature",
             ],
         },
         "splice_relative_window": _SPLICE_RELATIVE_WINDOW_SCHEMA,
@@ -622,6 +625,12 @@ _REGION_CONSTRAINT_SCHEMA = {
             {"properties": {"intervals_bed0_half_open": {"minItems": 1}}, "required": ["intervals_bed0_half_open"]},
             {"properties": {"rows": {"minItems": 1}}, "required": ["rows"]},
         ]},
+    }, {
+        "if": {"properties": {"source_type": {"const": "transcript_feature"}}, "required": ["source_type"]},
+        "then": {
+            "required": ["feature_name"],
+            "not": {"anyOf": [{"required": ["rows"]}, {"required": ["intervals_bed0_half_open"]}]},
+        },
     }],
     "additionalProperties": False,
 }
@@ -1320,6 +1329,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS
     + COORDINATE_ORIGIN_INSTRUCTIONS
     + "Canonical executable design-goal contract:\n"
+    "- When an ASO must cover an annotated start codon or satisfy a coding-sequence boundary, use a region constraint with source_type='transcript_feature', feature_name='start_codon' or 'cds', and reference_transcript_id when supplied. The platform resolves annotation coordinates; do not invent absolute rows or assume the start codon occupies transcript bases 1-3. Preserve the requested overlap relation. Constraints that must all hold use intersect, including features on different explicitly requested transcripts. A shared panel stores every required transcript in its program transcript_ids.\n"
     "- chemistry_policy is a permission decision, not a record of whether the user named a chemical formula. select authorizes platform selection and is the meaning of delegated/default chemistry. leave_unspecified prohibits selecting modifications, backbone and synthesis platform and is used only when the user deliberately defers that choice. If the user simply omits chemistry, omit the policy so ordinary platform selection remains available. Preserve an explicit chemical formula separately in chemistry. Scope different policies to their own programs.\n"
     "- Treat the user request and recorded clarification answers as evidence. Preserve every explicitly supplied design fact. Do not use biological background knowledge to invent a gene, species, transcript, isoform, exon, coordinate, route, direction, length, chemistry, or target context. The species field contains only an organism supported by request or clarification evidence, or an organism established from an explicit identifier by an authoritative source; never store a lookup instruction, uncertainty note, or resolution plan in species. Omit unresolved species during intake and let authoritative resolution supply it instead of encoding how to find it as though it were an organism.\n"
     "- Every design task must store its authoritative goal at context.structured_goal. Do not leave executable facts only in the task label, request summary, assumptions, or prose.\n"

@@ -36,6 +36,16 @@ def complete_target_references(runtime, goal, final_payload=None):
                 identifiers = requests.setdefault(value.strip(), [])
                 if program.get("program_id") not in identifiers:
                     identifiers.append(program.get("program_id"))
+    for scope in [goal, *programs]:
+        for constraint in scope.get("region_constraints") or []:
+            if not isinstance(constraint, dict) or constraint.get("source_type") != "transcript_feature":
+                continue
+            for key in ("reference_transcript_id", "transcript_id"):
+                reference = constraint.get(key)
+                if isinstance(reference, str) and reference.strip():
+                    identifiers = requests.setdefault(reference.strip(), [])
+                    if scope.get("program_id") not in identifiers:
+                        identifiers.append(scope.get("program_id"))
     if not requests:
         return False
     species = runtime.normalize_species(goal.get("species"))

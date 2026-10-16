@@ -34,7 +34,8 @@ def resolved_transcript_metadata(structure, selection_record=None):
     metadata = deepcopy(previous)
     structural_fields = {'id', 'gene_id', 'gene_symbol', 'gene_name', 'transcript_id', 'version', 'versioned_id', 'reference_source',
         'reference_annotation', 'species', 'assembly_name', 'seq_region_name', 'strand', 'start', 'end', 'length',
-        'exon_count', 'cdna_length', 'coding_bp_length', 'translation_id', 'protein_length_aa'}
+        'exon_count', 'cdna_length', 'coding_bp_length', 'translation_id', 'protein_length_aa',
+        'annotation_tags', 'start_codon_genomic_intervals'}
     annotation_aliases = {key for aliases in _ANNOTATION_FLAG_ALIASES.values() for key in aliases}
     for key in list(metadata):
         if key in structural_fields or key in annotation_aliases or key.startswith(('five_prime_terminal_exon_', 'three_prime_terminal_exon_')):
