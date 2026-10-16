@@ -21461,6 +21461,7 @@ _ASO_NAME_COLUMN_KEYS: Set[str] = {
     "oligo_name",
     "identifier",
     "candidate_id",
+    "molecule_id",
 }
 _ASO_CHEMISTRY_COLUMN_KEYS: Set[str] = {
     "chemistry",
@@ -27708,47 +27709,76 @@ def _build_compare_set(
     }
 
 
+def _provided_comparison_identity(row: Dict[str, Any]) -> Tuple[str, str]:
+    sequence = str(_normalize_aso_sequence(
+        row.get("sequence") or row.get("raw_sequence") or "").get("sequence") or "").upper()
+    chemistry = " ".join(str(row.get("chemistry") or "").split()).casefold()
+    return sequence, chemistry
+
+
 def _restore_submitted_set_membership(
     rows: List[Dict[str, Any]], task_context: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """Carry physical set IDs from an attached table through evaluated rows.
+    """Restore explicit row sets, then declared file panels, without merging aliases.
 
-    Target evaluation may retain the molecule and its evidence while losing
-    extra source-table columns. Join only an unambiguous candidate ID *and*
-    physical sequence; a reverse complement is never an identity match.
+    A file is a panel only when declared as supplied ASOs. Arbitrary reference
+    artifacts are inspected solely for explicit row set IDs. Source-file identity
+    disambiguates repeated candidate names; sequence alone never assigns a panel.
     """
-    paths = _task_context_artifact_refs(task_context)
-    source_memberships: Dict[Tuple[str, str], Set[Tuple[str, str]]] = {}
-    for raw_path in paths:
+    file_panels: Dict[str, Tuple[str, str]] = {}
+    paths = list(_task_context_artifact_refs(task_context))
+    for spec in _collect_provided_aso_file_specs(task_context):
+        path = _provided_aso_file_path(spec)
+        if path is None:
+            continue
+        path_key = str(path.resolve())
+        fields = spec if isinstance(spec, dict) else {}
+        group = str(fields.get("set_id") or "").strip() or (
+            "provided_file_" + hashlib.sha256(path_key.encode()).hexdigest()[:16])
+        label = str(fields.get("label") or fields.get("set_id") or path.name)
+        file_panels[path_key] = (group, label)
+        if path_key not in paths:
+            paths.append(path_key)
+    source_memberships: Dict[Tuple[str, str, str], Set[Tuple[str, str, str]]] = {}
+    for raw_path in dict.fromkeys(paths):
         path = Path(str(raw_path or "").strip()).expanduser()
         if not path.is_absolute():
             path = (_repo_root() / path).resolve()
         if not path.is_file() or path.suffix.lower() not in {".csv", ".tsv", ".json"}:
             continue
+        path_key = str(path.resolve())
         for source_row in _read_provided_asos_from_file(path):
             metadata = source_row.get("input_metadata") if isinstance(source_row.get("input_metadata"), dict) else {}
             set_id = str(source_row.get("set_id") or metadata.get("set_id") or "").strip()
-            sequence = str(_normalize_aso_sequence(source_row.get("sequence") or "").get("sequence") or "").upper()
+            group, label = (set_id, set_id) if set_id else file_panels.get(path_key, ("", ""))
+            sequence, chemistry = _provided_comparison_identity(source_row)
             name = str(source_row.get("name") or "").strip()
-            if set_id and sequence and name:
-                source_memberships.setdefault((name, sequence), set()).add((set_id, str(path.resolve())))
+            if group and sequence and name:
+                source_memberships.setdefault((name, sequence, chemistry), set()).add((group, label, path_key))
     sourced_keys = {
-        (str(row.get("name") or "").strip(),
-         str(_normalize_aso_sequence(row.get("sequence") or row.get("raw_sequence") or "").get("sequence") or "").upper())
+        (str(row.get("name") or "").strip(), *_provided_comparison_identity(row))
         for row in rows if isinstance(row, dict) and row.get("source_file")
     }
     restored = []
     for row in rows:
         item = dict(row)
-        sequence = str(_normalize_aso_sequence(item.get("sequence") or item.get("raw_sequence") or "").get("sequence") or "").upper()
-        key = (str(item.get("name") or "").strip(), sequence)
+        metadata = dict(item.get("input_metadata") or {})
+        declared_set_id = str(item.get("set_id") or metadata.get("set_id") or "").strip()
+        source_file = str(Path(item["source_file"]).expanduser().resolve()) if item.get("source_file") else ""
+        key = (str(item.get("name") or "").strip(), *_provided_comparison_identity(item))
         memberships = source_memberships.get(key) or set()
-        if len(memberships) == 1 and (item.get("source_file") or key not in sourced_keys):
-            set_id, source_file = next(iter(memberships))
-            metadata = dict(item.get("input_metadata") or {})
-            declared_set_id = str(item.get("set_id") or metadata.get("set_id") or "").strip()
-            if not declared_set_id:
-                metadata["set_id"] = set_id
+        if source_file:
+            memberships = {entry for entry in memberships if entry[2] == source_file}
+        if not declared_set_id:
+            if len(memberships) == 1 and (source_file or key not in sourced_keys):
+                group, label, source_file = next(iter(memberships))
+            elif source_file in file_panels:
+                group, label = file_panels[source_file]
+            else:
+                group, label = "", ""
+            if group:
+                metadata["set_id"] = group
+                metadata["comparison_set_label"] = label
                 item["input_metadata"] = metadata
                 item.setdefault("source_file", source_file)
         restored.append(item)
@@ -27771,27 +27801,32 @@ def _collect_aso_compare_sets(
     )
     provided_rows = [dict(row) for row in provided_asos if isinstance(row, dict)]
     if provided_rows:
-        provided_rows = _restore_submitted_set_membership(provided_rows, task_context)
+        provided_rows = _restore_submitted_set_membership(provided_rows, {**request_envelope, **task_context})
         grouped: Dict[str, List[Dict[str, Any]]] = {}
         ungrouped: List[Dict[str, Any]] = []
         for row in provided_rows:
             metadata = row.get("input_metadata") if isinstance(row.get("input_metadata"), dict) else {}
             group_id = str(row.get("set_id") or metadata.get("set_id") or "").strip()
             (grouped.setdefault(group_id, []) if group_id else ungrouped).append(row)
-        if len(grouped) >= 2:
+        if grouped:
             # A planner may repeat source-file rows as inline literals.  Keep
             # explicitly additional inline observations, but do not treat an
             # unprovenanced copy of the same named molecule as a third set.
-            sourced_sequences = {
-                _compare_row_sequence(row)
+            sourced_molecules = {
+                _provided_comparison_identity(row)
                 for rows in grouped.values() for row in rows
             }
+            sourced_sequences = {sequence for sequence, _ in sourced_molecules}
             ungrouped = [row for row in ungrouped
-                         if row.get("input_origin") == "inline_user"
-                         or _compare_row_sequence(row) not in sourced_sequences]
+                         if row.get("input_origin") == "inline_user" or row.get("source_file")
+                         or (_provided_comparison_identity(row) not in sourced_molecules
+                             and (row.get("chemistry")
+                                  or _provided_comparison_identity(row)[0] not in sourced_sequences))]
             for group_id, rows in grouped.items():
                 compare_sets.append(_build_compare_set(
-                    set_id=group_id, label=group_id, source_type="provided", rows=rows))
+                    set_id=group_id,
+                    label=str((rows[0].get("input_metadata") or {}).get("comparison_set_label") or group_id),
+                    source_type="provided", rows=rows))
             if ungrouped:
                 compare_sets.append(_build_compare_set(
                     set_id="provided_ungrouped", label="provided_ungrouped",
@@ -27865,8 +27900,9 @@ def _comparison_observation_table_rows(compare_sets: List[Dict[str, Any]]) -> Li
                 "set_id": compare_set.get("set_id"),
                 "source_type": compare_set.get("source_type"),
                 "source_task_id": compare_set.get("source_task_id"),
-                "source_artifact": compare_set.get("artifact_path"),
-                "source_row_1based": ordinal,
+                "source_artifact": source.get("source_file") or compare_set.get("artifact_path"),
+                "source_row_1based": source.get("source_row") or ordinal,
+                "recorded_chemistry": source.get("chemistry"),
                 "observation_id": source.get("input_row_id") or source.get("aso_id") or source.get("name") or source.get("Name") or ordinal,
                 "recorded_sequence_5to3": compact.get("sequence"),
                 "sequence_role": identity.get("sequence_role") or recorded.get("sequence_role") or
@@ -28027,6 +28063,8 @@ def _multi_set_exact_overlap_payload(compare_sets: List[Dict[str, Any]]) -> Dict
                 "exact_overlap_table": overlap.get("shared_asos") or [],
             }
         )
+    from .comparison_identity import add_recorded_molecule_overlap
+    add_recorded_molecule_overlap(payload, compare_sets)
     return payload
 
 

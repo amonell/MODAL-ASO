@@ -154,7 +154,7 @@ def submitted_set_response(compare_sets: List[Dict[str, Any]], evaluation: Dict[
                          if same_strand and sequence and set(sequence) <= set("ACGT") else None)
             sense_site = _site(same_strand, row, antisense=False) if same_strand else None
             evidence.append({
-                "set_id": item.get("set_id"), "name": metadata.get("candidate_id") or row.get("name"),
+                "set_id": item.get("set_id"), "name": metadata.get("candidate_id") or metadata.get("molecule_id") or row.get("name"),
                 "sequence": row.get("sequence"), "chemistry": row.get("chemistry"),
                 "length": row.get("length"), "gc_fraction": row.get("gc_fraction"),
                 "homopolymer": row.get("maximum_homopolymer_run_nt"),
@@ -186,10 +186,12 @@ def submitted_set_response(compare_sets: List[Dict[str, Any]], evaluation: Dict[
              f"Requested reference: {reference.get('gene_symbol') or 'target gene'}, "
              f"{transcript} (versioned accession is recorded per verified alignment below).",
              "",
-             "Exact set overlap counts refer to the submitted physical 5′→3′ molecules; reverse complements are separate diagnostic hypotheses."]
+             "Sequence overlap compares the submitted 5′→3′ strings. Recorded molecule overlap additionally requires the same chemistry label; different labels are not assumed chemically equivalent. Reverse complements are separate diagnostic hypotheses."]
     for pair in comparison.get("pairwise_overlaps") or []:
         lines.append(f"- {_cell(pair.get('set_a_label'))} vs {_cell(pair.get('set_b_label'))}: "
                      f"{int(pair.get('shared_count') or 0)} identical submitted sequence(s).")
+        if pair.get("shared_molecule_count") is not None:
+            lines.append(f"  Shared recorded molecules (sequence and chemistry): {pair['shared_molecule_count']}.")
     lines.extend(["", "| Set | Candidate | Submitted ASO 5′→3′ | Written-molecule assessment | Requested-reference site or nearest hypothesis | Mismatches | Length | GC | Max homopolymer | Exploratory priority |",
                   "|---|---|---|---|---|---|---:|---:|---:|---:|"])
     for item in evidence:
@@ -220,7 +222,7 @@ def submitted_set_response(compare_sets: List[Dict[str, Any]], evaluation: Dict[
                      f"{_cell(item['off_target_count_status'])}. "
                      "Any higher mismatch bins or biological effects not measured by that scope remain unknown.")
     lines.extend(["", "The screening counts are limited to their recorded reference universe and do not establish genome-wide safety. No knockdown or cellular activity was measured by this comparison."])
-    summary = (f"Compared {len(compare_sets)} submitted sets and {len(evidence)} physical molecules "
+    summary = (f"Compared {len(compare_sets)} submitted sets and {len(evidence)} submitted observations "
                f"against {transcript}; {sum(item['tier'][0] == 0 for item in evidence)} "
                "have an exact antisense site on the requested mature transcript. "
                "Exploratory priorities and unmeasured scope are shown per candidate.")
