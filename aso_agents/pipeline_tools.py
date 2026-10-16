@@ -32927,11 +32927,15 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             "candidate_selection_policy": resolved_goal.get("candidate_selection_policy"),
         }
     (directory / "declared_inputs.json").write_text(json.dumps(declared, indent=2))
+    bound_design_tasks = {entry["task_id"] for entry in design_evidence if entry.get("observations")}
+    source_bound_workbooks = [str(path) for path in pending if path.suffix.lower() == ".xlsx"
+                              and bindings.get(path, (None,))[0] in bound_design_tasks]
     result = execute_analysis_program(
         directory=directory,
         payload={"operation": "render_requested_outputs", "task_type": "sandbox_analysis",
                  "request_text": str(state.get("request") or ""), "request_envelope": envelope,
                  "declared_inputs": declared, "execution_root": str(directory),
+                 "source_bound_design_workbooks": source_bound_workbooks,
                  "native_export_sources": native_sources,
                  "resource_limits": {"timeout_seconds": None}, "require_tabular_report_views": True},
         generate=_run_sandbox_analysis_sync, required_outputs=pending,

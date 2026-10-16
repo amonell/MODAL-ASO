@@ -1,0 +1,321 @@
+"""Copy verified design observations into workbooks with checkable row bindings.
+
+Selection, additional calculations and prose remain the writer's responsibility.
+Native identities and measurements are never reconstructed by the writer.
+"""
+from copy import deepcopy
+import hashlib
+import json
+import math
+from pathlib import Path
+
+from .splice_prediction_records import METRICS
+from .splice_recommendations import finite_number
+
+
+CORE_COLUMNS = (
+    "binding_id", "target_5to3", "antisense_5to3", "program_ids", "transcript_ids",
+    "genomic_blocks_bed0_half_open", "strand", "recorded_chemistry", "length_nt",
+    "gc_bases", "gc_fraction", "longest_homopolymer", "off_target_exact_count",
+    "off_target_1mm_count", "off_target_search_status", "off_target_mismatch_budget",
+    "primary_delta_deletion", "primary_delta_replacement", "physical_splice_elements",
+    "stage_roles", "source_observation_ids", "evidence_conflicts",
+)
+PREDICTION_SHEET = "Recorded splice evidence"
+PREDICTION_COLUMNS = ("binding_id", "observation_id", "source", "source_pointer", "site_identity",
+                      *METRICS, "recorded_values", "unresolved_fields")
+_RECORDED = {
+    "off_target_exact_count": ("Off_target_exact_count", "off_target_exact_count"),
+    "off_target_1mm_count": ("Off_target_1mm_count", "off_target_1mm_count"),
+    "off_target_search_status": ("off_target_search_status",),
+    "off_target_mismatch_budget": ("Off_target_mismatch_budget", "off_target_mismatch_budget"),
+    "primary_delta_deletion": ("primary_delta_deletion",),
+    "primary_delta_replacement": ("primary_delta_replacement",),
+}
+
+
+def _json(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False)
+
+
+def _unique(values):
+    return list({_json(value): value for value in values}.values())
+
+
+def _cell(value):
+    if isinstance(value, (dict, list, tuple)):
+        value = _json(value)
+    if isinstance(value, str) and len(value) > 32767:
+        raise ValueError("Design evidence exceeds the Excel cell limit; use a separate linked evidence file")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("Nonfinite design value cannot be exported as a measured number")
+    return value
+
+
+def _source_rows(declared):
+    evidence = (declared.get("completed_run") or {}).get("design_evidence") or []
+    observations, sources = [], []
+    for entry in evidence:
+        meta = entry.get("observations")
+        if not meta:
+            continue
+        content = Path(meta["path"]).read_bytes()
+        if hashlib.sha256(content).hexdigest() != meta["sha256"]:
+            raise ValueError("Design observation source hash changed")
+        data = json.loads(content)
+        if data.get("schema") != "modal-aso-design-observations/1" or data.get("task_id") != entry["task_id"]:
+            raise ValueError("Design observation schema or producer does not match its declaration")
+        sources.append({"task_id": entry["task_id"], "path": meta["path"], "sha256": meta["sha256"]})
+        observations.extend(data["rows"])
+    return observations, sources
+
+
+def _catalog(declared):
+    observations, sources = _source_rows(declared)
+    groups = {}
+    for observation in observations:
+        # Unknown identities are retained separately, never joined by sequence.
+        key = observation.get("binding_match_key") or observation["observation_id"]
+        groups.setdefault(key, []).append(observation)
+    rows = []
+    for key, group in groups.items():
+        first = group[0]
+        identity = first["binding_identity"]
+        if any(item["binding_identity"] != identity for item in group):
+            raise ValueError("Conflicting identities share a design binding key")
+        metrics = first.get("derived_sequence_metrics") or {}
+        row = {"binding_id": key, "task_id": identity["task_id"],
+               **{name: deepcopy(identity.get(name)) for name in (
+                   "target_5to3", "antisense_5to3", "program_ids", "transcript_ids", "strand", "recorded_chemistry")},
+               "genomic_blocks_bed0_half_open": deepcopy(identity["binding_intervals_bed0_half_open"]),
+               "length_nt": metrics.get("length"), "gc_bases": metrics.get("gc_bases"),
+               "gc_fraction": metrics["gc_bases"] / metrics["length"] if metrics.get("length") else None,
+               "longest_homopolymer": metrics.get("longest_homopolymer_run"),
+               "physical_splice_elements": _unique([element for item in group for element in item["physical_splice_elements"]]),
+               "stage_roles": sorted({role for item in group for role in item["stage_roles"]}),
+               "source_observation_ids": [item["observation_id"] for item in group],
+               "evidence_conflicts": {}, "recorded_fields": {}, "splice_predictions": []}
+        # Preserve null/absent observations in the source; a later measurement
+        # can supply a value, but disagreeing measured values remain unresolved.
+        for field in {field for item in group for field in item["recorded_fields"]}:
+            values = _unique([item["recorded_fields"][field] for item in group
+                              if field in item["recorded_fields"] and item["recorded_fields"][field] is not None])
+            row["recorded_fields"][field] = values[0] if len(values) == 1 else None
+            if len(values) > 1:
+                row["evidence_conflicts"][field] = values
+        for name, aliases in _RECORDED.items():
+            values = []
+            for item in group:
+                for prefix in ("/", "/source_annotations/"):
+                    for alias in aliases:
+                        value = item["recorded_fields"].get(prefix + alias)
+                        if value is not None and value != "":
+                            if name != "off_target_search_status":
+                                number = finite_number(value)
+                                if number is None:
+                                    continue
+                                value = number
+                            values.append(value)
+            values = _unique(values)
+            row[name] = values[0] if len(values) == 1 else None
+            if len(values) > 1:
+                row["evidence_conflicts"][name] = values
+        for item in group:
+            for prediction in item["splice_predictions"]:
+                row["splice_predictions"].append({"observation_id": item["observation_id"],
+                    "source": item["source"], **deepcopy(prediction)})
+        rows.append(row)
+    return rows, sources
+
+
+def _source_value(row, field):
+    if field.startswith("recorded:"):
+        pointer = field.removeprefix("recorded:")
+        if pointer not in row["recorded_fields"]:
+            return None
+        return row["recorded_fields"][pointer]
+    if field not in row:
+        raise ValueError("Unknown design source column: " + field)
+    return row[field]
+
+
+def _prediction_rows(indexed, tables):
+    seen = set()
+    for table in tables:
+        for key in table["row_ids"]:
+            if key in seen:
+                continue
+            seen.add(key)
+            for record in indexed[key]["splice_predictions"]:
+                yield [key, record["observation_id"], record["source"], record["source_pointer"],
+                       record["identity"], *[record["numeric_values"].get(name) for name in METRICS],
+                       record["recorded_values"], record["unresolved_fields"]]
+
+
+class DesignWorkbook:
+    """A source-bound workbook; add custom columns as parallel row dictionaries.
+
+    wb = DesignWorkbook(json.load(open('declared_inputs.json')))
+    rows = wb.rows(stage='raw_generated', task_id='recorded-task-id')
+    wb.add_table('Library', rows, coverage='all_raw', task_id='recorded-task-id',
+                 extra_columns=['ID'], extra_values=[{'ID': 'candidate-1'}, ...])
+    result = wb.save('/output/library.xlsx')
+    # Write result into sandbox_result.json; add prose on wb.workbook separately.
+    """
+    def __init__(self, declared):
+        from openpyxl import Workbook
+        rows, self.sources = _catalog(declared)
+        self._rows = {row["binding_id"]: row for row in rows}
+        self.workbook = Workbook()
+        self.workbook.remove(self.workbook.active)
+        self._tables = []
+
+    def rows(self, stage=None, task_id=None):
+        return deepcopy([row for row in self._rows.values()
+                         if (stage is None or stage in row["stage_roles"])
+                         and (task_id is None or row["task_id"] == task_id)])
+
+    def add_table(self, title, rows, *, coverage="subset", task_id=None,
+                  source_columns=None, extra_columns=(), extra_values=None):
+        columns = dict(source_columns or {})  # Display header -> source field.
+        columns = {**{name: name for name in CORE_COLUMNS}, **columns}
+        if any(columns[name] != name for name in CORE_COLUMNS):
+            raise ValueError("Core design columns cannot be rebound")
+        if len(set(extra_columns)) != len(extra_columns) or set(columns).intersection(extra_columns):
+            raise ValueError("Extra columns must be unique and separate from source facts")
+        if title in self.workbook.sheetnames:
+            raise ValueError("Duplicate design table sheet")
+        if coverage not in {"subset", "all_raw", "all_final"}:
+            raise ValueError("Unknown design table coverage")
+        extra_values = [{} for _ in rows] if extra_values is None else extra_values
+        if len(extra_values) != len(rows):
+            raise ValueError("Extra values must correspond one-to-one with source rows")
+        ids = [row["binding_id"] for row in rows]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate binding in a design table")
+        sheet = self.workbook.create_sheet(title)
+        sheet.append([*columns, *extra_columns])
+        for row, extras in zip(rows, extra_values):
+            expected = self._rows.get(row["binding_id"])
+            if expected is None or row != expected:
+                raise ValueError("Design row was changed; use extra_values for derived calculations")
+            sheet.append([_cell(_source_value(expected, field)) for field in columns.values()]
+                         + [_cell(extras.get(name)) for name in extra_columns])
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        self._tables.append({"sheet": title, "columns": columns, "row_ids": ids,
+                             "coverage": coverage, "task_id": task_id})
+        return sheet
+
+    def save(self, path):
+        path = Path(path)
+        if not self._tables:
+            raise ValueError("A design workbook needs a source-bound candidate table")
+        # Every included row's site-specific predictions survive in a separate
+        # table, including nulls, zeros, replacement/deletion and source identity.
+        title = PREDICTION_SHEET
+        if title in self.workbook.sheetnames:
+            raise ValueError("Reserved design evidence sheet already exists")
+        sheet = self.workbook.create_sheet(title)
+        sheet.append(PREDICTION_COLUMNS)
+        for row in _prediction_rows(self._rows, self._tables):
+            sheet.append([_cell(value) for value in row])
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.workbook.save(path)
+        return {"design_tables": [{"path": str(path.resolve()), **table} for table in self._tables],
+                "design_observation_sources": deepcopy(self.sources), "design_prediction_sheet": title}
+
+
+def _agrees(expected, observed):
+    expected = _cell(expected)
+    if expected == "" and observed is None:
+        return True  # XLSX represents an empty string as an empty cell.
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        return (isinstance(observed, (int, float)) and not isinstance(observed, bool)
+                and math.isclose(expected, observed, rel_tol=1e-12, abs_tol=1e-15))
+    return type(expected) is type(observed) and expected == observed
+
+
+def validate_design_workbooks(payload, result, required_outputs):
+    """Check actual file contents, not merely the writer's completion claim."""
+    required = {Path(p).resolve() for p in payload.get("source_bound_design_workbooks") or []}
+    required &= set(required_outputs)
+    if not required:
+        return
+    from openpyxl import load_workbook
+    tables = result.get("design_tables")
+    if not isinstance(tables, list) or not tables:
+        raise ValueError("Design Excel exports require source-bound design_tables. Use aso_agents.design_workbooks.DesignWorkbook, "
+                         "add_table(), and include the dict returned by save() in sandbox_result.json. "
+                         "Copy source rows; do not reconstruct targets from overlapping fragments.")
+    rows, sources = _catalog(payload["declared_inputs"])
+    indexed = {row["binding_id"]: row for row in rows}
+    declared = set()
+    books = {}
+    checked = 0
+    try:
+        for table in tables:
+            path = Path(table["path"]).resolve()
+            if path not in required:
+                raise ValueError("Design table path is outside its requested output scope")
+            if (path, table["sheet"]) in declared:
+                raise ValueError("Duplicate design table declaration")
+            declared.add((path, table["sheet"]))
+            if path not in books:
+                books[path] = load_workbook(path, read_only=True, data_only=False)
+            book = books[path]
+            if table["sheet"] not in book.sheetnames:
+                raise ValueError("Declared design table sheet is missing")
+            values = list(book[table["sheet"]].values)
+            if not values:
+                raise ValueError("Design table is empty")
+            headers = list(values[0])
+            columns = table.get("columns") or {}
+            if any(columns.get(name) != name for name in CORE_COLUMNS):
+                raise ValueError("Design table must bind every core source column")
+            if any(headers.count(name) != 1 for name in columns):
+                raise ValueError("Missing or duplicate bound design column")
+            ids = table["row_ids"]
+            if len(ids) != len(set(ids)) or len(values) - 1 != len(ids):
+                raise ValueError("Design table row count or identity differs from its binding")
+            for key, cells in zip(ids, values[1:]):
+                if key not in indexed:
+                    raise ValueError("Unknown source binding in design export")
+                row = indexed[key]
+                if table.get("task_id") is not None and row["task_id"] != table["task_id"]:
+                    raise ValueError("Design row borrowed from another producer")
+                for header, field in columns.items():
+                    expected = _source_value(row, field)
+                    if not _agrees(expected, cells[headers.index(header)]):
+                        raise ValueError(f"Design export contradicts source: {path.name}/{table['sheet']} {key} {header}; "
+                                         "use the source-bound writer and keep derived values in extra columns")
+                checked += 1
+            coverage = table.get("coverage")
+            if coverage in {"all_raw", "all_final"}:
+                stage = "raw_generated" if coverage == "all_raw" else "final_output"
+                expected = {row["binding_id"] for row in rows if stage in row["stage_roles"]
+                            and (table.get("task_id") is None or row["task_id"] == table["task_id"])}
+                if set(ids) != expected:
+                    raise ValueError("Design export does not cover its declared complete source stage")
+            elif coverage != "subset":
+                raise ValueError("Design table coverage must be explicit")
+        if required != {path for path, _ in declared}:
+            raise ValueError("Every requested design workbook needs a source-bound candidate table")
+        for path, book in books.items():
+            if PREDICTION_SHEET not in book.sheetnames:
+                raise ValueError("Design workbook lost its recorded prediction evidence sheet")
+            actual = list(book[PREDICTION_SHEET].values)
+            expected = [list(PREDICTION_COLUMNS), *_prediction_rows(indexed, [table for table in tables
+                        if Path(table["path"]).resolve() == path])]
+            if len(actual) != len(expected) or any(len(a) != len(b) or any(not _agrees(x, y)
+                    for x, y in zip(a, b)) for a, b in zip(expected, actual)):
+                raise ValueError("Design workbook changed or omitted recorded site-specific predictions")
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError("Malformed source-bound design table declaration: " + str(exc)) from exc
+    finally:
+        for book in books.values():
+            book.close()
+    result["design_fact_validation"] = {"rows_checked": checked, "source_catalogs": sources,
+        "scope": "Bound source columns and declared stage coverage only; derived columns, selection and prose are not scientifically certified."}

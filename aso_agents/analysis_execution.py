@@ -312,7 +312,9 @@ def execute_analysis_program(
             _validate_completed_evaluation_export_rows(payload, required_outputs)
             from .analysis_evidence import validate_recorded_export_facts
             validate_recorded_export_facts(payload, required_outputs)
-            if result.get('report_table_rendering'):
+            from .design_workbooks import validate_design_workbooks
+            validate_design_workbooks(payload, result, required_outputs)
+            if result.get('report_table_rendering') or result.get('design_fact_validation'):
                 result_path.write_text(json.dumps(result, indent=2))
             summary = summary_path.read_text().strip()
             if not summary:
