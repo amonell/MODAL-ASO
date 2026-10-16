@@ -28733,12 +28733,17 @@ def _ensure_isoform_transcripts_for_target_region(
                     if isinstance(final_payload, dict):
                         final_payload["target_region"] = target_region
                     break
-    if target_region not in allowed_regions:
-        return
-
+    # Explicit transcript windows need their declared references even when no
+    # named feature (UTR/CDS/etc.) is selected. Resolve those identities before
+    # constraint materialization; a later gapmer catalog cannot repair an
+    # already-cached unresolved window. The feature gate below controls only
+    # the fallback that chooses an otherwise undeclared default reference.
     from aso_agents.declared_reference_catalog import complete_target_references
     import sys
     if complete_target_references(sys.modules[__name__], structured_goal, final_payload):
+        return
+
+    if target_region not in allowed_regions:
         return
 
     isoform_transcripts = structured_goal.get("isoform_transcripts")
