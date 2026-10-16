@@ -4365,7 +4365,10 @@ def test_semantic_audit_binds_each_patch_path_to_its_exact_value_schema() -> Non
     per_site_limit_branch = _branch_for("add", per_site_limit_path)
     assert "objective_id" not in append_branch["value"]["properties"]
     assert abundance_branch["value"]["enum"] == ["increase", "decrease"]
-    assert per_site_limit_branch["value"] == {"type": "integer", "minimum": 1}
+    per_site_value_schema = dict(per_site_limit_branch["value"])
+    description = per_site_value_schema.pop("description")
+    assert isinstance(description, str) and description.strip()
+    assert per_site_value_schema == {"type": "integer", "minimum": 1}
 
     valid_audit = {
         "status": "repairable",
