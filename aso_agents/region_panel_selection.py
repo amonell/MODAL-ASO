@@ -68,13 +68,14 @@ def _overlap_cliques(entries, minimum_genomic_gap_nt=0):
 def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                                 global_limit=None, per_site_limit=None,
                                 program_limits=None, global_minimum=0,
-                                nonoverlap=False, minimum_genomic_gap_nt=0):
+                                nonoverlap=False, minimum_genomic_gap_nt=0,
+                                panel_objectives=None, reference_catalog=None):
     """Return ranked molecules and the binding records proving their membership.
 
     Usually the ordinary ranked panel already meets the minima. Otherwise solve
     the binary count constraints, maximizing panel size before minimizing the sum
-    of native rank positions. Solver failures leave explicit shortfalls rather
-    than substituting the larger pool for the panel.
+    of native rank positions, or applying explicit joint panel priorities first.
+    Solver failures leave explicit shortfalls or unresolved ranking evidence.
     """
     if type(minimum_genomic_gap_nt) is not int or minimum_genomic_gap_nt < 0:
         raise ValueError("minimum_genomic_gap_nt must be a nonnegative integer")
@@ -100,6 +101,18 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
             entry["programs"].add(program)
     keys = list(molecules)
     entries = list(molecules.values())
+    requested_ranking = None
+    objective_columns = None
+    if panel_objectives is not None:
+        from .panel_objectives import compile_objectives
+        try:
+            objective_columns = compile_objectives(keys, entries, panel_objectives,
+                reference_catalog or {}, lambda row: _verified_blocks(row, intervals_for_row))
+            requested_ranking = {"status": "unresolved", "reason": "panel_optimization_not_completed",
+                                 "criteria": deepcopy(panel_objectives)}
+        except ValueError as exc:
+            requested_ranking = {"status": "unresolved", "reason": str(exc),
+                                 "criteria": deepcopy(panel_objectives)}
     minimums = [group["minimum"] for group in groups]
     memberships = [{j for j, entry in enumerate(entries) if i in entry["membership"]}
                    for i in range(len(groups))]
@@ -123,7 +136,11 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                                all(len(chosen & members) >= minimum
                                    for members, minimum in zip(memberships, minimums)))
     solver_status = "ranked_panel_already_satisfies_minimums"
-    if keys and (nonoverlap or not satisfies(selected)):
+    if not keys and objective_columns is not None and satisfies(selected):
+        from .panel_objectives import optimize_objectives
+        selected, requested_ranking = optimize_objectives(objective_columns, panel_objectives, 0, None)
+        solver_status = "empty_panel_permitted_no_objective_comparison"
+    if keys and (nonoverlap or panel_objectives is not None or not satisfies(selected)):
         import numpy as np
         from scipy.optimize import Bounds, LinearConstraint, milp
         from scipy.sparse import coo_matrix, vstack
@@ -146,16 +163,48 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
             if size.success:
                 count = int(round(sum(size.x)))
                 fixed_count = coo_matrix(np.ones((1, len(keys)))).tocsc()
-                ranked = milp(np.arange(1, len(keys) + 1, dtype=float),
-                              integrality=np.ones(len(keys)), bounds=Bounds(0, 1),
-                              constraints=LinearConstraint(vstack([matrix, fixed_count]),
-                                  np.append(lower, count), np.append(higher, count)), options=options)
-                chosen = {i for i, value in enumerate(ranked.x if ranked.success else size.x)
-                          if value > 0.5}
-                # Independently check integer membership after numerical solving.
-                if satisfies(chosen) and all(len(chosen & members) <= limit for members, limit, _ in upper):
-                    selected = chosen
+                chosen = None
+                if panel_objectives is None:
+                    ranked = milp(np.arange(1, len(keys) + 1, dtype=float),
+                                  integrality=np.ones(len(keys)), bounds=Bounds(0, 1),
+                                  constraints=LinearConstraint(vstack([matrix, fixed_count]),
+                                      np.append(lower, count), np.append(higher, count)), options=options)
+                    chosen = {i for i, value in enumerate(ranked.x if ranked.success else size.x)
+                              if value > 0.5}
                     solver_status = "optimal_rank_sum" if ranked.success else "feasible_rank_unresolved"
+                elif objective_columns is not None:
+                    from .panel_objectives import optimize_objectives
+
+                    def solve_objective(cost, extra):
+                        extra_matrix = (coo_matrix([coefficients for coefficients, _, _ in extra])
+                                        if extra else coo_matrix((0, len(keys)))).tocsc()
+                        result = milp(np.array(cost, dtype=float), integrality=np.ones(len(keys)),
+                            bounds=Bounds(0, 1), constraints=LinearConstraint(
+                                vstack([matrix, fixed_count, extra_matrix]),
+                                np.concatenate([lower, [count], [lo for _, lo, _ in extra]]),
+                                np.concatenate([higher, [count], [hi for _, _, hi in extra]])), options=options)
+                        if result.status == 2:
+                            return None
+                        if not result.success:
+                            raise RuntimeError("requested_objective_solver_unresolved")
+                        actual = {i for i, value in enumerate(result.x) if value > 0.5}
+                        if (len(actual) != count or not satisfies(actual)
+                                or any(len(actual & members) > limit for members, limit, _ in upper)
+                                or any(not lo <= sum(coefficients[i] for i in actual) <= hi
+                                       for coefficients, lo, hi in extra)):
+                            raise RuntimeError("requested_objective_integer_constraint_check_failed")
+                        return actual
+
+                    try:
+                        chosen, requested_ranking = optimize_objectives(
+                            objective_columns, panel_objectives, count, solve_objective)
+                        solver_status = "optimal_requested_panel_objectives"
+                    except (ValueError, RuntimeError) as exc:
+                        requested_ranking = {"status": "unresolved", "reason": str(exc),
+                                             "criteria": deepcopy(panel_objectives)}
+                # Independently check integer membership after numerical solving.
+                if chosen is not None and satisfies(chosen) and all(len(chosen & members) <= limit for members, limit, _ in upper):
+                    selected = chosen
         except (ValueError, RuntimeError) as exc:
             solver_status = "solver_error:" + type(exc).__name__
 
@@ -176,8 +225,10 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                   "selected_count": len(selected & memberships[i]),
                   "shortfall_count": max(0, group["minimum"] - len(selected & memberships[i]))}
                  for i, group in enumerate(groups)]
-    return rows, {"status": "complete" if satisfies(selected) else "unfulfilled",
-                  "method": ("native_rank_subject_to_hard_genomic_target_spacing" if minimum_genomic_gap_nt
+    ranking_complete = requested_ranking is None or requested_ranking["status"] == "complete"
+    return rows, {"status": "complete" if satisfies(selected) and ranking_complete else "unfulfilled",
+                  "method": ("requested_joint_panel_objectives" if panel_objectives is not None
+                             else "native_rank_subject_to_hard_genomic_target_spacing" if minimum_genomic_gap_nt
                              else "native_rank_subject_to_hard_physical_nonoverlap" if nonoverlap
                              else "native_rank_order_subject_to_physical_region_minimums"),
                   "selection_scope": "per_site" if groups else "global", "group_scope": "physical_region",
@@ -186,6 +237,7 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                   "eligible_count": len(keys), "selected_count": len(selected),
                   "selected_binding_records": len(rows), "unselected_count": len(keys) - len(selected),
                   "group_count": len(groups), "groups": summaries, "solver_status": solver_status,
+                  **({"requested_panel_ranking": requested_ranking} if requested_ranking is not None else {}),
                   **({"hard_nonoverlap": True, "candidate_minimum": global_minimum,
                       "minimum_genomic_gap_nt": minimum_genomic_gap_nt,
                       "spacing_coordinate_space": "genomic",

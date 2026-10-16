@@ -29411,13 +29411,14 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     candidate_selection: Dict[str, Any] = persisted_candidate_selection
     hard_nonoverlap = (structured_goal.get("candidate_selection_policy") == "nonoverlapping_target_sites"
                        or "candidate_minimum_genomic_gap_nt" in structured_goal)
+    panel_objectives = structured_goal.get("candidate_panel_objectives")
     hard_minimum = structured_goal.get("candidate_minimum", 1)
     if type(hard_minimum) is not int or hard_minimum < 0:
         hard_minimum = 1
-    if hard_nonoverlap and candidate_limit_per_site and not physical_site_groups:
+    if (hard_nonoverlap or panel_objectives is not None) and candidate_limit_per_site and not physical_site_groups:
         from .candidate_minimums import requested_region_minimums
         physical_site_groups = requested_region_minimums(structured_goal)
-    if physical_site_groups or hard_nonoverlap:
+    if physical_site_groups or hard_nonoverlap or panel_objectives is not None:
         from .region_panel_selection import select_region_minimum_panel
         ranked_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
         per_site_limit = _coerce_positive_int(structured_goal.get("candidate_limit_per_site")
@@ -29425,20 +29426,22 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         program_limits = {}
         for program in structured_goal.get("design_programs") or []:
             bounds = [_coerce_positive_int(program.get("candidate_limit"))]
-            if hard_nonoverlap and candidate_limit_per_site:
+            if (hard_nonoverlap or panel_objectives is not None) and candidate_limit_per_site:
                 bounds.append(per_site_limit)
             bounds = [value for value in bounds if value is not None]
             if program.get("program_id") and bounds:
                 program_limits[program["program_id"]] = min(bounds)
         eligible_rows, candidate_selection = select_region_minimum_panel(
             ranked_rows, physical_site_groups,
-            (_candidate_binding_intervals_for_exon_annotation if hard_nonoverlap
+            (_candidate_binding_intervals_for_exon_annotation if hard_nonoverlap or panel_objectives is not None
              else _goal_runtime_module()._tile_row_overlap_intervals),
             global_limit=_coerce_positive_int(structured_goal.get("candidate_limit")),
             per_site_limit=per_site_limit, program_limits=program_limits,
-            global_minimum=hard_minimum if hard_nonoverlap else 0,
+            global_minimum=hard_minimum if hard_nonoverlap or panel_objectives is not None else 0,
             nonoverlap=hard_nonoverlap,
             minimum_genomic_gap_nt=structured_goal.get("candidate_minimum_genomic_gap_nt", 0),
+            panel_objectives=panel_objectives,
+            reference_catalog=structured_goal.get("isoform_transcripts") or {},
         )
     elif candidate_limit is not None or candidate_limit_per_site:
         if candidate_group_scope == "physical_region":
@@ -33228,6 +33231,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             "chemistry": chemistry.get("recommendation") if isinstance(chemistry, dict) else chemistry,
             "candidate_selection_policy": resolved_goal.get("candidate_selection_policy"),
             "candidate_minimum_genomic_gap_nt": resolved_goal.get("candidate_minimum_genomic_gap_nt"),
+            "candidate_panel_objectives": resolved_goal.get("candidate_panel_objectives"),
         }
     bound_design_tasks = {entry["task_id"] for entry in design_evidence if entry.get("observations")}
     source_bound_workbooks = [str(path) for path in pending if path.suffix.lower() == ".xlsx"
@@ -54735,8 +54739,9 @@ def _apply_gapmer_constraints_to_result(
         candidate_minimum = _coerce_positive_int(structured_goal.get("candidate_minimum"))
         hard_nonoverlap = (structured_goal.get("candidate_selection_policy") == "nonoverlapping_target_sites"
                            or "candidate_minimum_genomic_gap_nt" in structured_goal)
+        panel_objectives = structured_goal.get("candidate_panel_objectives")
         hard_selection = {}
-        if hard_nonoverlap:
+        if hard_nonoverlap or panel_objectives is not None:
             from .region_panel_selection import select_region_minimum_panel
             hard_minimum = structured_goal.get("candidate_minimum", 1)
             if type(hard_minimum) is not int or hard_minimum < 0:
@@ -54744,8 +54749,10 @@ def _apply_gapmer_constraints_to_result(
             selected_rows, hard_selection = select_region_minimum_panel(
                 selection_rows, [], _candidate_binding_intervals_for_exon_annotation,
                 global_limit=candidate_limit, global_minimum=hard_minimum,
-                nonoverlap=True,
-                minimum_genomic_gap_nt=structured_goal.get("candidate_minimum_genomic_gap_nt", 0))
+                nonoverlap=hard_nonoverlap,
+                minimum_genomic_gap_nt=structured_goal.get("candidate_minimum_genomic_gap_nt", 0),
+                panel_objectives=panel_objectives,
+                reference_catalog=structured_goal.get("isoform_transcripts") or {})
         else:
             selected_rows = select_panel_rows(
                 selection_rows, candidate_limit, diversify=diversify,

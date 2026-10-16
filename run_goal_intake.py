@@ -3682,6 +3682,23 @@ async def _audit_request_obligations(
         goal["candidate_minimum_genomic_gap_nt"] = spacing["minimum_gap_nt"]
         goal["candidate_selection_policy"] = "nonoverlapping_target_sites"
 
+    panel_ranking = audit.get("candidate_panel_ranking")
+    panel_ranking_unresolved = False
+    if (_quoted_request_obligation(panel_ranking, source_text)
+            and panel_ranking.get("applies_to_all_candidates") is True
+            and panel_ranking.get("scope") == "joint_panel"):
+        from jsonschema import Draft7Validator
+        from aso_agents.goal_contract import CANONICAL_GOAL_FIELD_SCHEMAS
+        criteria = panel_ranking.get("criteria")
+        if Draft7Validator(CANONICAL_GOAL_FIELD_SCHEMAS["candidate_panel_objectives"]).is_valid(criteria):
+            synchronized_fields.add("candidate_panel_objectives")
+            goal["candidate_panel_objectives"] = deepcopy(criteria)
+        else:
+            panel_ranking_unresolved = True
+            intake_out["status"] = "need_clarification"
+            intake_out.setdefault("questions", []).append(
+                "Please clarify the panel-ranking quantities, their units, and their order of priority.")
+
     events = []
     for event in audit.get("conditional_exon_skip_events") or []:
         if not _quoted_request_obligation(event, source_text):
@@ -3736,11 +3753,12 @@ async def _audit_request_obligations(
                         program["target_region"] = goal["target_region"]
             _normalize_design_programs_in_goal(container)
     intake_out["request_obligation_audit"] = {
-        "status": "unresolved" if program_obligations['status'] == 'unresolved' else "accepted",
+        "status": "unresolved" if program_obligations['status'] == 'unresolved' or panel_ranking_unresolved else "accepted",
         "candidate_count": count if _quoted_request_obligation(count, source_text) else None,
         "per_site_count": per_site if per_site_valid else None,
         "candidate_site_diversity": diversity if _quoted_request_obligation(diversity, source_text) else None,
         "candidate_genomic_spacing": spacing if _quoted_request_obligation(spacing, source_text) else None,
+        "candidate_panel_ranking": panel_ranking if _quoted_request_obligation(panel_ranking, source_text) else None,
         "target_feature": feature if _quoted_request_obligation(feature, source_text) else None,
         "target_window": window,
         "target_accessibility": accessibility if _quoted_request_obligation(accessibility, source_text) else None,
