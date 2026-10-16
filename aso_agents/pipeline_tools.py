@@ -21911,7 +21911,8 @@ def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str,
         inline_items.append(item)
 
     file_rows, inline_items = reconcile_file_row_references(
-        file_rows, inline_items, lambda value: _normalize_aso_sequence(value)['valid_bases'])
+        file_rows, inline_items, lambda value: _normalize_aso_sequence(value)['valid_bases'],
+        request_text=request_envelope.get("request_text"))
     for idx, item in enumerate(file_rows + inline_items, start=1):
         if isinstance(item, dict):
             base = dict(item)

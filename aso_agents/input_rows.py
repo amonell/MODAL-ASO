@@ -1,16 +1,69 @@
 """Identity and provenance for supplied observations, independent of sequence rank."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from copy import deepcopy
 import hashlib
 import json
 import unicodedata
 
 
-def reconcile_file_row_references(file_rows, inline_items, sequence_like):
+def _reconcile_complete_sequence_preview(files, items, request_text):
+    """Recognize only a complete bare-DNA inventory copied from attached rows.
+
+    Equality is over the full multiset, including repeated observations. It
+    does not establish a particular molecule or chemistry for each string.
+    Preserve the preview as group provenance and retain every physical row.
+    Subsets, structured inline inputs and original request literals stay inputs.
+    """
+    def bare_dna(value):
+        if isinstance(value, str):
+            text = value.strip().upper()
+            if text and set(text) <= set('ACGT'):
+                return text
+        return None
+
+    if not files or len(items) != len(files) or not isinstance(request_text, str) or not request_text.strip():
+        return items
+    if any(not row.get('source_file') or row.get('source_row') is None for row in files):
+        return items
+    file_sequences = [bare_dna(row.get('sequence')) for row in files]
+    preview_sequences = [bare_dna(item) for item in items]
+    if (None in file_sequences or None in preview_sequences
+            or Counter(file_sequences) != Counter(preview_sequences)):
+        return items
+    # Ignore common written DNA separators when protecting literal user input.
+    # Unsupported sequence notations never qualify as a bare-DNA preview.
+    compact_request = ''.join(char for char in request_text.upper()
+                              if not char.isspace() and char not in "-'’′`–—")
+    if any(sequence in compact_request for sequence in preview_sequences):
+        return items
+    sources, previews = defaultdict(list), defaultdict(list)
+    for sequence, row in zip(file_sequences, files):
+        sources[sequence].append(row)
+    for index, (sequence, item) in enumerate(zip(preview_sequences, items)):
+        previews[sequence].append({'inline_position': index, 'value': item})
+    for sequence, matches in sources.items():
+        # One group-level provenance record, not a guessed pairing between
+        # anonymous strings and differently modified or repeated molecules.
+        matches[0].setdefault('input_reconciliation', []).append({
+            'kind': 'parsed_file_sequence_inventory',
+            'basis': 'Complete bare-DNA sequence multiset equals the physical file inventory; '
+                     'none of these sequences is a literal in the original request. '
+                     'No per-string molecule or chemistry assignment is inferred.',
+            'parsed_items': previews[sequence],
+            'matching_source_rows': [
+                {'source_file': row['source_file'], 'source_row': row['source_row']}
+                for row in matches],
+        })
+    return []
+
+
+def reconcile_file_row_references(file_rows, inline_items, sequence_like, *, request_text=None):
     """Resolve a bare non-sequence ID only against one actual attached row.
 
-    Explicit sequence dictionaries, nucleotide strings and ambiguous IDs remain
-    separate inputs. Real file observations are never deduplicated or repaired.
+    Explicit sequence dictionaries and ambiguous IDs remain separate inputs.
+    A complete anonymous sequence preview may be reconciled at inventory level
+    when the original request establishes it is not literal inline input.
+    Real file observations are never deduplicated or repaired.
     """
     files = deepcopy(file_rows)
     names = defaultdict(list)
@@ -35,7 +88,7 @@ def reconcile_file_row_references(file_rows, inline_items, sequence_like):
             'basis': 'Exact unique attached row ID; bare reference is not a nucleotide or supported annotated sequence.',
             'matching_source_rows': [{'source_file': row.get('source_file'), 'source_row': row.get('source_row')}],
         })
-    return files, remaining
+    return files, _reconcile_complete_sequence_preview(files, remaining, request_text)
 
 
 def _file_expansion_identity(row):
