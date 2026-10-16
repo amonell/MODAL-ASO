@@ -224,6 +224,7 @@ def execute_analysis_program(
     if set(expected_outputs) & set(readonly_outputs):
         raise ValueError('Generated output paths must not replace read-only input files')
     errors, attempts = [], []
+    last_program = None
     request = dict(payload)
     request['requested_output_paths'] = [str(p) for p in required_outputs]
     request['readonly_output_paths'] = [str(p) for p in readonly_outputs]
@@ -261,7 +262,9 @@ def execute_analysis_program(
         archived_outputs: list[dict] = []
         try:
             if not code:
-                raise ValueError('No executable analysis program was returned')
+                detail = plan.get('error')
+                raise ValueError('No executable analysis program was returned'
+                                 + (': ' + json.dumps(detail, ensure_ascii=False) if detail else ''))
             from .analysis_dependencies import validate_program_dependencies
             validate_program_dependencies(code)
             from .analysis_control_flow import validate_program_control_flow
@@ -364,6 +367,9 @@ def execute_analysis_program(
                    'plan_file_sha256': hashlib.sha256((local / 'plan.json').read_bytes()).hexdigest(),
                    'runtime_diagnostics': diagnostics,
                    'required_outputs':[str(p) for p in required_outputs]}
+        serialization_path = local / 'serialization.json'
+        if serialization_path.is_file():
+            receipt['serialization'] = json.loads(serialization_path.read_text())
         if archived_outputs:
             receipt['previous_output_archives'] = archived_outputs
         if promoted:
@@ -382,11 +388,19 @@ def execute_analysis_program(
             return {'ok':True, 'plan':plan, 'result':result, 'summary':summary,
                     'exit_code':0, 'attempts':attempts}
         errors.append(error)
+        if code:
+            last_program = {'previous_code': code, 'previous_plan': plan, 'error': error,
+                            'runtime_diagnostics': diagnostics}
+        repair = dict(last_program or {'previous_code': '', 'previous_plan': plan,
+                                      'error': error, 'runtime_diagnostics': diagnostics})
+        if not code and last_program:
+            # A rejected edit is not a replacement program. Preserve the last
+            # real code, its bound plan and its execution error for the next edit.
+            repair['latest_generation_error'] = error
         request = {**payload, 'requested_output_paths':[str(p) for p in required_outputs],
                    'readonly_output_paths': [str(p) for p in readonly_outputs],
                    'execution_contract': execution_contract,
-                   'execution_repair':{'previous_code':code, 'previous_plan':plan, 'error':error,
-                       'runtime_diagnostics': diagnostics, 'previous_attempts': list(attempts),
+                   'execution_repair':{**repair, 'previous_attempts': list(attempts),
                        'instruction':'Repair the program and create the requested files using only the same declared inputs. Do not invent missing data or change the requested scientific criteria.'}}
     return {'ok':False, 'plan':plan, 'result':{}, 'summary':'', 'exit_code':exit_code,
             'error':errors[-1], 'attempts':attempts}

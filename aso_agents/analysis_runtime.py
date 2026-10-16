@@ -9,6 +9,41 @@ from pathlib import Path
 import runpy
 import sys
 import traceback
+from contextlib import contextmanager
+
+
+@contextmanager
+def structured_excel_cells():
+    """Encode structured cells as JSON while preserving ordinary scalar types.
+
+    This is a serialization adapter, not a scientific transformation. Reject
+    oversized values before openpyxl can silently truncate the evidence.
+    """
+    receipt = {"format": "json", "converted_cells": 0, "source_types": {}}
+    try:
+        from openpyxl.cell.cell import Cell
+    except ImportError:
+        yield receipt
+        return
+    original = Cell._bind_value
+
+    def bind(cell, value):
+        if isinstance(value, (dict, list, tuple)):
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            if len(encoded) > 32767:
+                raise ValueError("Structured Excel cell exceeds 32767 characters; preserve the complete value "
+                                 "in a separate evidence sheet or file and put a reference in this cell.")
+            kind = type(value).__name__
+            receipt["converted_cells"] += 1
+            receipt["source_types"][kind] = receipt["source_types"].get(kind, 0) + 1
+            value = encoded
+        return original(cell, value)
+
+    Cell._bind_value = bind
+    try:
+        yield receipt
+    finally:
+        Cell._bind_value = original
 
 
 def describe(value, *, depth=0, seen=None):
@@ -47,8 +82,10 @@ def execute(code_path, diagnostic_path):
     # argument parsing or imports of task-local helper modules.
     sys.argv = [str(code_path)]
     sys.path.insert(0, str(code_path.parent))
+    serialization = None
     try:
-        runpy.run_path(str(code_path), run_name="__main__")
+        with structured_excel_cells() as serialization:
+            runpy.run_path(str(code_path), run_name="__main__")
     except Exception as exc:
         frames = []
         for frame, line in traceback.walk_tb(exc.__traceback__):
@@ -62,6 +99,9 @@ def execute(code_path, diagnostic_path):
         Path(diagnostic_path).write_text(json.dumps(record, indent=2))
         traceback.print_exc()
         return 1
+    finally:
+        if serialization and serialization["converted_cells"]:
+            Path(diagnostic_path).with_name("serialization.json").write_text(json.dumps(serialization, indent=2))
     return 0
 
 
