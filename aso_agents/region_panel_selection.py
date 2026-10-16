@@ -34,18 +34,20 @@ def _verified_blocks(row, intervals_for_row):
     return parsed
 
 
-def _overlap_cliques(entries):
+def _overlap_cliques(entries, minimum_genomic_gap_nt=0):
     """Sweep physical blocks; every active clique permits at most one molecule.
 
-    End and start events at the same coordinate are applied together, so adjacent
-    half-open targets are disjoint. Counts handle overlapping blocks belonging to
-    the same molecule. This avoids constructing every pair of tiling windows.
+    Extend each half-open block's right endpoint by the requested genomic gap.
+    End and start events at the same coordinate are applied together, so exactly
+    the requested number of untargeted bases is sufficient, on either strand.
+    Counts handle multiple blocks belonging to the same molecule. Introns are
+    not target blocks. This avoids constructing every pair of tiling windows.
     """
     events = {}
     for index, entry in enumerate(entries):
         for chrom, start, end in entry["blocks"]:
             by_position = events.setdefault(chrom, {})
-            for position, delta in ((start, 1), (end, -1)):
+            for position, delta in ((start, 1), (end + minimum_genomic_gap_nt, -1)):
                 changes = by_position.setdefault(position, {})
                 changes[index] = changes.get(index, 0) + delta
     cliques = set()
@@ -66,7 +68,7 @@ def _overlap_cliques(entries):
 def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                                 global_limit=None, per_site_limit=None,
                                 program_limits=None, global_minimum=0,
-                                nonoverlap=False):
+                                nonoverlap=False, minimum_genomic_gap_nt=0):
     """Return ranked molecules and the binding records proving their membership.
 
     Usually the ordinary ranked panel already meets the minima. Otherwise solve
@@ -74,6 +76,9 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
     of native rank positions. Solver failures leave explicit shortfalls rather
     than substituting the larger pool for the panel.
     """
+    if type(minimum_genomic_gap_nt) is not int or minimum_genomic_gap_nt < 0:
+        raise ValueError("minimum_genomic_gap_nt must be a nonnegative integer")
+    nonoverlap = nonoverlap or minimum_genomic_gap_nt > 0
     molecules = {}
     unverified_geometry_rows = 0
     for row in ranked_rows:
@@ -106,7 +111,7 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
     upper.extend(({j for j, entry in enumerate(entries) if program in entry["programs"]},
                   limit, "program:" + program)
                  for program, limit in (program_limits or {}).items())
-    conflicts = _overlap_cliques(entries) if nonoverlap else []
+    conflicts = _overlap_cliques(entries, minimum_genomic_gap_nt) if nonoverlap else []
     upper.extend((members, 1, "physical_nonoverlap") for members in conflicts)
 
     # Retain the native order whenever it already satisfies the request.
@@ -172,7 +177,8 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                   "shortfall_count": max(0, group["minimum"] - len(selected & memberships[i]))}
                  for i, group in enumerate(groups)]
     return rows, {"status": "complete" if satisfies(selected) else "unfulfilled",
-                  "method": ("native_rank_subject_to_hard_physical_nonoverlap" if nonoverlap
+                  "method": ("native_rank_subject_to_hard_genomic_target_spacing" if minimum_genomic_gap_nt
+                             else "native_rank_subject_to_hard_physical_nonoverlap" if nonoverlap
                              else "native_rank_order_subject_to_physical_region_minimums"),
                   "selection_scope": "per_site" if groups else "global", "group_scope": "physical_region",
                   "count_unit": "distinct_antisense_sequence_plus_chemistry",
@@ -181,6 +187,9 @@ def select_region_minimum_panel(ranked_rows, groups, intervals_for_row, *,
                   "selected_binding_records": len(rows), "unselected_count": len(keys) - len(selected),
                   "group_count": len(groups), "groups": summaries, "solver_status": solver_status,
                   **({"hard_nonoverlap": True, "candidate_minimum": global_minimum,
+                      "minimum_genomic_gap_nt": minimum_genomic_gap_nt,
+                      "spacing_coordinate_space": "genomic",
+                      "spacing_definition": "Untargeted bases between verified BED0 half-open target blocks on the same chromosome; independent of strand. Different chromosomes are separate axes. All recorded placements of a molecule participate; genomic spacing does not establish mature-RNA spacing.",
                       "overlap_constraint_count": len(conflicts),
                       "unverified_geometry_rows": unverified_geometry_rows,
                       "feasibility": ("feasible" if satisfies(selected) else

@@ -3673,6 +3673,15 @@ async def _audit_request_obligations(
         elif goal.get("candidate_selection_policy") != "nonoverlapping_target_sites":
             goal["candidate_selection_policy"] = "diverse_target_sites"
 
+    spacing = audit.get("candidate_genomic_spacing")
+    if (_quoted_request_obligation(spacing, source_text)
+            and spacing.get("applies_to_all_candidates") is True
+            and type(spacing.get("minimum_gap_nt")) is int
+            and spacing["minimum_gap_nt"] >= 0):
+        synchronized_fields.update({"candidate_minimum_genomic_gap_nt", "candidate_selection_policy"})
+        goal["candidate_minimum_genomic_gap_nt"] = spacing["minimum_gap_nt"]
+        goal["candidate_selection_policy"] = "nonoverlapping_target_sites"
+
     events = []
     for event in audit.get("conditional_exon_skip_events") or []:
         if not _quoted_request_obligation(event, source_text):
@@ -3731,6 +3740,7 @@ async def _audit_request_obligations(
         "candidate_count": count if _quoted_request_obligation(count, source_text) else None,
         "per_site_count": per_site if per_site_valid else None,
         "candidate_site_diversity": diversity if _quoted_request_obligation(diversity, source_text) else None,
+        "candidate_genomic_spacing": spacing if _quoted_request_obligation(spacing, source_text) else None,
         "target_feature": feature if _quoted_request_obligation(feature, source_text) else None,
         "target_window": window,
         "target_accessibility": accessibility if _quoted_request_obligation(accessibility, source_text) else None,
