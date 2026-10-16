@@ -32823,7 +32823,7 @@ def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[s
         source = payload.get("evaluation_summary") if isinstance(payload.get("evaluation_summary"), dict) else payload
         if not isinstance(source.get("provided_asos"), list):
             continue
-        from .reference_report_projection import evaluation_projection
+        from .reference_report_projection import evaluation_projection, alignment_export_observation
         projection = evaluation_projection(source)
         rows = []
         for row in source["provided_asos"][:100]:
@@ -32833,6 +32833,8 @@ def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[s
             near = row.get("near_match_candidates") if isinstance(row.get("near_match_candidates"), list) else []
             rows.append({
                 "name": row.get("name") or row.get("aso_id"),
+                "input_row_id": row.get("input_row_id"),
+                "source_file": row.get("source_file"), "source_row": row.get("source_row"),
                 "input_metadata": row.get("input_metadata"),
                 "sequence": row.get("sequence"),
                 "length": row.get("length"),
@@ -32840,14 +32842,14 @@ def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[s
                 "maximum_homopolymer_run_nt": row.get("maximum_homopolymer_run_nt"),
                 "orientation_interpretation": row.get("orientation_interpretation"),
                 "principal_reference_exon_membership": row.get("principal_reference_exon_membership"),
-                "mapping_hits": [{key: hit.get(key) for key in (
-                    "transcript_id", "match_orientation", "mapping_scope", "cdna_start",
-                    "cdna_end", "genomic_segments", "mismatch_count")}
+                "mapping_hits": [alignment_export_observation(hit)
                     for hit in hits[:5] if isinstance(hit, dict)],
-                "near_match_candidates": [{key: hit.get(key) for key in (
-                    "transcript_id", "match_orientation", "mapping_scope", "cdna_start",
-                    "cdna_end", "genomic_segments", "mismatch_count")}
+                "mapping_hits_total": len(hits),
+                "mapping_hits_preview_truncated": len(hits) > 5,
+                "near_match_candidates": [alignment_export_observation(hit)
                     for hit in near[:3] if isinstance(hit, dict)],
+                "near_match_candidates_total": len(near),
+                "near_match_candidates_preview_truncated": len(near) > 3,
                 "off_target_count_scope": row.get("off_target_count_scope"),
             })
         evaluation_evidence.append({
@@ -32861,6 +32863,7 @@ def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[s
             "rows": rows,
             "reference_projection": projection,
             "reference_projection_is_complete": True,
+            "reference_projection_scope": "All supplied observations and all retained alignment records. This does not establish exhaustive reference search coverage; retain each recorded search_scope.",
         })
     return evaluation_evidence
 

@@ -106,9 +106,9 @@ def test_requested_export_receives_bounded_native_evaluation_evidence(monkeypatc
     evidence = pipeline_tools._bounded_completed_evaluation_evidence({})
     assert evidence[0]['context_summary']['transcript_id'] == 'TX.2'
     assert evidence[0]['rows'][0]['principal_reference_exon_membership']['exons'][0]['transcript_exon_ordinal'] == 3
-    assert evidence[0]['rows'][0]['mapping_hits'] == [{'transcript_id': 'TX.2', 'match_orientation': None,
-        'mapping_scope': None, 'cdna_start': 11, 'cdna_end': 16, 'genomic_segments': None,
-        'mismatch_count': None}]
+    assert evidence[0]['rows'][0]['mapping_hits'] == [{'transcript_id': 'TX.2', 'cdna_start': 11, 'cdna_end': 16}]
+    assert evidence[0]['rows'][0]['mapping_hits_total'] == 1
+    assert evidence[0]['rows'][0]['mapping_hits_preview_truncated'] is False
 
 
 def test_multi_set_comparison_composes_evidence_and_survives_into_parent_report(monkeypatch, tmp_path):

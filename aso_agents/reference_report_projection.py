@@ -14,6 +14,20 @@ def _dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def alignment_export_observation(hit):
+    """Keep recorded alignment facts together without expanding reference catalogs."""
+    return {key: deepcopy(hit[key]) for key in (
+        'transcript_id', 'transcript_version', 'versioned_transcript_id',
+        'reference_build', 'reference_source', 'reference_annotation',
+        'mapping_scope', 'rna_context', 'match_orientation', 'strand', 'coordinate_system',
+        'cdna_start', 'cdna_end', 'locus_relative_start', 'locus_relative_end',
+        'genomic_segments', 'genomic_span', 'matched_target_sequence', 'matched_window_sequence',
+        'mismatch_count', 'mismatch_positions_in_supplied_sequence_1based',
+        'mismatch_positions_in_target_sequence_1based', 'mismatch_details_in_target_orientation',
+        'mismatch_annotation_coordinate_system', 'search_scope', 'binding_interpretation',
+    ) if key in hit}
+
+
 def reference_groups(row, catalog):
     """Partition *all* recorded alignments by reference, RNA context and strand."""
     identities = _dict(_dict(catalog).get("transcript_identities"))
@@ -32,19 +46,17 @@ def reference_groups(row, catalog):
             group = groups.setdefault(key, dict(zip(
                 ("transcript_id", "species", "assembly", "mapping_scope", "match_orientation"), key),
                 exact_hit_count=0, near_hit_count=0, best_near_mismatch_count=None,
-                best_near_alignments=[], exact_alignments=[]))
+                best_near_alignments=[], near_alignments=[], exact_alignments=[]))
             # Geometry remains attached to its own source observation. Never
             # combine a mature-RNA count with a locus coordinate or other strand.
-            observation = {k: deepcopy(hit.get(k)) for k in (
-                "transcript_id", "mapping_scope", "rna_context", "match_orientation",
-                "cdna_start", "cdna_end", "locus_relative_start", "locus_relative_end",
-                "genomic_segments", "matched_target_sequence", "mismatch_count")}
+            observation = alignment_export_observation(hit)
             observation["source_pointer"] = f"/{'mapping_hits' if kind == 'exact' else 'near_match_candidates'}/{index}"
             if kind == "exact":
                 group["exact_hit_count"] += 1
                 group["exact_alignments"].append(observation)
             else:
                 group["near_hit_count"] += 1
+                group["near_alignments"].append(observation)
                 count = hit.get("mismatch_count")
                 if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
                     best = group["best_near_mismatch_count"]
@@ -57,7 +69,7 @@ def reference_groups(row, catalog):
 
 
 def evaluation_projection(payload):
-    """One physical-molecule row plus complete context-specific binding views."""
+    """One supplied-observation row plus complete context-specific binding views."""
     catalog = _dict(payload.get("reference_catalog"))
     identities = _dict(catalog.get("transcript_identities"))
     result = []
@@ -71,6 +83,9 @@ def evaluation_projection(payload):
         physical_orientation = "input_sequence" if target_input else "reverse_complement"
         row = {
             "aso_id": source.get("aso_id") or source.get("name"),
+            "input_row_id": source.get("input_row_id"),
+            "source_file": source.get("source_file"), "source_row": source.get("source_row"),
+            "row_identity_scope": "One recorded input observation; repeated sequences are not automatically merged across chemistry or source identity.",
             "input_sequence_5to3": source.get("sequence"),
             "evaluated_molecule_sequence_5to3": orientation.get("evaluated_molecule_sequence") or source.get("sequence"),
             "physical_identity_policy": "confirmed target-site input" if target_input else "as-received molecule; no sequence replacement",
