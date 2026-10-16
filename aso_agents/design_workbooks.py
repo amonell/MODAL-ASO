@@ -42,6 +42,10 @@ def _unique(values):
     return list({_json(value): value for value in values}.values())
 
 
+def _fingerprint(fields):
+    return hashlib.sha256(_json(fields).encode()).hexdigest()
+
+
 def _cell(value):
     if isinstance(value, (dict, list, tuple)):
         value = _json(value)
@@ -94,6 +98,7 @@ def _catalog(declared):
                "physical_splice_elements": _unique([element for item in group for element in item["physical_splice_elements"]]),
                "stage_roles": sorted({role for item in group for role in item["stage_roles"]}),
                "source_observation_ids": [item["observation_id"] for item in group],
+               "source_row_fingerprints": sorted({_fingerprint(item["recorded_fields"]) for item in group}),
                "evidence_conflicts": {}, "recorded_fields": {}, "splice_predictions": []}
         # Preserve null/absent observations in the source; a later measurement
         # can supply a value, but disagreeing measured values remain unresolved.
@@ -175,6 +180,28 @@ class DesignWorkbook:
                          if (stage is None or stage in row["stage_roles"])
                          and (task_id is None or row["task_id"] == task_id)])
 
+    def _source_row(self, row, task_id):
+        if not isinstance(row, dict):
+            raise ValueError("Design table rows must be source record objects")
+        key = row.get("binding_id")
+        expected = self._rows.get(key) if isinstance(key, str) else None
+        if expected is not None and row == expected:
+            matches = [expected]
+        else:
+            # Exact, complete native records are another valid representation
+            # of a catalog row. Never use partial sequence/coordinate matching.
+            from .design_observation_tables import _fields
+            fingerprint = _fingerprint(_fields(row))
+            matches = [item for item in self._rows.values()
+                       if fingerprint in item["source_row_fingerprints"]]
+        matches = [item for item in matches if task_id is None or item["task_id"] == task_id]
+        if len(matches) != 1:
+            if expected is not None and not matches:
+                raise ValueError("Design row was changed; use extra_values for derived calculations")
+            raise ValueError("Native design row does not identify exactly one unchanged source binding in the requested task; "
+                             "use the unmodified rows returned by DesignWorkbook.rows()")
+        return matches[0]
+
     def add_table(self, title, rows, *, coverage="subset", task_id=None,
                   source_columns=None, extra_columns=(), extra_values=None):
         columns = dict(source_columns or {})  # Display header -> source field.
@@ -190,15 +217,13 @@ class DesignWorkbook:
         extra_values = [{} for _ in rows] if extra_values is None else extra_values
         if len(extra_values) != len(rows):
             raise ValueError("Extra values must correspond one-to-one with source rows")
-        ids = [row["binding_id"] for row in rows]
+        source_rows = [self._source_row(row, task_id) for row in rows]
+        ids = [row["binding_id"] for row in source_rows]
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate binding in a design table")
         sheet = self.workbook.create_sheet(title)
         sheet.append([*columns, *extra_columns])
-        for row, extras in zip(rows, extra_values):
-            expected = self._rows.get(row["binding_id"])
-            if expected is None or row != expected:
-                raise ValueError("Design row was changed; use extra_values for derived calculations")
+        for expected, extras in zip(source_rows, extra_values):
             sheet.append([_cell(_source_value(expected, field)) for field in columns.values()]
                          + [_cell(extras.get(name)) for name in extra_columns])
         sheet.freeze_panes = "A2"

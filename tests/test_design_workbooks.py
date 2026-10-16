@@ -150,6 +150,9 @@ def test_native_custom_workbook_uses_source_bound_writer_and_validates_bytes(tmp
         "final_outputs": [{"kind": "custom", "task_id": "design", "path": str(destination)}]}}
     def generate(payload):
         assert payload["source_bound_design_workbooks"] == [str(destination)]
+        declared = json.loads((tmp_path / "requested_artifacts/declared_inputs.json").read_text())
+        assert declared["request_envelope"] == state["request_envelope"]
+        assert declared["request_text"] == state["request"]
         return {"python_code": "from pathlib import Path\nimport json\n"
                 "from aso_agents.design_workbooks import DesignWorkbook\n"
                 "w=DesignWorkbook(json.loads(Path('declared_inputs.json').read_text()))\n"
@@ -166,3 +169,61 @@ def test_native_custom_workbook_uses_source_bound_writer_and_validates_bytes(tmp
 
 def test_unrelated_workbooks_are_outside_design_validation_scope(tmp_path):
     validate_design_workbooks({"source_bound_design_workbooks": []}, {}, [tmp_path / "analysis.xlsx"])
+
+
+def test_exact_original_native_rows_resolve_to_their_verified_catalog_binding(tmp_path):
+    declared, path, payload = context(tmp_path)
+    raw = json.loads(native._run_path(tmp_path, "tiles.json").read_text())["rows"]
+    writer = DesignWorkbook(declared)
+    writer.add_table("Native records", raw, task_id="design", coverage="all_raw")
+    result = writer.save(path)
+    validate_design_workbooks(payload, result, [path])
+    assert result["design_fact_validation"]["rows_checked"] == 1
+
+
+def test_native_binding_id_column_does_not_impersonate_the_catalog_schema(tmp_path):
+    row, goal, raw = example(tmp_path)
+    row["binding_id"] = "native-label"
+    raw.write_text(json.dumps({"schema": {"table": "aso_tiles"}, "rows": [row]}))
+    meta, _ = project(tmp_path)
+    declared = {"completed_run": {"design_evidence": [{"task_id": "design", "observations": meta}]}}
+    writer = DesignWorkbook(declared)
+    writer.add_table("Original rows", [row], task_id="design")
+    path = tmp_path / "native.xlsx"
+    result = writer.save(path)
+    validate_design_workbooks({"declared_inputs": declared, "source_bound_design_workbooks": [str(path)]}, result, [path])
+
+
+@pytest.mark.parametrize("change", ["missing_field", "changed_zero", "extra_field"])
+def test_native_row_adapter_requires_the_complete_unchanged_source_record(tmp_path, change):
+    declared, path, payload = context(tmp_path)
+    row = json.loads(native._run_path(tmp_path, "tiles.json").read_text())["rows"][0]
+    if change == "missing_field":
+        row.pop("IDT")
+    elif change == "changed_zero":
+        row["Off_target_exact_count"] = None
+    else:
+        row["rank"] = 1
+    with pytest.raises(ValueError, match="exactly one unchanged"):
+        DesignWorkbook(declared).add_table("Candidates", [row], task_id="design")
+
+
+def test_identical_native_row_in_different_tasks_requires_unambiguous_scope(tmp_path):
+    declared, path, payload = context(tmp_path)
+    meta = declared["completed_run"]["design_evidence"][0]["observations"]
+    data = json.loads(Path(meta["path"]).read_text())
+    data["task_id"] = "other"
+    data["rows"][0]["binding_identity"]["task_id"] = "other"
+    data["rows"][0]["binding_match_key"] = "different-task-binding"
+    copied = tmp_path / "other-observations.json"
+    copied.write_text(json.dumps(data))
+    import hashlib
+    declared["completed_run"]["design_evidence"].append({"task_id": "other", "observations": {
+        "path": str(copied), "sha256": hashlib.sha256(copied.read_bytes()).hexdigest()}})
+    raw = json.loads(native._run_path(tmp_path, "tiles.json").read_text())["rows"]
+    writer = DesignWorkbook(declared)
+    with pytest.raises(ValueError, match="exactly one unchanged"):
+        writer.add_table("Ambiguous", raw)
+    writer.add_table("Scoped", raw, task_id="design")
+    result = writer.save(path)
+    validate_design_workbooks(payload, result, [path])

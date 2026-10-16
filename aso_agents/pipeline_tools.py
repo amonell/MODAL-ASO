@@ -32853,6 +32853,10 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
     # native catalog identical to the catalog supplied to the model below;
     # core-artifact inventories need not contain every final export source.
     declared["native_export_sources"] = native_sources
+    # The generated program sees the same public request contract at runtime
+    # as the coder saw in its payload, without guessing it from source reports.
+    declared["request_text"] = str(state.get("request") or "")
+    declared["request_envelope"] = deepcopy(envelope)
     # Keep the source paths and a bounded inventory. Large completed runs can
     # have hundreds of intermediate files; sending every indexed sample to the
     # report provider can exceed its context window before export begins.

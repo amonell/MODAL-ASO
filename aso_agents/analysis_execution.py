@@ -266,18 +266,29 @@ def execute_analysis_program(
                 raise ValueError('No executable analysis program was returned'
                                  + (': ' + json.dumps(detail, ensure_ascii=False) if detail else ''))
             from .analysis_dependencies import validate_program_dependencies
-            validate_program_dependencies(code)
             from .analysis_control_flow import validate_program_control_flow
-            validate_program_control_flow(code)
+            preflight_errors = []
+            for validator in (validate_program_dependencies, validate_program_control_flow):
+                try:
+                    validator(code)
+                except ValueError as exc:
+                    preflight_errors.append(str(exc))
             inexact_lines = _inexact_decimal_boundary_lines(code)
             if inexact_lines:
-                raise ValueError(
+                preflight_errors.append(
                     'Inexact decimal-boundary comparison at generated code lines '
                     + ', '.join(map(str, inexact_lines))
                     + '. Retain source decimal strings and integer counts as '
                     'Decimal or Fraction through every threshold comparison; '
                     'convert only for final display or serialization.'
                 )
+            from .analysis_input_paths import declared_input_path_errors
+            manifest_path = directory / 'declared_inputs.json'
+            if manifest_path.is_file():
+                preflight_errors.extend(declared_input_path_errors(
+                    code, directory, json.loads(manifest_path.read_text())))
+            if preflight_errors:
+                raise ValueError('Analysis preflight: ' + '; '.join(preflight_errors))
             diagnostic_path = local / "runtime_error.json"
             # A file's presence after a clean start proves creation without
             # relying on delayed/coarse/unstable filesystem timestamps. Keep
