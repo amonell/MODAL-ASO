@@ -6559,9 +6559,17 @@ def _build_branch_outcomes_for_report(
     steric_requested = bool(
         steric_jobs
         or _design_programs(structured_goal, "steric")
-        or str(structured_goal.get("intent") or "").strip().lower() in {"splice_modulation", "binding"}
-        or _coerce_bool(final_payload.get("run_splice_eval"))
-        or _coerce_bool(final_payload.get("run_splice_router"))
+        # Match planner precedence: an explicit gapmer-only program does not
+        # request steric work merely because legacy run labels/flags remain.
+        # Real steric programs and job records above still require accounting.
+        or (
+            not _design_programs_are_gapmer_only(structured_goal)
+            and (
+                str(structured_goal.get("intent") or "").strip().lower() in {"splice_modulation", "binding"}
+                or _coerce_bool(final_payload.get("run_splice_eval"))
+                or _coerce_bool(final_payload.get("run_splice_router"))
+            )
+        )
     )
     gapmer_requested = bool(
         gapmer_jobs
