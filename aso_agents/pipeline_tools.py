@@ -18478,6 +18478,28 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
         [str(item.get("evidence_id") or "") for item in evidence_sources],
         list(span_map),
     )
+    def audit_contract_errors(payload: Dict[str, Any]) -> List[str]:
+        errors = _goal_contract_audit_contract_errors(normalized_audit(payload), schema)
+        if not errors or not isinstance(envelope, dict):
+            return errors
+        canonical = _canonicalize_existing_member_additions(payload, protocol)
+        patches = canonical.get("patches") if isinstance(canonical, dict) else None
+        for index, patch in enumerate(patches if isinstance(patches, list) else []):
+            if not isinstance(patch, dict) or _goal_audit_effective_patches(envelope, [patch]):
+                continue
+            operation = str(patch.get("op") or "").strip().lower()
+            reason = ("the replacement value is already present" if operation == "replace"
+                      else "the removal path is already absent")
+            errors.append(
+                f"$.patches[{index}]: {patch.get('path')} does not change the envelope: "
+                f"{reason}. This no-op is discarded before deriving status and cannot "
+                "resolve an open validation issue. Changing only status cannot repair it. "
+                "Use an evidence-supported effective correction or remove an unsupported "
+                "optional causal field. Do not invent a different scientific value just "
+                "to make the patch effective."
+            )
+        return errors
+
     allowed_channels = sorted(_goal_audit_allowed_nonempty_channels(prompt))
     agent = _agent_with_strict_output_schema(
         goal_contract_audit_agent,
@@ -18496,10 +18518,7 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
         prompt=prompt,
         schema=schema,
         error_prefix="goal_contract_audit_agent",
-        contract_validator=lambda payload: _goal_contract_audit_contract_errors(
-            normalized_audit(payload),
-            schema,
-        ),
+        contract_validator=audit_contract_errors,
     )
     if str(audited.get("error") or "").strip():
         return audited
