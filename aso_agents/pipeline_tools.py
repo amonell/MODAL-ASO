@@ -27767,6 +27767,12 @@ def _restore_submitted_set_membership(
         source_file = str(Path(item["source_file"]).expanduser().resolve()) if item.get("source_file") else ""
         key = (str(item.get("name") or "").strip(), *_provided_comparison_identity(item))
         memberships = source_memberships.get(key) or set()
+        if not key[2]:
+            # Older evaluations can omit chemistry while preserving the named
+            # physical sequence. Recover only an unambiguous panel membership;
+            # missing chemistry still does not establish molecule identity.
+            memberships = set().union(*(values for source_key, values in source_memberships.items()
+                                        if source_key[:2] == key[:2]))
         if source_file:
             memberships = {entry for entry in memberships if entry[2] == source_file}
         if not declared_set_id:

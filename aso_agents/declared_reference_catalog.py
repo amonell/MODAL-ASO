@@ -11,9 +11,16 @@ def _check_context(runtime, record, goal, reference):
         raise ValueError("declared_target_reference_species_conflict: " + reference)
     actual_gene = record.get("gene_id") or record.get("Parent")
     expected_gene = goal.get("gene_id")
+    # Legacy intake accepts a symbol in gene_id until authoritative resolution.
+    # Compare that symbol only with the *same reference record's* gene label;
+    # the proposed goal's label cannot override a conflicting stable ID.
+    expected_symbol = str(expected_gene or "").strip().casefold()
+    recorded_symbols = {str(record.get(key) or "").strip().casefold()
+                        for key in ("gene_symbol", "gene_name")}
+    symbol_matches = bool(expected_symbol and expected_symbol in recorded_symbols)
     if actual_gene and expected_gene and (
             runtime._normalize_ensembl_gene_id(str(actual_gene))
-            != runtime._normalize_ensembl_gene_id(str(expected_gene))):
+            != runtime._normalize_ensembl_gene_id(str(expected_gene))) and not symbol_matches:
         raise ValueError("declared_target_reference_gene_conflict: " + reference)
 
 

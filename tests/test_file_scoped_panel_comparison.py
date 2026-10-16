@@ -101,3 +101,16 @@ def test_explicit_inline_observation_and_different_chemistry_are_retained(tmp_pa
     panels = collect(context, {'provided_asos': rows})
     assert len(panels) == 3
     assert [r['name'] for r in panels[-1]['rows']] == ['additional', 'explicit_duplicate']
+
+
+def test_missing_chemistry_does_not_choose_between_ambiguous_file_memberships(tmp_path):
+    a, b = tmp_path / 'a.csv', tmp_path / 'b.csv'
+    write_panel(a, [('same_id', 'AACCGTATCGTA', 'PS', 'first')], with_sets=True)
+    write_panel(b, [('same_id', 'AACCGTATCGTA', 'MOE/PS', 'second')], with_sets=True)
+    context = {'artifact_refs': [{'path': str(a)}, {'path': str(b)}]}
+    row = {'name': 'same_id', 'sequence': 'AACCGTATCGTA'}
+    restored = pipeline._restore_submitted_set_membership([row], context)
+    assert restored == [row]
+    with_source = pipeline._restore_submitted_set_membership([{**row, 'source_file': str(b)}], context)
+    assert with_source[0]['input_metadata']['set_id'] == 'second'
+    assert with_source[0].get('chemistry') is None

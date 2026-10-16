@@ -179,3 +179,26 @@ def test_duplicate_catalog_alias_is_not_arbitrarily_selected(monkeypatch):
     with pytest.raises(ValueError, match="catalog_ambiguous"):
         complete_target_references(native, g)
     assert g == previous
+
+
+def test_legacy_symbol_in_gene_id_matches_verified_reference_symbol(monkeypatch):
+    g = goal()
+    g['gene_id'] = 'TEST'
+    g['isoform_transcripts']['anchor']['metadata']['gene_symbol'] = 'TEST'
+    monkeypatch.setattr(native, '_fetch_transcript_structure',
+                        lambda reference: {**structure(reference), 'gene_symbol': 'TEST'})
+    assert complete_target_references(native, g)
+    assert g['isoform_transcripts']['ENST00000000002.3']['metadata']['gene_id'] == 'ENSG00000000001.4'
+
+
+@pytest.mark.parametrize('expected,recorded', [('OTHER', 'TEST'), ('TEST', None), ('ENSG00000000009', 'TEST')])
+def test_proposed_label_never_resolves_a_conflicting_reference(monkeypatch, expected, recorded):
+    g = goal()
+    g['gene_id'] = expected
+    g['isoform_transcripts']['anchor']['metadata']['gene_symbol'] = recorded
+    before = deepcopy(g)
+    monkeypatch.setattr(native, '_fetch_transcript_structure',
+                        lambda reference: {**structure(reference), 'gene_symbol': recorded})
+    with pytest.raises(ValueError, match='gene_conflict'):
+        complete_target_references(native, g)
+    assert g == before

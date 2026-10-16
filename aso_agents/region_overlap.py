@@ -108,6 +108,45 @@ def combine_constraint_matches(observations, filters):
     return True if result is None else result
 
 
+def _explicit_interval_geometry(constraint, pointer, length):
+    """Describe each declared BED0 interval, without inferring final feasibility."""
+    result = []
+    source = constraint.get('intervals_bed0_half_open') or constraint.get('rows') or []
+    if not isinstance(source, list):
+        return result
+    requirement = constraint.get('aso_overlap_requirement') or 'any_overlap'
+    minimum = constraint.get('minimum_overlap_bp', 1)
+    for index, row in enumerate(source):
+        if isinstance(row, dict):
+            start, end = row.get('start'), row.get('end')
+            reference = row.get('chrom') or row.get('transcript_id')
+        elif isinstance(row, (list, tuple)) and len(row) >= 3:
+            reference, start, end = row[:3]
+        else:
+            continue
+        if type(start) is not int or type(end) is not int or start < 0 or end <= start:
+            continue
+        width = end - start
+        known = type(length) is int and length > 0 and type(minimum) is int and minimum > 0
+        feasible = None
+        if known and requirement in {'full_containment', 'contains_feature', 'any_overlap'}:
+            feasible = min(length, width) >= minimum
+            if requirement == 'full_containment':
+                feasible = feasible and length <= width
+            elif requirement == 'contains_feature':
+                feasible = feasible and width <= length
+        result.append({
+            'constraint_pointer': pointer, 'interval_index': index,
+            'reference': reference, 'coordinate_space': constraint.get('coordinate_space'),
+            'start0': start, 'end0_exclusive': end, 'interval_length_nt': width,
+            'candidate_length_nt': length if type(length) is int and length > 0 else None,
+            'aso_overlap_requirement': requirement, 'minimum_overlap_bp': minimum,
+            'single_interval_relation_possible': feasible,
+            'operator': constraint.get('operator') or 'union',
+        })
+    return result
+
+
 def constraint_execution_summary(goal):
     """Expose executable consequences to the existing semantic intake audit.
 
@@ -121,7 +160,7 @@ def constraint_execution_summary(goal):
     summaries = []
     for scope, container in scopes:
         filters = container.get("region_constraints") or []
-        if not isinstance(filters, list) or len(filters) < 2 or not all(isinstance(c, dict) for c in filters):
+        if not isinstance(filters, list) or not filters or not all(isinstance(c, dict) for c in filters):
             continue
         indices = range(len(filters))
         pointers = [f"{scope}/region_constraints/{i}" for i in indices]
@@ -132,5 +171,12 @@ def constraint_execution_summary(goal):
                 if combine_constraint_matches([j != i for j in indices], filters)],
             "constraints_sufficient_alone_for_admission": [pointers[i] for i in indices
                 if combine_constraint_matches([j == i for j in indices], filters)],
+            "explicit_interval_geometry": [item for i, constraint in enumerate(filters)
+                for item in _explicit_interval_geometry(
+                    constraint, pointers[i], container.get('length', goal.get('length')))],
+            "geometry_scope": "Each calculation concerns one explicit BED0 half-open interval and the declared "
+                "candidate length. It does not infer feasibility of the entire design: union alternatives, "
+                "exclusions, multi-block projections, unresolved features and coordinate origins still matter. "
+                "Check an impossible relation against the quoted request; never relax the request merely to obtain candidates.",
         })
     return summaries
