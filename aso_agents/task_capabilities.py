@@ -1,6 +1,19 @@
 """Shared executor boundaries for planning and independent plan review."""
 
-ANALYSIS_TASK_CAPABILITIES = (
+ANNOTATION_SCOPE_CONTRACT = (
+    "Keep candidate eligibility separate from annotations. mirna_binding, rbp_binding, "
+    "motif_tiling and region_constraints restrict where ASOs may be designed; populate "
+    "them only when the user requires candidates to target those sites. A request to "
+    "annotate overlaps across a complete library, including candidates without a site, "
+    "does not impose a binding-site restriction. Preserve the requested design region "
+    "and library coverage, and retain the annotation requirements in a downstream "
+    "analysis task and its deliverables. Do not infer an extra filter from the presence "
+    "of miRNA names, mature sequences, RBP metadata or annotation input files. Mature "
+    "miRNA sequences and family metadata are not transcript-specific binding-site "
+    "coordinates or database-reported target predictions.\n"
+)
+
+ANALYSIS_TASK_CAPABILITIES = (ANNOTATION_SCOPE_CONTRACT +
     "Executor selection follows the canonical task_type. The native flag is derived "
     "metadata: false for sandbox_analysis and true for all other supported operations, "
     "including analyze_artifact and build_composite_report. Changing that flag does not "
@@ -17,6 +30,14 @@ ANALYSIS_TASK_CAPABILITIES = (
     "trace_filter_decisions natively explains an actual recorded ASO pipeline run and its stage "
     "artifacts. If the request is instead to calculate hypothetical filter outcomes from supplied "
     "rows, use sandbox_analysis and label those outcomes accordingly; never invent run history. "
+    "Exact motif or miRNA seed matching under supplied sequence rules is a self-contained "
+    "sandbox_analysis calculation. For annotations on newly designed ASOs, depend on the "
+    "native design task and use its recorded target sequences and coordinate mappings, "
+    "alongside the supplied motif or mature-miRNA sequences. Preserve all requested rows "
+    "and all overlapping associations; evidence labels must distinguish calculated matches "
+    "from database-reported or experimentally established binding sites. "
+    "evaluate_existing_aso_set assesses ASOs against biological references; it does not "
+    "execute arbitrary supplied seed rules or produce custom overlap tables by itself. "
     "Target-relative sequence mapping or biological evaluation still requires the corresponding "
     "native evaluation task: supplied oligonucleotides do not make transcript-relative binding, "
     "orientation, or genomic interval assessment self-contained, even if the transcript must "

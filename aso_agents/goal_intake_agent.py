@@ -1,6 +1,7 @@
 import os
 from typing import Optional, Dict
 from agents import Agent, ModelSettings
+from aso_agents.task_capabilities import ANNOTATION_SCOPE_CONTRACT
 
 from aso_agents.goal_contract import (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS,
@@ -71,6 +72,7 @@ goal_intake_agent = Agent(
     instructions=(
         "You convert a user's free-text ASO/snRNA design request into a precise, structured goal.\n"
         + CANONICAL_DESIGN_GOAL_INSTRUCTIONS
+        + ANNOTATION_SCOPE_CONTRACT
         +
         "If the request is not an ASO design, evaluation, analysis, or ASO-related question, ask once for an ASO-related restatement. Do not answer off-topic text or greetings by writing a questionnaire. If the user declines ASO work or answers with a clearly non-ASO query, return status \"out_of_scope\" and stop; do not keep asking for an ASO task.\n"
         "Elicit transcript isoform preference for splice_modulation; SKIP isoform questions for knockdown or binding-only requests unless the user explicitly specifies an isoform.\n"
@@ -87,7 +89,7 @@ goal_intake_agent = Agent(
         "Intent classification rule: if the user is primarily asking to reduce overall gene output (e.g., knockdown, NMD/PTC induction, premature stop, frame-shift skipping, 'decrease expression'), set intent='knockdown' even if they mention splicing. Reserve intent='splice_modulation' for cases where the goal is to rebalance isoforms or change exon inclusion as the end-goal (beneficial vs pathogenic isoforms). If the user asks to block translation, block the start codon, block initiation, or otherwise bind without specifying a splicing outcome, set intent='binding', set target_region='translation_start', and set run_splice_router=false. If they mention UTR tiling without splicing, set intent='binding', set target_region accordingly, and set run_splice_router=false. If they mention CDS/coding sequence tiling without splicing, set intent='binding', set target_region='cds', and set run_splice_router=false. Use reasoning, not regex.\n"
         "If the user asks to tile across an RBP's binding sites (e.g., 'tile RBFOX2 binding sites'), set intent='binding', set run_splice_router=false, and include rbp_binding with the RBP name.\n"
         "ENCODE/eCLIP RBP site localization is pipeline-supported. Do NOT ask the user to choose an ENCODE dataset, replicate policy, or BED file unless they explicitly require a specific dataset, accession, biosample, or replicate rule; default selection will choose the best released ENCODE peak dataset and report the selected accession.\n"
-        "If the user asks for microRNA/miRNA/TargetScan binding sites, set intent='binding', target_region='utr3' unless a different region is explicitly stated, set run_splice_router=false, and include mirna_binding with the requested miRNA IDs/families and source='TargetScan'. Use target_level='mature_mrna' for TargetScan because TargetScan site coordinates are UTR-relative on spliced transcripts.\n"
+        "If the user restricts ASO design to microRNA/miRNA/TargetScan binding sites, set intent='binding', target_region='utr3' unless a different region is explicitly stated, set run_splice_router=false, and include mirna_binding with the requested miRNA IDs/families and source='TargetScan'. Use target_level='mature_mrna' for TargetScan because TargetScan site coordinates are UTR-relative on spliced transcripts. Annotation-only requests do not activate this restriction.\n"
         "If the user asks to tile only across one or more sequence motifs, include motif_tiling with the requested motifs and keep intent='binding' unless they also request splice modulation.\n"
         "If the user asks for a named site/element/binding site that you cannot represent as exact coordinates, a concrete sequence motif, a supported RBP binding request, a supported TargetScan miRNA binding request, an annotated transcript_feature (start_codon or cds), or explicit region_constraints rows, return status='need_clarification' and ask exactly: 'I can't localize the requested site from the information provided. Please provide exact coordinates (chr:start-end, strand if known) for the site/element you want targeted so I can create the BED file and run the intersection.'\n"
         "When motif_tiling is present, motif_tiling.target_level is REQUIRED and must be either 'pre_mrna' (genomic/splice-region coordinates) or 'mature_mrna' (spliced transcript/cDNA coordinates). If target_level is missing, return status='need_clarification' and ask exactly: 'Should motif targeting be on pre-mRNA (genomic/splice-region) or mature mRNA (spliced transcript)?'\n"
@@ -304,7 +306,7 @@ goal_schema_repair_agent = Agent(
 
 binding_site_constraint_repair_agent = Agent(
     name="ASO Binding Constraint Repair",
-    instructions=(
+    instructions=(ANNOTATION_SCOPE_CONTRACT +
         "You validate and repair executable binding-site constraints in an already parsed ASO structured goal.\n"
         "Inputs contain the original user request and the current structured goal. Do not answer the user and do not ask questions.\n"
         "Only recover constraints that are explicitly requested in the user's language but missing or malformed in the structured goal. Do not infer binding targets from gene names, pathways, diseases, or general biology.\n"
