@@ -1,5 +1,7 @@
 """Project typed transcript intervals through attested exon structures."""
 from copy import deepcopy
+import hashlib
+import json
 
 from .gapmer_selectivity import resolve_catalog_label
 
@@ -38,15 +40,54 @@ def bind_transcript_interval_reference(rows, constraint, catalog, default_transc
     return projected, evidence
 
 
+def source_intervals(constraint):
+    """Identify physical source intervals independently of their display names.
+
+    Materialized rows are source intervals, not projected exon blocks. Exact
+    duplicates describe one site; a repeated name cannot join distinct sites.
+    """
+    space = str(constraint.get('coordinate_space') or 'genomic').lower()
+    assembly = constraint.get('genome_assembly') or constraint.get('assembly')
+    sources = {}
+    for row in constraint.get('materialized_rows') or []:
+        if (not isinstance(row, (list, tuple)) or len(row) < 3
+                or not all(isinstance(x, int) and not isinstance(x, bool) for x in row[1:3])
+                or not 0 <= row[1] < row[2]):
+            return []
+        identity = [space, assembly, str(row[0]), row[1], row[2],
+                    str(row[5]) if len(row) > 5 else '.']
+        source_id = hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
+        label = str(row[3] if len(row) > 3 and row[3] else
+                    constraint.get('label') or constraint.get('constraint_id') or 'interval')
+        sources.setdefault(source_id, {'source_interval_id': source_id, 'label': label,
+            'source_row': deepcopy(list(row)), 'coordinate_space': space})
+    return list(sources.values())
+
+
+def distinct_source_labels(sources):
+    """Make ambiguous display names readable without using them as identity."""
+    labels = [source['label'] for source in sources]
+    reserved = set(labels)
+    result = []
+    for source in sources:
+        label = source['label']
+        if labels.count(label) > 1:
+            row = source['source_row']
+            label = f"{label} [{row[0]}:{row[1]}-{row[2]}; {source['coordinate_space']}]"
+            if label in reserved:
+                label += ' ' + source['source_interval_id']
+        reserved.add(label)
+        result.append({**source, 'label': label})
+    return result
+
+
 def genomic_sources(goal, constraint):
     """Keep each source interval's identity when it spans genomic segments."""
     space = str(constraint.get('coordinate_space') or 'genomic').lower()
-    rows = constraint.get('materialized_rows') or []
     catalog = goal.get('isoform_transcripts') or {}
     sources = []
-    for row in rows:
-        if not isinstance(row, (list, tuple)) or len(row) < 3:
-            return []
+    for source in distinct_source_labels(source_intervals(constraint)):
+        row = source['source_row']
         projected = [deepcopy(list(row))]
         if space in {'cdna', 'transcript', 'mature_transcript'}:
             label = resolve_catalog_label(row[0], catalog, catalog)
@@ -76,6 +117,5 @@ def genomic_sources(goal, constraint):
                 offset += size
             if sum(x[2]-x[1] for x in projected) != end-start:
                 return []
-        sources.append({'source_row':deepcopy(list(row)), 'coordinate_space':space,
-                        'genomic_rows':projected})
+        sources.append({**source, 'genomic_rows':projected})
     return sources

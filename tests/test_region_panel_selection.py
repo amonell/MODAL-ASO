@@ -154,7 +154,7 @@ def test_interval_summary_keeps_coordinate_reference_and_strand_scopes_separate(
     assert results[0]["intersection_of_all_regions"] == [[79, 88]] and results[0]["intersection_length_nt"] == 9
 
 
-def test_interval_summary_merges_duplicate_and_split_blocks_without_bridging_gaps():
+def test_interval_summary_keeps_same_named_source_intervals_separate_without_bridging_gaps():
     from aso_agents.region_interval_summary import nominated_region_interval_summary
     a = {"source_type": "explicit_rows", "label": "a", "materialized_rows": [
         ["chrFixture", 0, 12, "a"], ["chrFixture", 4, 12, "a"], ["chrFixture", 20, 30, "a"]]}
@@ -163,7 +163,10 @@ def test_interval_summary_merges_duplicate_and_split_blocks_without_bridging_gap
                 "materialized_rows": [["chrFixture", 0, 500, "excluded"]]}
     result = nominated_region_interval_summary({"materialized_region_constraints": {"global": [a, b, excluded]}})[0]
     assert result["union_intervals"] == [[0, 30]]
-    assert result["intersection_of_all_regions"] == [[10, 12], [20, 25]]
+    # Names are display metadata. Disjoint source intervals are separate sites,
+    # not evidence of exon blocks belonging to one source interval.
+    assert len(result['source_regions']) == 4
+    assert result["intersection_of_all_regions"] == []
     b["materialized_rows"] = [["chrFixture", 40, 50, "b"]]
     result = nominated_region_interval_summary({"materialized_region_constraints": {"global": [a, b]}})[0]
     assert result["union_intervals"] == [[0, 12], [20, 30], [40, 50]]

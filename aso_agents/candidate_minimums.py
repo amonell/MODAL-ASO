@@ -9,6 +9,7 @@ import math
 from .candidate_presentation import molecule_key
 from .parameter_constraints import evaluate_row_against_constraints
 from .region_overlap import candidate_matches_regions, matches_constraint_filters
+from .region_projection import genomic_sources, source_intervals, distinct_source_labels
 
 
 def genomic_regions_for_constraint(goal, program_id, constraint):
@@ -16,7 +17,6 @@ def genomic_regions_for_constraint(goal, program_id, constraint):
     space = str(constraint.get("coordinate_space") or "genomic").lower()
     if space not in {"cdna", "transcript", "mature_transcript"}:
         return deepcopy(constraint.get("materialized_rows") or [])
-    from .region_projection import genomic_sources
     sources = genomic_sources(goal, constraint)
     if sources:
         return [row for source in sources for row in source['genomic_rows']]
@@ -59,41 +59,51 @@ def requested_region_minimums(goal):
         positive_sites = [constraint for constraint in constraints
                           if isinstance(constraint, dict)
                           and constraint.get("source_type") == "explicit_rows"
-                          and constraint.get("operator") != "exclude"
-                          and constraint.get("label")]
+                          and constraint.get("operator") != "exclude"]
         if positive_sites:
-            # A single design job can cover several separately requested physical
-            # sites. Match each named constraint to its *compiled genomic* filter;
-            # the materialized source rows may still be in transcript coordinates.
+            # Each source interval is one site, regardless of repeated display
+            # names or the number of genomic blocks in its exon projection.
             filters = metadata.get("tile_constraint_filters") or []
             for constraint in positive_sites:
-                label = str(constraint["label"])
-                matching = [item for item in filters if isinstance(item, dict)
-                            and any(isinstance(row, (list, tuple)) and len(row) > 3
-                                    and str(row[3]) == label for row in item.get("rows") or [])]
-                resolved = len(matching) == 1 and bool(matching[0].get("rows"))
-                selected_filter = matching[0] if resolved else {}
-                if not resolved:
-                    regions = genomic_regions_for_constraint(goal, job.get('program_id'), constraint)
-                    if regions:
-                        selected_filter = {**constraint, 'rows':regions}
-                        resolved = True
-                sites = {}
-                for row in selected_filter.get('rows') or []:
-                    name = str(row[3] if len(row)>3 and row[3] else label)
-                    sites.setdefault(name, []).append(row)
+                sites = genomic_sources(goal, constraint)
                 if not sites:
-                    sites[label] = []
-                for name, rows in sites.items():
+                    sites = distinct_source_labels(source_intervals(constraint))
+                    regions = genomic_regions_for_constraint(goal, job.get('program_id'), constraint)
+                    # A unique compiled projection of a single source interval
+                    # can contain several exons. Never distribute an aggregate
+                    # projection among multiple unresolvable source intervals.
+                    if len(sites) == 1 and regions:
+                        sites[0]['genomic_rows'] = regions
+                if not sites:
+                    label = str(constraint.get('label') or constraint.get('constraint_id') or 'unresolved')
+                    sites = [{'source_interval_id': 'unresolved', 'label': label}]
+                    matching = [item for item in filters if isinstance(item, dict)
+                        and len(item.get('rows') or []) == 1 and len(item['rows'][0]) > 3
+                        and str(item['rows'][0][3]) == label]
+                    if len(matching) == 1:
+                        # Older runs may omit source rows. A sole named compiled
+                        # genomic interval is still unambiguous; multiple blocks
+                        # without source provenance cannot establish site count.
+                        compiled = {**constraint, 'coordinate_space': 'genomic',
+                                    'materialized_rows': matching[0]['rows']}
+                        sites = genomic_sources(goal, compiled) or sites
+                for source in sites:
+                    name = source['label']
+                    label = str(constraint.get('label') or name)
+                    rows = source.get('genomic_rows') or []
+                    resolved = bool(rows)
                     site_id = str(constraint.get("constraint_id") or label)
-                    site_group_id = f"{group_id}:{site_id}:{name}"
+                    site_group_id = f"{group_id}:{site_id}:{source['source_interval_id']}"
                     group = groups.setdefault(site_group_id, {"group_id": site_group_id,
                         "label": name, "minimum": minimum, "site_scope": "physical_constraint",
+                        "source_interval_id": source['source_interval_id'],
+                        "source_row": source.get('source_row'),
+                        "source_coordinate_space": source.get('coordinate_space'),
                         "selectors": []})
-                    site_filter = {**selected_filter, 'rows':rows, 'operator':'intersect'}
+                    site_filter = {**constraint, 'rows':rows, 'region_groups':[rows], 'operator':'intersect'}
                     group["selectors"].append({
                         "rows": deepcopy(rows),
-                        "requirement": selected_filter.get("aso_overlap_requirement") or "any_overlap",
+                        "requirement": constraint.get("aso_overlap_requirement") or "any_overlap",
                         "filters": deepcopy([*filters, site_filter] if resolved else []),
                         "chemistry_group_id": job.get("chemistry_group_id"),
                         "explicit_scope_resolved": resolved,

@@ -29079,8 +29079,8 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     generated_trace_path = _write_run_path(run_path, "generated_filter_trace.json")
 
     normalized_rows = [_normalized_generated_candidate_row(row) for row in candidate_rows]
-    from .candidate_region_gate import filter_final_rows_by_global_regions
-    normalized_rows, global_region_filter = filter_final_rows_by_global_regions(
+    from .candidate_region_gate import filter_final_rows_by_regions
+    normalized_rows, global_region_filter = filter_final_rows_by_regions(
         normalized_rows, structured_goal, _goal_runtime_module()._tile_row_overlap_intervals)
     gapmer_results = (
         final_payload.get("gapmer_tiling_results")
