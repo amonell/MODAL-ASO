@@ -11,6 +11,55 @@ import json
 from typing import Any
 
 
+def evaluation_ranking_policy(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Require one recorded chemistry before comparing a panel's generic proxies.
+
+    Exact supplied descriptions are compared conservatively. Different descriptions
+    are not assumed chemically equivalent, and no mechanism is inferred from prose.
+    The underlying sequence measurements remain useful without a shared ranking.
+    """
+    identities = []
+    for row in rows:
+        value = row.get("chemistry") or row.get("Chemistry")
+        if isinstance(value, str):
+            value = value.strip()
+            identity = value if value and value.lower() not in {"unknown", "unspecified", "not recorded"} else None
+        elif isinstance(value, dict) and value:
+            identity = json.dumps(value, sort_keys=True, ensure_ascii=False)
+        else:
+            identity = None
+        identities.append(identity)
+    comparable = len(rows) < 2 or (all(identities) and len(set(identities)) == 1)
+    return {
+        "allow_shared_ranking": bool(comparable),
+        "status": "available_within_recorded_chemistry" if comparable else "not_comparable",
+        "reason": "single_recorded_chemistry_or_single_row" if comparable else "mixed_or_unresolved_recorded_chemistries",
+        "scope": (
+            "Generic sequence/binding proxies within one recorded chemistry; no potency or splice-efficacy claim."
+            if comparable else
+            "No shared numeric rank: recorded chemistries differ or are unresolved. Compare per-molecule binding and sequence evidence; effects across mechanisms are not calibrated."
+        ),
+    }
+
+
+def suppress_incomparable_ranks(rows: list[dict[str, Any]], policy: dict[str, Any]) -> None:
+    """Remove ordinal comparisons while retaining the measured proxy components."""
+    if policy["allow_shared_ranking"]:
+        return
+    for row in rows:
+        row.pop("selection_rank", None)
+        row.pop("knockdown_proxy_rank", None)
+        for key in ("selection_score_components", "knockdown_proxy_score_components"):
+            components = row.get(key)
+            if isinstance(components, dict):
+                components.pop("generic_gapmer_proxy_rank", None)
+        row["ranking_status"] = policy["status"]
+        row["ranking_scope"] = policy["scope"]
+        stages = row.get("stage_results")
+        if isinstance(stages, dict):
+            stages["ranking"] = {"status": "not_run", "reason_code": policy["reason"]}
+
+
 def _records(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, str):
         try:

@@ -28769,6 +28769,7 @@ def _compact_existing_aso_evaluation_for_response(payload: Dict[str, Any]) -> Di
             "knockdown_proxy_rank": row.get("knockdown_proxy_rank"),
             "knockdown_proxy_score_components": row.get("knockdown_proxy_score_components"),
             "ranking_scope": row.get("ranking_scope"),
+            "ranking_status": row.get("ranking_status"),
             "off_target_exact_count_unit": row.get("off_target_exact_count_unit"),
             "off_target_count_scope": deepcopy(row.get("off_target_count_scope")),
             "off_target_count_status": row.get("off_target_count_status"),
@@ -36795,6 +36796,7 @@ _PROVIDED_ASO_SCORED_TILE_FIELDS: Tuple[str, ...] = (
     "knockdown_proxy_rank",
     "knockdown_proxy_score_components",
     "ranking_scope",
+    "ranking_status",
     "Off_target_total_upto_mismatch_count",
     "Off_target_mismatch_budget",
     "Off_target_weighted_risk_score",
@@ -37195,7 +37197,7 @@ def _score_provided_asos_with_existing_pipeline(
 ) -> Dict[str, Any]:
     scoring_summary: Dict[str, Any] = {
         "status": "not_run",
-        "method": "provided_asos_as_synthetic_gapmer_tiles",
+        "method": "provided_sequence_measurements_with_chemistry_scoped_ranking",
         "notes": [
             "Sequences are scored using their mapped transcript-oriented target-site sequence when available.",
             "The exact gene-screening count combines exon-contained genomic matches and adjacent annotated junction matches under off_target_count_scope. It excludes the entire target gene and is not a genome-wide binding count; mismatch/indel and intronic-only selectivity are not established.",
@@ -37319,8 +37321,11 @@ def _score_provided_asos_with_existing_pipeline(
             "reason": "cdna_kmer_context_or_runtime_annotator_missing",
         }
 
+    from .provided_aso_ranking import evaluation_ranking_policy, suppress_incomparable_ranks
+    ranking_policy = evaluation_ranking_policy(rows)
+    scoring_summary["ranking_policy"] = ranking_policy
     ranker = getattr(runtime, "_annotate_gapmer_selection_ranks", None)
-    if callable(ranker) and scored_path:
+    if ranking_policy["allow_shared_ranking"] and callable(ranker) and scored_path:
         try:
             scoring_summary["selection_ranking"] = ranker(scored_path)
         except Exception as exc:
@@ -37335,7 +37340,7 @@ def _score_provided_asos_with_existing_pipeline(
     if not isinstance(scored_rows, list):
         scoring_summary["merge"] = {"error": "scored_tiles_rows_invalid"}
         return scoring_summary
-    if not splice_related:
+    if not splice_related and ranking_policy["allow_shared_ranking"]:
         from .provided_aso_ranking import rank_scored_provided_rows
         old_ranking = scoring_summary.get("selection_ranking")
         binding_ranking = rank_scored_provided_rows(
@@ -37345,7 +37350,23 @@ def _score_provided_asos_with_existing_pipeline(
             scoring_summary["selection_ranking"] = binding_ranking
             Path(scored_path).write_text(
                 json.dumps(scored_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    if splice_related:
+    if not ranking_policy["allow_shared_ranking"]:
+        for path in output_dir.glob("provided_aso*.json"):
+            artifact = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(artifact, dict) or not isinstance(artifact.get("rows"), list):
+                continue
+            suppress_incomparable_ranks(artifact["rows"], ranking_policy)
+            columns = (artifact.get("schema") or {}).get("columns", artifact.get("columns"))
+            if isinstance(columns, dict):
+                for key in ("selection_rank", "knockdown_proxy_rank"):
+                    columns.pop(key, None)
+                columns.update(ranking_scope="string", ranking_status="string")
+            path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
+        suppress_incomparable_ranks(scored_rows, ranking_policy)
+        suppress_incomparable_ranks(rows, ranking_policy)
+        scoring_summary["selection_ranking"] = {"status": "not_run", "reason": ranking_policy["reason"]}
+        scoring_summary["selection_ranking_scope"] = ranking_policy["scope"]
+    elif splice_related:
         for path in output_dir.glob("provided_aso*.json"):
             artifact = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(artifact, dict) or not isinstance(artifact.get("rows"), list):

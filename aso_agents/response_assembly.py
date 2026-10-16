@@ -151,7 +151,7 @@ def assembly_source(payload, response):
                 'off_target_exact_count_unit') if key in row}
         availability['recorded_proxy_ranking'] = {
             key: deepcopy(row[key]) for key in (
-                'knockdown_proxy_rank', 'ranking_scope') if key in row}
+                'knockdown_proxy_rank', 'ranking_scope', 'ranking_status') if key in row}
         evidence_register.append(availability)
     scoring = (payload.get('evaluation_summary') or {}).get('provided_aso_scoring') or {}
     return {
