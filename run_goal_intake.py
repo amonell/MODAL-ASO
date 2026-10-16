@@ -3673,6 +3673,15 @@ async def _audit_request_obligations(
     if events:
         synchronized_fields.add("conditional_exon_skip_events")
         goal["conditional_exon_skip_events"] = events
+    from aso_agents.quoted_program_obligations import apply_program_obligations
+    program_obligations = apply_program_obligations(goal, audit, source_text)
+    if program_obligations['status'] == 'applied':
+        synchronized_fields.add('design_programs')
+    elif program_obligations['status'] == 'unresolved':
+        intake_out['status'] = 'need_clarification'
+        intake_out['questions'] = [
+            'Please identify which design program or transcript set each requested count or binding constraint applies to.'
+        ]
     _normalize_design_programs_in_goal(goal)
     if "design_programs" in intake_out and "design_programs" in goal:
         intake_out["design_programs"] = deepcopy(goal["design_programs"])
@@ -3704,13 +3713,15 @@ async def _audit_request_obligations(
                         program["target_region"] = goal["target_region"]
             _normalize_design_programs_in_goal(container)
     intake_out["request_obligation_audit"] = {
-        "status": "accepted", "candidate_count": count if _quoted_request_obligation(count, source_text) else None,
+        "status": "unresolved" if program_obligations['status'] == 'unresolved' else "accepted",
+        "candidate_count": count if _quoted_request_obligation(count, source_text) else None,
         "per_site_count": per_site if per_site_valid else None,
         "candidate_site_diversity": diversity if _quoted_request_obligation(diversity, source_text) else None,
         "target_feature": feature if _quoted_request_obligation(feature, source_text) else None,
         "target_window": window,
         "target_accessibility": accessibility if _quoted_request_obligation(accessibility, source_text) else None,
         "conditional_exon_skip_events": events,
+        "program_obligations": program_obligations,
     }
     return intake_out
 
