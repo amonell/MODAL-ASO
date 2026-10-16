@@ -17948,15 +17948,8 @@ def _write_aso_excel(
     norm_map = {_normalize_excel_key(col): col for col in header}
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
-    from aso_agents.excel_values import EXCEL_TEXT_UNITS, excel_text_units, excel_text_parts
-    used_titles = {"all", *(name[:31].casefold() for name, _ in (sheet_groups or []))}
-    long_title = "Long values"
-    suffix = 1
-    while long_title.casefold() in used_titles:
-        suffix += 1
-        long_title = f"Long values {suffix}"
-    long_values: Dict[Tuple[int, str], Tuple[str, int]] = {}
-    long_rows: List[List[Any]] = []
+    from aso_agents.excel_values import LosslessExcelValues
+    long_values = LosslessExcelValues(workbook, header, ['All', *(name for name, _ in (sheet_groups or []))])
 
     def _write_sheet(sheet_name: str, columns: List[str]) -> None:
         if not columns:
@@ -17974,28 +17967,7 @@ def _write_aso_excel(
             except Exception:
                 return str(value)
         for row_index, row in enumerate(rows):
-            values = []
-            links = []
-            for column_index, col in enumerate(columns):
-                value = _cell_value(row.get(col, ""))
-                if isinstance(value, str) and excel_text_units(value) > EXCEL_TEXT_UNITS:
-                    key = (row_index, col)
-                    if key not in long_values:
-                        value_id = f"R{row_index + 1}C{header.index(col) + 1}"
-                        start_row = len(long_rows) + 2
-                        parts = excel_text_parts(value)
-                        long_values[key] = (value_id, start_row)
-                        long_rows.extend([[value_id, row_index + 2, col, part_index, len(parts), part]
-                                          for part_index, part in enumerate(parts, 1)])
-                    value_id, start_row = long_values[key]
-                    value = f"See {long_title}: {value_id}"
-                    links.append((column_index + 1, start_row))
-                values.append(value)
-            worksheet.append(values)
-            for column_index, start_row in links:
-                cell = worksheet.cell(row_index + 2, column_index)
-                cell.hyperlink = f"#'{long_title}'!A{start_row}"
-                cell.style = "Hyperlink"
+            long_values.append(worksheet, row_index, columns, [_cell_value(row.get(col, "")) for col in columns])
         worksheet.freeze_panes = "A2"
 
     _write_sheet("All", header)
@@ -18009,12 +17981,7 @@ def _write_aso_excel(
             if resolved:
                 _write_sheet(name, resolved)
 
-    if long_rows:
-        worksheet = workbook.create_sheet(title=long_title)
-        worksheet.append(["Value ID", "All row", "Field", "Part", "Parts", "Text"])
-        for row in long_rows:
-            worksheet.append(row)
-        worksheet.freeze_panes = "A2"
+    long_values.finish()
 
     try:
         workbook.save(output_path)

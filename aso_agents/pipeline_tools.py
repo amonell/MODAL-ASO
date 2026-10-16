@@ -31394,14 +31394,17 @@ def _write_v2_rows_excel(
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
     norm_map = {_v2_excel_key(col): col for col in columns}
+    from .excel_values import LosslessExcelValues
+    long_values = LosslessExcelValues(workbook, columns, ['All', *(name for name, _ in (sheet_groups or []))])
 
     def _write_sheet(sheet_name: str, sheet_columns: List[str]) -> None:
         if not sheet_columns:
             return
         worksheet = workbook.create_sheet(title=(sheet_name or "Sheet")[:31])
         worksheet.append(sheet_columns)
-        for row in excel_rows:
-            worksheet.append([_v2_excel_cell_value(row.get(col, "")) for col in sheet_columns])
+        for row_index, row in enumerate(excel_rows):
+            long_values.append(worksheet, row_index, sheet_columns,
+                               [_v2_excel_cell_value(row.get(col, "")) for col in sheet_columns])
         worksheet.freeze_panes = "A2"
 
     _write_sheet("All", columns)
@@ -31415,6 +31418,7 @@ def _write_v2_rows_excel(
             continue
         if resolved:
             _write_sheet(sheet_name, resolved)
+    long_values.finish()
     try:
         workbook.save(output_path)
     except Exception as exc:
