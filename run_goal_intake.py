@@ -12033,6 +12033,12 @@ def _evaluation_targets_to_explicit_splice_targets(structured_goal: Dict[str, An
     for item in candidates:
         if not isinstance(item, dict):
             continue
+        # Only a complete exon can supply boundaries for a reconstructed exon
+        # model. Typed sites/windows remain identity or region evidence. Keep
+        # legacy untyped explicit spans compatible with the original contract.
+        target_type = str(item.get("target_type") or "").strip().lower()
+        if target_type and target_type != "exon":
+            continue
         chrom = str(item.get("chrom") or "").strip()
         start = _coerce_positive_int(item.get("start"))
         end = _coerce_positive_int(item.get("end"))

@@ -517,14 +517,14 @@ _EXPLICIT_SPLICE_TARGET_SCHEMA = _closed_object(
             "type": "integer",
             "minimum": 1,
             "description": (
-                "One-based inclusive genomic start for the biological splice target."
+                "One-based inclusive genomic start of the complete exon span, not an ASO search-window edge."
             ),
         },
         "end": {
             "type": "integer",
             "minimum": 1,
             "description": (
-                "One-based inclusive genomic end for the biological splice target."
+                "One-based inclusive genomic end of the complete exon span, not an ASO search-window edge."
             ),
         },
         "strand": {"type": "string", "enum": ["+", "-", "."]},
@@ -786,6 +786,12 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     "explicit_splice_targets": {
         "type": "array",
         "items": _EXPLICIT_SPLICE_TARGET_SCHEMA,
+        "description": (
+            "Complete exon spans explicitly supplied as biological splice targets. "
+            "The runtime can construct an alternative exon model from these boundaries. "
+            "ASO tiling windows, junction flanks and required binding footprints belong "
+            "in region_constraints; they do not define replacement exon boundaries."
+        ),
     },
     "exon_label": deepcopy(_STRING_OR_INTEGER_SCHEMA),
     "exon_index": {
@@ -979,7 +985,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "cross_species_requirement": "Required cross-species target matching or conservation policy.",
     "design_programs": "Distinct requested ASO design branches or routes.",
     "evaluation_targets": "Structured biological sites, isoforms, exons, or intervals against which the result is evaluated.",
-    "explicit_splice_targets": "Explicitly supplied splice targets used by downstream targeting.",
+    "explicit_splice_targets": "Explicitly supplied complete exon spans used to reconstruct splice-target models; not tiling windows, junction flanks or binding footprints.",
     "flanks": "Requested upstream and downstream sequence-window sizes.",
     "focus_exons_only": "Whether targeting is restricted to the specified exons.",
     "gene_id": "Explicitly supplied stable gene identifier.",
@@ -1394,6 +1400,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- Distinguish missing user intent from source-resolvable execution facts. When the request supplies a biological target and organism plus a reference-selection policy or resolvable scope, preserve that scope and let downstream authoritative resolution obtain the accession, annotation, sequence, and coordinates. Use transcript_policy='agent_choice' when the evidence delegates reference selection. Do not ask the user to provide public-reference identifiers, sequences, or coordinates merely because they are absent from request evidence. Clarify only when a material user-specific choice remains ambiguous or no supplied identity can be resolved.\n"
     "- Use isoform_scope_source='user_specified' when the isoform scope is explicitly supplied by the user, 'resolver_inferred' when it comes from transcript resolution, and 'default_exon_splice_context' for an exon splice objective without a separately stated isoform-abundance outcome, including when the exon is located using a user-specified reference transcript. Use no other value and omit this optional field when its provenance is unsupported.\n"
     "- Canonical biological genomic coordinates in evaluation_targets, explicit_splice_targets, and design_program target fields are one-based and inclusive, matching genomic coordinates presented in ordinary user requests and transcript annotations. Preserve the supplied biological start and end there. BED conversion is scoped only to region_constraints[*].intervals_bed0_half_open: for a one-based inclusive interval [s,e], that row is [s-1,e). Never copy a BED0 start back into a biological target object. The synthesis pass and every semantic audit pass must treat a one-base start discrepancy between these representations as a contract error and repair the biological target from request evidence.\n"
+    "- explicit_splice_targets describes complete exon spans: its boundaries can replace or insert an exon in a constructed transcript model. Omit it for ordinary annotated splice-site targeting unless the evidence explicitly supplies the complete exon span. Keep annotated exon/site identity in evaluation_targets and ASO enumeration windows, junction flanks, and required overlap footprints in region_constraints. A window around an exon boundary is not the exon itself; never copy such a window into explicit_splice_targets or classify it as target_type='exon'. Preserve each interval's stated role in synthesis and every semantic audit.\n"
     "- For explicitly supplied genomic intervals, preserve one labeled entry per interval in evaluation_targets. Coordinates in a source describe target identity or context; they do not by themselves prove that the user requested an executable overlap filter. Create a region_constraints entry only when request or clarification evidence explicitly makes the interval an execution constraint and supports the entry's required overlap semantics. For an exact splice_relative_window requested for ASO tiling, the declared platform default is full_containment when the window itself is the target and any_overlap when the window represents a separately named embedded feature; an explicit supported user policy always overrides that default. When an explicit genomic-row constraint is supported, use source_type='explicit_rows', coordinate_space='genomic', and intervals_bed0_half_open containing the corresponding converted chrom/start/end/strand rows; preserve an explicitly supplied genome build, coordinate convention, aso_overlap_requirement, and minimum_overlap_bp. Otherwise omit the optional region_constraints entry while retaining the interval as target identity/context. Do not put chrom, strand, genome-build, overlap, or GC aliases inside design_programs.\n"
     "- For source coordinates on different assemblies, preserve each original genome_build and coordinate convention on its region constraint/interval. Clarify conversion permission AND ambiguous coordinate conventions together. If user evidence authorizes validated conversion, set allow_coordinate_conversion=true on the relevant region_constraints; keep original-build coordinates there and let the native materializer perform evidenced conversion to the installed reference. Never invent converted coordinates, keep asking an already answered conversion question, or remove the original build labels. If source intervals were explicitly BED0, retain their original starts in intervals_bed0_half_open and express their one-based biological identities as start+1/end in evaluation_targets. Conversion admission is not proof that mapping succeeded; report each conversion result and original interval.\n"
     "- Preserve the direction of containment: full_containment means the complete ASO lies INSIDE a target interval. contains_feature means the complete target feature lies INSIDE the ASO. To require junction crossing with at least U bases before and D bases after an acceptor boundary, use a splice_relative_window from -U to D-1 with contains_feature; for a donor use 1-U to D because offset zero is the last exonic base. Both offset conventions follow transcript orientation on either genomic strand. Create separate acceptor and donor constraints with operator=union when either junction is allowed; a whole-exon any_overlap constraint does not encode junction crossing. Never encode the required covered core as full_containment.\n"
