@@ -1,6 +1,11 @@
 """Shared executor boundaries for planning and independent plan review."""
 
 ANALYSIS_TASK_CAPABILITIES = (
+    "Executor selection follows the canonical task_type. The native flag is derived "
+    "metadata: false for sandbox_analysis and true for all other supported operations, "
+    "including analyze_artifact and build_composite_report. Changing that flag does not "
+    "create a different implementation or extend the operation's capabilities. Choose "
+    "sandbox_analysis explicitly when a self-contained calculation is needed. "
     "Analysis executor contract: sandbox_analysis executes a self-contained computation over "
     "supplied tables, sequences, scores and arithmetic rules. One such task can recompute metrics, "
     "apply ordered filters, report every failed/unknown criterion, track sequential attrition, "

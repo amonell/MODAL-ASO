@@ -18279,6 +18279,29 @@ async def _synthesize_missing_design_goals(
     return payload
 
 
+def _bind_request_task_executors(planned: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive redundant execution metadata from the canonical operation.
+
+    The model chooses the operation; the application owns its implementation.
+    A contradictory ``native`` flag must not spend a scientific graph revision
+    or send a reference-aware operation to a self-contained executor. Leave
+    unknown operations untouched for the existing schema/capability checks.
+    Raw provider responses remain unchanged in the normal telemetry.
+    """
+    bound = deepcopy(planned)
+    envelope = bound.get("request_envelope")
+    if not isinstance(envelope, dict):
+        return bound
+    for task in envelope.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        task_type = task.get("task_type")
+        if (isinstance(task_type, str) and task_type in CANONICAL_TASK_TYPES
+                and isinstance(task.get("native"), bool)):
+            task["native"] = task_type != "sandbox_analysis"
+    return bound
+
+
 async def _run_verified_request_workbench_agent_once(
     prompt: str,
     request_evidence: Optional[str] = None,
@@ -18297,6 +18320,7 @@ async def _run_verified_request_workbench_agent_once(
     max_revisions = max(1, min(max_revisions, 4))
     seen_proposals: Set[str] = set()
     for revision_index in range(max_revisions + 1):
+        planned = _bind_request_task_executors(planned)
         planned = await _review_request_clarifications_if_needed(prompt, planned)
         if planned.get("error") == "request_graph_required_after_clarification_review":
             proposal_digest = json.dumps(planned["prior_response"], sort_keys=True, default=str)

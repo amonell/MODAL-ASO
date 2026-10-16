@@ -325,7 +325,10 @@ REQUEST_WORKBENCH_OUTPUT_SCHEMA: Dict[str, Any] = {
                                         "enum": sorted(CANONICAL_TASK_TYPES),
                                     },
                                     "label": {"type": "string"},
-                                    "native": {"type": "boolean"},
+                                    "native": {
+                                        "type": "boolean",
+                                        "description": "Derived execution metadata: false for sandbox_analysis and true for every other canonical task_type. The application binds this flag to the selected operation; it is not an independent execution choice.",
+                                    },
                                     "can_run_in_parallel": {"type": "boolean"},
                                     "context": _canonical_task_context_schema(),
                                 },
