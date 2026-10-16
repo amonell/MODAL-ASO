@@ -126,6 +126,8 @@ def comparison_binding_evidence(row):
                     'binding_interpretation', 'matched_target_sequence', 'matched_window_sequence',
                     'cdna_start', 'cdna_end', 'genomic_segments', 'genomic_span', 'strand',
                     'mismatch_count', 'mismatch_positions_in_supplied_sequence_1based',
+                    'mismatch_positions_in_target_sequence_1based', 'mismatch_details_in_target_orientation',
+                    'mismatch_annotation_coordinate_system',
                     'search_scope', 'requested_site_overlaps',
                 )
                 representative = {field: deepcopy(hit[field]) for field in representative_fields

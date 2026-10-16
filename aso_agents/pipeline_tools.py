@@ -36482,7 +36482,7 @@ def _best_locus_near_matches(
             if len(search_sequence) > len(locus_sequence):
                 continue
             best_local: Optional[Dict[str, Any]] = None
-            from .mapping_evidence import nearest_windows
+            from .mapping_evidence import nearest_windows, mismatch_annotations
             for pos0, mismatches in nearest_windows(locus_sequence, search_sequence, limit=1):
                 window = locus_sequence[pos0:pos0 + len(search_sequence)]
                 if best_local is None or mismatches < int(best_local["mismatch_count"]):
@@ -36503,10 +36503,7 @@ def _best_locus_near_matches(
                             if orientation == "reverse_complement" else
                             "same_strand_similarity_only; binding_requires_input_to_be_a_target_site_sequence"
                         ),
-                        "mismatch_positions_in_supplied_sequence_1based": sorted(
-                            len(search_sequence) - i if orientation == "reverse_complement" else i + 1
-                            for i, (left, right) in enumerate(zip(window, search_sequence)) if left != right
-                        ),
+                        **mismatch_annotations(window, search_sequence, orientation),
                         "coordinate_system": "1based_inclusive",
                         "mismatch_count": int(mismatches),
                         "matched_window_sequence": window,

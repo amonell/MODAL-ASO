@@ -55,6 +55,14 @@ def recorded_window_identity(hit, kind):
         return None
     if kind == "exact_mapping" and mismatches != 0:
         return None
+    target_positions = sorted(len(sequence) - p + 1 if hit['match_orientation'] == 'reverse_complement'
+                              else p for p in positions)
+    if 'mismatch_positions_in_target_sequence_1based' in hit:
+        recorded_positions = hit['mismatch_positions_in_target_sequence_1based']
+        if (not isinstance(recorded_positions, list)
+                or any(not _integer(p) for p in recorded_positions)
+                or sorted(recorded_positions) != target_positions):
+            return None
     raw_segments = hit.get("genomic_segments")
     segments = [_interval(s) for s in raw_segments] if isinstance(raw_segments, list) else None
     cdna = None
@@ -82,6 +90,9 @@ def recorded_window_identity(hit, kind):
         "match_orientation": hit["match_orientation"], "strand": hit["strand"],
         "matched_sequence": sequence, "mismatch_count": mismatches,
         "mismatch_positions_1based": sorted(positions),
+        "mismatch_positions_orientation": "supplied_sequence_5prime_to_3prime",
+        "mismatch_positions_in_supplied_sequence_1based": sorted(positions),
+        "mismatch_positions_in_target_sequence_1based": target_positions,
         "ordered_genomic_blocks_1based_inclusive": blocks, "cdna_interval_1based_inclusive": cdna,
     }
 

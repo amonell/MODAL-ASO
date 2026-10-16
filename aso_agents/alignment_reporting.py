@@ -28,6 +28,8 @@ def alignment_geometry(hit):
         "match_orientation", "strand", "cdna_start", "cdna_end",
         "target_sequence", "matched_window_sequence", "matched_target_sequence",
         "mismatch_count", "mismatch_positions_in_supplied_sequence_1based",
+        "mismatch_positions_in_target_sequence_1based", "mismatch_details_in_target_orientation",
+        "mismatch_annotation_coordinate_system",
         "genomic_span", "requested_site_overlaps", "isoform_label", "search_scope",
     )
     result = {key: deepcopy(hit[key]) for key in fields if key in hit}

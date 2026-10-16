@@ -5,6 +5,42 @@ from copy import deepcopy
 import numpy as np
 
 
+def mismatch_annotations(reference_window: str, aligned_query: str, orientation: str) -> dict:
+    """Describe an ungapped comparison in both target and supplied orientations.
+
+    Both arguments run along the reference transcript's 5′ to 3′ direction.
+    Genome strand does not reverse target-relative positions a second time.
+    The aligned query is the supplied sequence or its reverse complement, as
+    identified by orientation. This reports sequence differences, not potency.
+    """
+    if orientation not in {'input_sequence', 'reverse_complement'}:
+        raise ValueError('Mismatch annotation requires a known query orientation')
+    reference, query = reference_window.upper(), aligned_query.upper()
+    if len(reference) != len(query):
+        raise ValueError('Ungapped mismatch annotation requires equal-length sequences')
+    differences = []
+    for position, (reference_base, query_base) in enumerate(zip(reference, query), start=1):
+        if reference_base != query_base:
+            differences.append({
+                'target_position_1based': position,
+                'reference_base': reference_base,
+                'aligned_query_base': query_base,
+                'supplied_sequence_position_1based': (
+                    len(query) - position + 1 if orientation == 'reverse_complement' else position),
+            })
+    return {
+        'mismatch_positions_in_supplied_sequence_1based': sorted(
+            item['supplied_sequence_position_1based'] for item in differences),
+        'mismatch_positions_in_target_sequence_1based': [
+            item['target_position_1based'] for item in differences],
+        'mismatch_details_in_target_orientation': differences,
+        'mismatch_annotation_coordinate_system': (
+            '1based positions in the full aligned window; target and aligned-query bases '
+            'are in reference-transcript 5prime_to_3prime orientation; '
+            'supplied-sequence positions are in input 5prime_to_3prime orientation'),
+    }
+
+
 def supplied_molecule_sequence_metrics(sequence: str) -> dict:
     """Measure physical sequence properties without an efficacy inference."""
     seq = str(sequence or "").upper()
@@ -142,9 +178,7 @@ def cdna_near_matches(entry, catalog, sequences, map_range, preferred_transcript
                     'mapping_scope':'spliced_cdna', 'rna_context':'mature_spliced_cdna',
                     'match_orientation':orientation, 'matched_window_sequence':window,
                     'matched_target_sequence':window, 'mismatch_count':mismatches,
-                    'mismatch_positions_in_supplied_sequence_1based':sorted(
-                        len(term)-index if orientation == 'reverse_complement' else index+1
-                        for index,(a,b) in enumerate(zip(window,term)) if a != b),
+                    **mismatch_annotations(window, term, orientation),
                     'cdna_start':pos+1, 'cdna_end':pos+len(term),
                     'coordinate_system':'1based_inclusive',
                     'genomic_segments':[{'chrom':chrom,'start':start,'end':end} for chrom,start,end in blocks],
