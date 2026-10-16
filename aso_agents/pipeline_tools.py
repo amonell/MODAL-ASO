@@ -9972,6 +9972,7 @@ _RESTART_STAGE_ALIASES: Dict[str, str] = {
 }
 
 _REQUEST_CONTEXT_SCALAR_FIELDS: Tuple[str, ...] = (
+    "num_mismatches",
     "gene_symbol",
     "gene_id",
     "transcript_id",
@@ -10006,6 +10007,7 @@ _SUPPORTED_V3_TASK_TYPES: Set[str] = set(CANONICAL_TASK_TYPES)
 _UNSPECIFIED_TASK_TYPE = "unspecified_task"
 
 _DESIGN_TASK_INHERITED_CONTEXT_FIELDS: Tuple[str, ...] = (
+    "num_mismatches",
     "gene_symbol",
     "gene_id",
     "species",
@@ -10045,6 +10047,7 @@ def _structured_goal_default_context(structured_goal: Optional[Dict[str, Any]]) 
     goal = structured_goal if isinstance(structured_goal, dict) else {}
     context: Dict[str, Any] = {}
     for field in (
+        "num_mismatches",
         "gene_symbol",
         "gene_id",
         "species",
@@ -35327,6 +35330,7 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
 
     for field in (
         "constraints",
+        "num_mismatches",
         "parameter_constraints",
         "sequence_filters",
         "sequence_constraints",
@@ -35502,6 +35506,7 @@ def _prepare_design_objective_preseed(
 
     structured_goal_overlay: Dict[str, Any] = deepcopy(goal)
     for field in (
+        "num_mismatches",
         "gene_symbol",
         "gene_id",
         "species",
@@ -35874,7 +35879,7 @@ def _overlay_request_context_on_goal(
     request_text: str,
 ) -> Dict[str, Any]:
     goal = deepcopy(base_goal) if isinstance(base_goal, dict) else {}
-    for field in ("gene_symbol", "gene_id", "species", "target_context", "platform", "chemistry", "oligoai_evaluation"):
+    for field in ("gene_symbol", "gene_id", "species", "target_context", "platform", "chemistry", "oligoai_evaluation", "num_mismatches"):
         value = request_envelope.get(field)
         if value not in (None, "", [], {}):
             goal[field] = deepcopy(value)
