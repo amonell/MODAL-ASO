@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any
 
@@ -443,7 +444,12 @@ def test_semantic_checker_relocates_unknown_field_through_repair_agent(
         audit_calls["count"] += 1
         if audit_calls["count"] == 2:
             assert '"audit_mode": "post_repair_semantic_verification"' in prompt
-            assert invented_key not in prompt
+            protocol = pipeline_tools._goal_audit_protocol_payload(prompt)
+            assert invented_key not in json.dumps(protocol["current_request_envelope"])
+            removed = next(change for change in protocol["latest_repair_transition"]["changes"]
+                           if change["path"].endswith("/" + invented_key))
+            assert removed["before"]["present"] is True
+            assert removed["after"] == {"present": False}
             return _valid_audit()
         assert '"noncanonical_field_findings"' in prompt
         assert invented_key in prompt
@@ -547,7 +553,12 @@ def test_unsupported_unknown_field_is_removed_without_clarification(
     async def fake_audit(prompt: str) -> dict[str, Any]:
         audit_calls["count"] += 1
         if audit_calls["count"] == 2:
-            assert invented_key not in prompt
+            protocol = pipeline_tools._goal_audit_protocol_payload(prompt)
+            assert invented_key not in json.dumps(protocol["current_request_envelope"])
+            removed = next(change for change in protocol["latest_repair_transition"]["changes"]
+                           if change["path"].endswith("/" + invented_key))
+            assert removed["before"]["present"] is True
+            assert removed["after"] == {"present": False}
             return _valid_audit()
         return {
             "status": "repairable",

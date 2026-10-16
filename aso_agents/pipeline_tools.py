@@ -24074,6 +24074,7 @@ def _goal_audit_prompt(
     repair_feedback: Optional[List[Dict[str, Any]]] = None,
     unresolved_feedback: Optional[List[Dict[str, Any]]] = None,
     repair_cycle_history: Optional[List[Dict[str, Any]]] = None,
+    latest_repair_transition: Optional[Dict[str, Any]] = None,
     required_goal_fields: Optional[List[str]] = None,
     semantic_scope_pointers: Optional[List[str]] = None,
 ) -> str:
@@ -24182,6 +24183,7 @@ def _goal_audit_prompt(
         "prior_rejected_patches": repair_feedback or [],
         "unresolved_adjudication_feedback": unresolved_feedback or [],
         "repair_cycle_history": repair_cycle_history or [],
+        "latest_repair_transition": latest_repair_transition or {},
         "current_request_envelope": request_envelope,
         "region_constraint_execution": [
             {"goal_pointer": location["json_pointer"], "scopes": constraint_execution_summary(
@@ -24238,7 +24240,17 @@ def _goal_audit_prompt(
         "optional region_constraints entry only when request or clarification evidence "
         "requires that execution semantics and supports every required child; otherwise "
         "keep the optional entry absent and preserve coordinates in target identity/context. "
-        "Never invent a least-restrictive overlap policy. When repair_cycle_history is non-empty, the repair "
+        "Never invent a least-restrictive overlap policy. When latest_repair_transition is present, "
+        "verify its host-observed before/after changes against the original evidence_sources. "
+        "These are the actual values after patch application and canonical normalization; "
+        "applied_repairs.reason is only the earlier model's claim, not evidence that its edit "
+        "was correct. Check that each changed value preserves the requested mechanism, scope, "
+        "constraints and outputs. A reason that says to preserve a value does not justify an "
+        "actual change to a different value. Correct unsupported changes through the normal "
+        "evidence-bound patch protocol; do not revert supported corrections merely because "
+        "they differ from the earlier envelope. In a focused audit, review changes within "
+        "semantic_scope_pointers using the complete transition as context. "
+        "When repair_cycle_history is non-empty, the repair "
         "sequence revisited an earlier envelope. Resolve the disputed paths from evidence in "
         "one internally consistent direction, remove unsupported optional causal fields, and "
         "do not repeat a repair that the history shows was subsequently reversed. Complete one finite evidence comparison and emit JSON "
@@ -25350,6 +25362,8 @@ def _apply_goal_audit_patches(
                 "op": operation,
                 "path": pointer,
                 "evidence_refs": deepcopy(patch.get("evidence_refs") or []),
+                "evidence_quote": str(patch.get("evidence_quote") or ""),
+                "reason": str(patch.get("reason") or ""),
             }
         )
     return {
@@ -26424,6 +26438,7 @@ def _repair_request_envelope_if_needed(
             repair_feedback=repair_feedback,
             unresolved_feedback=unresolved_feedback,
             repair_cycle_history=repair_cycle_history,
+            latest_repair_transition=repair_history[-1] if repair_history else None,
             required_goal_fields=required_goal_fields,
         )
         unresolved_feedback = []
@@ -26445,6 +26460,7 @@ def _repair_request_envelope_if_needed(
                         request_envelope=request_envelope, validation_issues=[], issue_records=[],
                         evidence_sources=evidence_sources, semantic_audit=True,
                         post_repair_verification=repairs_applied,
+                        latest_repair_transition=repair_history[-1] if repair_history else None,
                         required_goal_fields=required_goal_fields,
                         semantic_scope_pointers=[pointer],
                     )
@@ -26463,6 +26479,7 @@ def _repair_request_envelope_if_needed(
                         request_envelope=request_envelope, validation_issues=[], issue_records=[],
                         evidence_sources=evidence_sources, semantic_audit=True,
                         post_repair_verification=repairs_applied,
+                        latest_repair_transition=repair_history[-1] if repair_history else None,
                         required_goal_fields=required_goal_fields,
                         semantic_scope_pointers=[entry["goal_pointer"] + pointer
                                                  for pointer in entry["audit_scope_pointers"]],
@@ -26883,20 +26900,7 @@ def _repair_request_envelope_if_needed(
         repair_feedback = _goal_audit_repair_feedback(
             patch_result.get("rejected")
         )
-        repair_history.append(
-            {
-                "audit_round": audit_round + 1,
-                "applied_repairs": [
-                    {
-                        "op": str(item.get("op") or "").strip(),
-                        "path": str(item.get("path") or "").strip(),
-                    }
-                    for item in patch_result.get("applied") or []
-                    if isinstance(item, dict)
-                ],
-            }
-        )
-
+        before_repair = deepcopy(request_envelope)
         patched_envelope, _declared_contract_paths_resolved = (
             _resolved_declared_contract_blocks(
                 patch_result["request_envelope"]
@@ -26909,6 +26913,13 @@ def _repair_request_envelope_if_needed(
             raw_envelope=patched_envelope,
             finalize_design_contract=False,
         )
+        from .goal_repair_verification import envelope_changes
+        repair_history.append({
+            "audit_round": audit_round + 1,
+            "applied_repairs": deepcopy(patch_result.get("applied") or []),
+            "field_dispositions": deepcopy(accepted_dispositions),
+            "changes": envelope_changes(before_repair, request_envelope),
+        })
 
     final_validation = _request_validation_summary(request_envelope)
     final_issues = _request_envelope_validation_issues(request_envelope)
