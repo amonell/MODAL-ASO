@@ -11,9 +11,15 @@ REQUEST = "Return the exact sum of the supplied numbers in totals.json."
 
 
 def finding(quote=REQUEST):
-    return {"requirement_quote": quote, "problem": "The total omits an input.",
+    return {"requirement_quote": quote, "status": "violated", "problem": "The total omits an input.",
             "implementation_evidence": "Only the first input is summed.",
             "suggested_fix": "Sum every supplied number."}
+
+
+def satisfied():
+    return {"requirement_quote": REQUEST, "status": "satisfied",
+            "implementation_evidence": "sum(values) includes both inputs and the exported total is 5.",
+            "problem": None, "suggested_fix": None}
 
 
 def program(total_expression):
@@ -45,7 +51,7 @@ def test_actual_output_finding_repairs_program_and_preserves_first_attempt(tmp_p
         reviews.append(payload)
         actual = json.loads(Path(payload["output_paths"][0]).read_text())
         return {"program_sha256": payload["program_sha256"],
-                "findings": [finding()] if actual["total"] != 5 else []}
+                "checks": [finding()] if actual["total"] != 5 else [satisfied()]}
 
     result = execute(tmp_path, generate, review)
     assert result["ok"] and result["result"]["total"] == 5
@@ -61,9 +67,9 @@ def test_actual_output_finding_repairs_program_and_preserves_first_attempt(tmp_p
 
 
 @pytest.mark.parametrize("raw", [
-    {"program_sha256": "wrong", "findings": [finding()]},
-    {"findings": [finding()]},
-    {"program_sha256": None, "findings": []},
+    {"program_sha256": "wrong", "checks": [finding()]},
+    {"checks": [finding()]},
+    {"program_sha256": None, "checks": []},
     None,
 ])
 def test_unbound_feedback_is_unverified(raw):
@@ -78,7 +84,7 @@ def test_unrequested_criterion_cannot_trigger_code_rewrite(tmp_path):
         return {"python_code": program("sum(values)")}
     result = execute(tmp_path, generate, lambda payload: {
         "program_sha256": payload["program_sha256"],
-        "findings": [finding("Remove values below a threshold chosen by the reviewer.")]})
+        "checks": [finding("Remove values below a threshold chosen by the reviewer.")]})
     assert result["ok"] and len(calls) == 1
     assert result["result"]["analysis_contract_review"]["status"] == "unverified"
     receipt = json.loads((tmp_path / "execution_attempts/01/contract_review.json").read_text())
@@ -102,7 +108,7 @@ def test_review_transport_failure_is_not_a_scientific_finding(tmp_path):
 def test_persistent_omission_stops_at_existing_attempt_bound(tmp_path):
     result = execute(tmp_path, lambda payload: {"python_code": program("sum(values[:1])")},
                      lambda payload: {"program_sha256": payload["program_sha256"],
-                                      "findings": [finding()]})
+                                      "checks": [finding()]})
     assert not result["ok"] and len(result["attempts"]) == 2
     assert all(a["contract_review"]["status"] == "needs_repair" for a in result["attempts"])
 
@@ -110,9 +116,24 @@ def test_persistent_omission_stops_at_existing_attempt_bound(tmp_path):
 def test_quoted_and_unquoted_findings_are_kept_separate():
     code = "print(1)"
     result = assess_review({"program_sha256": program_digest(code),
-                            "findings": [finding(), finding("Invent a new criterion.")]}, code, REQUEST)
+                            "checks": [finding(), finding("Invent a new criterion.")]}, code, REQUEST)
     assert result["status"] == "needs_repair"
     assert len(result["findings"]) == len(result["rejected_feedback"]) == 1
+
+
+def test_empty_audit_cannot_be_recorded_as_a_completed_review():
+    code = "print(1)"
+    result = assess_review({"program_sha256": program_digest(code), "checks": []}, code, REQUEST)
+    assert result["status"] == "unverified" and not result["findings"]
+
+
+def test_unverified_requirement_is_not_converted_to_a_violation():
+    code = "print(1)"
+    check = {**satisfied(), "status": "unverified",
+             "implementation_evidence": "A bounded preview cannot establish full row coverage."}
+    result = assess_review({"program_sha256": program_digest(code), "checks": [check]}, code, REQUEST)
+    assert result["status"] == "unverified" and not result["findings"]
+    assert result["checks"] == [check]
 
 
 @pytest.mark.real_runtime
@@ -123,12 +144,12 @@ def test_production_review_receives_actual_bounded_output_preview(tmp_path, monk
     captured = []
     async def review(payload):
         captured.append(payload)
-        return {"program_sha256": payload["program_sha256"], "findings": []}
+        return {"program_sha256": payload["program_sha256"], "checks": [satisfied()]}
     monkeypatch.setattr(pipeline, "_run_analysis_contract_review_agent_once", review)
     code = "print(5)"
     result = pipeline._run_analysis_contract_review_sync({
         "program": code, "program_sha256": program_digest(code),
         "request_text": REQUEST, "output_paths": [str(output)]})
-    assert result["findings"] == []
+    assert result["checks"][0]["status"] == "satisfied"
     entries = captured[0]["file_previews"]["entries"]
     assert any(e.get("content") == "total\n5\n" and not e["preview_truncated"] for e in entries)

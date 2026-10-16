@@ -86,4 +86,7 @@ def _stub_runtime_binaries(request: pytest.FixtureRequest, monkeypatch: pytest.M
         # integration tests supply their own reviewer or use real_runtime
         # with a mocked provider; live qualification is separate.
         monkeypatch.setattr(pipeline_tools, "_run_analysis_contract_review_sync",
-                            lambda payload: {"program_sha256": payload["program_sha256"], "findings": []})
+                            lambda payload: {"program_sha256": payload["program_sha256"],
+                                "checks": [{"requirement_quote": payload.get("request_text") or "Unit test",
+                                    "status": "unverified", "implementation_evidence": "External model review is stubbed in this unit test.",
+                                    "problem": None, "suggested_fix": None}]})

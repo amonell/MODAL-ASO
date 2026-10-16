@@ -13,20 +13,24 @@ def review_schema(code: str) -> dict:
         "type": "object",
         "properties": {
             "program_sha256": {"type": "string", "enum": [program_digest(code)]},
-            "findings": {
+            "checks": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                     "type": "object",
                     "properties": {
-                        key: {"type": "string", "minLength": 1}
-                        for key in ("requirement_quote", "problem", "implementation_evidence", "suggested_fix")
+                        "requirement_quote": {"type": "string", "minLength": 1},
+                        "status": {"type": "string", "enum": ["satisfied", "violated", "unverified"]},
+                        "implementation_evidence": {"type": "string", "minLength": 1},
+                        "problem": {"type": ["string", "null"]},
+                        "suggested_fix": {"type": ["string", "null"]},
                     },
-                    "required": ["requirement_quote", "problem", "implementation_evidence", "suggested_fix"],
+                    "required": ["requirement_quote", "status", "implementation_evidence", "problem", "suggested_fix"],
                     "additionalProperties": False,
                 },
             },
         },
-        "required": ["program_sha256", "findings"],
+        "required": ["program_sha256", "checks"],
         "additionalProperties": False,
     }
 
@@ -39,16 +43,24 @@ def assess_review(review: dict, code: str, request_text: str) -> dict:
     if errors:
         return {"status": "unverified", "findings": [],
                 "rejected_feedback": [error.message for error in errors]}
-    accepted, rejected = [], []
-    for finding in review["findings"]:
-        quote = finding["requirement_quote"]
+    accepted, rejected, checks = [], [], []
+    for check in review["checks"]:
+        quote = check["requirement_quote"]
         if not quote.strip() or quote not in request_text:
-            rejected.append(finding)
-        else:
-            accepted.append(finding)
+            rejected.append(check)
+            continue
+        if check["status"] == "violated":
+            if not all(isinstance(check[key], str) and check[key].strip()
+                       for key in ("problem", "suggested_fix")):
+                rejected.append(check)
+                continue
+            accepted.append({key: value for key, value in check.items() if key != "status"})
+        checks.append(check)
     return {
         "status": ("needs_repair" if accepted else
-                   "unverified" if rejected else "no_concrete_violation_identified"),
+                   "unverified" if rejected or any(check["status"] == "unverified" for check in checks)
+                   else "no_concrete_violation_identified"),
+        "checks": checks,
         "findings": accepted,
         "rejected_feedback": rejected,
     }
