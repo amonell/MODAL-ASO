@@ -36729,6 +36729,7 @@ _PROVIDED_ASO_SCORED_TILE_FIELDS: Tuple[str, ...] = (
     "other_isoform_match_count",
     "other_isoform_matches",
     "isoform_uniqueness_class",
+    "isoform_role_resolution",
     "selection_rank",
     "selection_score_components",
 )
@@ -37182,6 +37183,10 @@ def _score_provided_asos_with_existing_pipeline(
                     uniqueness_context.get("pathogenic_labels") if isinstance(uniqueness_context, dict) else None
                 ),
                 output_name="provided_aso_scored_uniqueness.json",
+                transcript_catalog={label: (eval_goal.get('all_transcripts_full') or {}).get(label)
+                                    or (eval_goal.get('isoform_transcripts') or {}).get(label) or {}
+                                    for label in cdna_map},
+                resolved_transcripts=eval_goal.get('isoform_transcripts') or {},
             )
             if uniq_path:
                 scored_path = str(uniq_path)
@@ -50968,6 +50973,8 @@ def tool_score_steric_uniqueness(
                 target_label_for_uniqueness,
                 total_isoforms=len(cdna_map),
                 output_name="steric_scored_uniqueness.json",
+                transcript_catalog={label: cdna_source[label] for label in cdna_map if label in cdna_source},
+                resolved_transcripts=isoform_transcripts,
             )
             if not job_uniqueness_path:
                 return _tool_failure(
@@ -51039,6 +51046,8 @@ def tool_score_steric_uniqueness(
         target_label_for_uniqueness,
         total_isoforms=len(cdna_map),
         output_name="steric_scored_uniqueness.json",
+        transcript_catalog={label: cdna_source[label] for label in cdna_map if label in cdna_source},
+        resolved_transcripts=isoform_transcripts,
     )
     if not uniq_path:
         return _tool_failure(
@@ -53749,6 +53758,8 @@ def _score_gapmer_tiles_json(
         total_isoforms=len(cdna_map),
         beneficial_isoform_labels=uniqueness_context.get("beneficial_labels"),
         pathogenic_isoform_labels=uniqueness_context.get("pathogenic_labels"),
+        transcript_catalog={label: cdna_source[label] for label in cdna_map if label in cdna_source},
+        resolved_transcripts=isoform_transcripts,
     )
     if not uniqueness_path:
         return {"error": "gapmer_uniqueness_annotation_failed"}

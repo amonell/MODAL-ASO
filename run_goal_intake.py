@@ -28117,6 +28117,8 @@ def _postprocess_gapmer_tiles(
         total_isoforms=len(cdna_map),
         beneficial_isoform_labels=uniqueness_context.get("beneficial_labels"),
         pathogenic_isoform_labels=uniqueness_context.get("pathogenic_labels"),
+        transcript_catalog={label: cdna_source[label] for label in cdna_map if label in cdna_source},
+        resolved_transcripts=isoform_transcripts,
     )
     if uniq_path:
         gapmer_results["scored_tiles_path"] = uniq_path
@@ -28228,6 +28230,8 @@ def _annotate_gapmer_uniqueness(
     beneficial_isoform_labels: Optional[List[str]] = None,
     pathogenic_isoform_labels: Optional[List[str]] = None,
     output_name: str = "gapmer_scored_uniqueness.json",
+    transcript_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
+    resolved_transcripts: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Optional[str]:
     """Add isoform uniqueness annotations to a tiles JSON, return new path."""
     if not tiles_json_path or not os.path.exists(tiles_json_path):
@@ -28248,6 +28252,21 @@ def _annotate_gapmer_uniqueness(
     beneficial_set = {str(label).strip() for label in (beneficial_isoform_labels or []) if str(label).strip()}
     pathogenic_set = {str(label).strip() for label in (pathogenic_isoform_labels or []) if str(label).strip()}
     target_set = {str(target_isoform_label).strip()} if str(target_isoform_label or "").strip() else set()
+    role_resolution = None
+    if transcript_catalog is not None:
+        from aso_agents.gapmer_selectivity import resolve_uniqueness_roles
+        role_resolution = resolve_uniqueness_roles(
+            target_isoform_label, beneficial_isoform_labels, pathogenic_isoform_labels,
+            transcript_catalog, resolved_transcripts or {},
+        )
+        target_set = set(role_resolution['target']['catalog_labels'])
+        beneficial_set = set(role_resolution['beneficial']['catalog_labels'])
+        pathogenic_set = set(role_resolution['pathogenic']['catalog_labels'])
+    roles_resolved = role_resolution is None or role_resolution['status'] == 'resolved'
+
+    def role_resolved(role):
+        return has_index and (role_resolution is None or role_resolution[role]['status'] == 'resolved')
+
     updated_rows: List[Dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -28274,7 +28293,10 @@ def _annotate_gapmer_uniqueness(
             label for label in uniq_labels
             if label not in target_set and label not in beneficial_set and label not in pathogenic_set
         )
-        if target_set:
+        if not roles_resolved:
+            score = None
+            uniqueness_class = "unresolved_role_identity"
+        elif target_set:
             if target_hits:
                 if beneficial_set:
                     weighted_total = len(target_hits) + len(other_hits) + (4 * len(beneficial_hits))
@@ -28301,15 +28323,17 @@ def _annotate_gapmer_uniqueness(
         row["isoform_coverage_fraction"] = float(uniq_count) / total_isoforms if has_index and total_isoforms else None
         from aso_agents.reporting_contracts import ISOFORM_SCORE_DEFINITION
         row["isoform_score_definition"] = ISOFORM_SCORE_DEFINITION
-        row["target_isoform_match_count"] = len(target_hits) if has_index else None
-        row["target_isoform_matches"] = target_hits if has_index else None
-        row["beneficial_isoform_match_count"] = len(beneficial_hits) if has_index else None
-        row["beneficial_isoform_matches"] = beneficial_hits if has_index else None
-        row["pathogenic_isoform_match_count"] = len(pathogenic_hits) if has_index else None
-        row["pathogenic_isoform_matches"] = pathogenic_hits if has_index else None
-        row["other_isoform_match_count"] = len(other_hits) if has_index else None
-        row["other_isoform_matches"] = other_hits if has_index else None
+        row["target_isoform_match_count"] = len(target_hits) if role_resolved('target') else None
+        row["target_isoform_matches"] = target_hits if role_resolved('target') else None
+        row["beneficial_isoform_match_count"] = len(beneficial_hits) if role_resolved('beneficial') else None
+        row["beneficial_isoform_matches"] = beneficial_hits if role_resolved('beneficial') else None
+        row["pathogenic_isoform_match_count"] = len(pathogenic_hits) if role_resolved('pathogenic') else None
+        row["pathogenic_isoform_matches"] = pathogenic_hits if role_resolved('pathogenic') else None
+        row["other_isoform_match_count"] = len(other_hits) if has_index and roles_resolved else None
+        row["other_isoform_matches"] = other_hits if has_index and roles_resolved else None
         row["isoform_uniqueness_class"] = uniqueness_class if has_index else None
+        if role_resolution is not None:
+            row["isoform_role_resolution"] = deepcopy(role_resolution)
         updated_rows.append(row)
 
     updated_rows.sort(key=_gapmer_uniqueness_sort_key)
@@ -28326,6 +28350,8 @@ def _annotate_gapmer_uniqueness(
     columns["other_isoform_match_count"] = "number"
     columns["other_isoform_matches"] = "string"
     columns["isoform_uniqueness_class"] = "string"
+    if role_resolution is not None:
+        columns["isoform_role_resolution"] = "object"
     tiles["rows"] = updated_rows
     tiles.setdefault("schema", {})["columns"] = columns
 

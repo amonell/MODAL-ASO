@@ -1018,6 +1018,8 @@ def test_provided_aso_scoring_merges_duplicate_sequences_by_row_index(tmp_path: 
             beneficial_isoform_labels=None,
             pathogenic_isoform_labels=None,
             output_name="provided_aso_scored_uniqueness.json",
+            transcript_catalog=None,
+            resolved_transcripts=None,
         ):
             payload = json.loads(Path(tiles_json_path).read_text(encoding="utf-8"))
             for row in payload["rows"]:

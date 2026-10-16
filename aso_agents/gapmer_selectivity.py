@@ -16,9 +16,68 @@ from .preservation_context import preserved_catalog_labels, preservation_resolut
 
 def _aliases(label, entry):
     meta = entry.get('metadata') or {}
-    return {str(value).strip().casefold() for value in
+    aliases = {str(value).strip().casefold() for value in
             (label, entry.get('transcript_id'), entry.get('id'), entry.get('versioned_id'),
              meta.get('id'), meta.get('versioned_id')) if value}
+    for record in (entry, meta):
+        version = record.get('version')
+        if isinstance(version, bool) or not str(version or '').isdecimal():
+            continue
+        for field in ('id', 'transcript_id'):
+            identity = str(record.get(field) or '').strip().casefold()
+            if identity and not _version(identity):
+                aliases.add(f'{identity}.{version}')
+    return aliases
+
+
+def _version(identity):
+    base, dot, version = identity.rpartition('.')
+    return (base, version) if dot and base and version.isdecimal() else None
+
+
+def _versions(aliases):
+    versions = {}
+    for alias in aliases:
+        pair = _version(alias)
+        if pair:
+            versions.setdefault(pair[0], set()).add(pair[1])
+    return versions
+
+
+def _compatible_identity(left, right):
+    """A shared stable accession cannot erase an explicit version conflict."""
+    versions = [_versions(aliases) for aliases in (left, right)]
+    if any(len(values) != 1 for group in versions for values in group.values()):
+        return False
+    return all(versions[0][key] == versions[1][key]
+               for key in versions[0].keys() & versions[1].keys())
+
+
+def _reference_context_compatible(left, right):
+    from .species_config import normalize_species
+    for field in ('species', 'assembly_name'):
+        groups = []
+        for entry in (left, right):
+            values = {str(value) for value in
+                      (entry.get(field), (entry.get('metadata') or {}).get(field)) if value}
+            if field == 'species':
+                values = {normalize_species(value) for value in values}
+            groups.append(values)
+        if any(len(values) > 1 for values in groups) or (all(groups) and groups[0] != groups[1]):
+            return False
+    return True
+
+
+def _complete_structure(entry):
+    exons = entry.get('exons_tx') or []
+    chrom = entry.get('chrom') or (entry.get('metadata') or {}).get('seq_region_name')
+    strand = entry.get('strand')
+    if not chrom or str(strand) not in {'+', '-', '1', '-1'} or not exons:
+        return None
+    if any(not isinstance(e, dict) or type(e.get('start')) is not int
+           or type(e.get('end')) is not int or e['start'] < 1 or e['end'] < e['start'] for e in exons):
+        return None
+    return _structure(entry)
 
 
 def _structure(entry):
@@ -32,23 +91,57 @@ def resolve_catalog_label(label, catalog, resolved):
     identity = str(label or '').strip().casefold()
     if not identity:
         return None
-    direct = [key for key, entry in catalog.items() if identity in _aliases(key, entry)]
-    if len(direct) == 1:
-        return direct[0]
     sources = [(key, entry) for key, entry in resolved.items()
                if identity in _aliases(key, entry)]
+    if len(sources) > 1 or any(not _compatible_identity(_aliases(key, entry), set())
+                               for key, entry in sources):
+        return None
+    direct = [(key, entry) for key, entry in catalog.items() if identity in _aliases(key, entry)]
+    if direct:
+        if len(direct) != 1:
+            return None
+        key, entry = direct[0]
+        aliases = _aliases(key, entry)
+        if not _compatible_identity(aliases, set()):
+            return None
+        for source_key, source in sources:
+            if (not _compatible_identity(aliases, _aliases(source_key, source))
+                    or not _reference_context_compatible(entry, source)):
+                return None
+            structures = [_complete_structure(record) for record in (entry, source)]
+            if all(structures) and structures[0] != structures[1]:
+                return None
+        return key
     matches = set()
     for key, entry in sources:
         source_ids = _aliases('', entry)
         for target, other in catalog.items():
-            if source_ids & _aliases('', other) and _structure(entry) == _structure(other):
-                # A shared stable accession does not overrule conflicting versions.
-                versions = [{a for a in _aliases('', x) if a.rpartition('.')[2].isdecimal()
-                             and a.rpartition('.')[0]} for x in (entry, other)]
-                if all(versions) and not versions[0] & versions[1]:
-                    continue
+            other_ids = _aliases('', other)
+            structure = _complete_structure(entry)
+            if (source_ids & other_ids and structure and structure == _complete_structure(other)
+                    and _compatible_identity(source_ids, _aliases(target, other))
+                    and _reference_context_compatible(entry, other)
+                    and all(base in _versions(other_ids) for base in _versions(source_ids))):
                 matches.add(target)
     return next(iter(matches)) if len(matches) == 1 else None
+
+
+def resolve_uniqueness_roles(target, beneficial, pathogenic, catalog, resolved):
+    """Keep sequence hits usable even when an auxiliary role cannot be assigned."""
+    result = {}
+    for role, labels in (('target', [target] if target else []),
+                         ('beneficial', beneficial or []), ('pathogenic', pathogenic or [])):
+        bindings = []
+        for label in dict.fromkeys(labels):
+            match = resolve_catalog_label(label, catalog, resolved)
+            bindings.append({'requested_label': label, 'catalog_label': match,
+                             'status': 'resolved' if match is not None else 'unresolved'})
+        result[role] = {'status': 'unresolved' if any(b['status'] == 'unresolved' for b in bindings) else 'resolved',
+                        'bindings': bindings,
+                        'catalog_labels': sorted({b['catalog_label'] for b in bindings if b['catalog_label'] is not None})}
+    result['status'] = 'unresolved' if any(v['status'] == 'unresolved' for v in result.values()) else 'resolved'
+    result['basis'] = 'Unique catalog identity or attested reference aliases and matching transcript structure; versions are never stripped.'
+    return result
 
 
 def bind_uniqueness_context(context, catalog, resolved):
