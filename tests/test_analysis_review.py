@@ -11,13 +11,14 @@ REQUEST = "Return the exact sum of the supplied numbers in totals.json."
 
 
 def finding(quote=REQUEST):
-    return {"requirement_quote": quote, "status": "violated", "problem": "The total omits an input.",
+    return {"requirement_quote": quote, "obligation": "Sum every supplied number",
+            "status": "violated", "problem": "The total omits an input.",
             "implementation_evidence": "Only the first input is summed.",
             "suggested_fix": "Sum every supplied number."}
 
 
 def satisfied():
-    return {"requirement_quote": REQUEST, "status": "satisfied",
+    return {"requirement_quote": REQUEST, "obligation": "Sum every supplied number", "status": "satisfied",
             "implementation_evidence": "sum(values) includes both inputs and the exported total is 5.",
             "problem": None, "suggested_fix": None}
 

@@ -88,5 +88,6 @@ def _stub_runtime_binaries(request: pytest.FixtureRequest, monkeypatch: pytest.M
         monkeypatch.setattr(pipeline_tools, "_run_analysis_contract_review_sync",
                             lambda payload: {"program_sha256": payload["program_sha256"],
                                 "checks": [{"requirement_quote": payload.get("request_text") or "Unit test",
+                                    "obligation": "Isolated model-review boundary",
                                     "status": "unverified", "implementation_evidence": "External model review is stubbed in this unit test.",
                                     "problem": None, "suggested_fix": None}]})
