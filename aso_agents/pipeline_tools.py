@@ -19656,6 +19656,17 @@ async def _run_child_clarification_resolution_agent_once(payload: Dict[str, Any]
     return _parse_llm_json_object(result.final_output, "child_clarification_resolution_agent")
 
 
+async def _run_analysis_contract_review_agent_once(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from .analysis_review import review_schema
+    from .sandbox_analysis_agent import analysis_contract_review_agent
+    schema = review_schema(payload["program"])
+    agent = _agent_with_strict_output_schema(
+        analysis_contract_review_agent, schema_name="aso_analysis_contract_review", schema=schema)
+    return await _run_schema_validated_agent_once(
+        agent=agent, prompt=json.dumps(payload, ensure_ascii=False), schema=schema,
+        error_prefix="analysis_contract_review")
+
+
 async def _run_cross_species_ortholog_selection_agent_once(payload: Dict[str, Any]) -> Dict[str, Any]:
     result = await Runner.run(
         cross_species_ortholog_selection_agent,
@@ -33024,6 +33035,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                  "native_export_sources": native_sources,
                  "resource_limits": {"timeout_seconds": None}, "require_tabular_report_views": True},
         generate=_run_sandbox_analysis_sync, required_outputs=pending,
+        review_program=_run_analysis_contract_review_sync,
         readonly_outputs=list(dict.fromkeys(
             [path for path in requested if path not in pending]
             + [Path(path) for catalog in native_sources.values() for path in catalog.values()
@@ -44167,6 +44179,17 @@ def _run_sandbox_analysis_sync(payload: Dict[str, Any]) -> Dict[str, Any]:
     return run_async_from_sync(lambda: _run_sandbox_analysis_agent_once(payload))
 
 
+def _run_analysis_contract_review_sync(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from .request_artifact_evidence import collect_request_artifacts
+    # Read only paths named in the request and actual required exports. The
+    # bounded previews retain their truncation and source metadata.
+    paths_text = str(payload.get("request_text") or "") + "\n" + "\n".join(
+        json.dumps(path) for path in payload.get("output_paths") or [])
+    evidence = collect_request_artifacts(sys.modules[__name__], paths_text)
+    reviewed_payload = {**payload, "file_previews": evidence}
+    return run_async_from_sync(lambda: _run_analysis_contract_review_agent_once(reviewed_payload))
+
+
 @function_tool
 def tool_execute_design_task(state_path: str) -> Dict[str, Any]:
     """Atomic V3 task: execute one scoped design_new_asos task as a child agentic run."""
@@ -45547,6 +45570,7 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
             "require_tabular_report_views": True,
         },
         generate=_run_sandbox_analysis_sync,
+        review_program=_run_analysis_contract_review_sync,
         required_outputs=requested_paths,
         readonly_outputs=source_tables,
         source_tables=source_tables,

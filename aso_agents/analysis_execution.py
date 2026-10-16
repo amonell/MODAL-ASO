@@ -205,6 +205,7 @@ def execute_analysis_program(
     readonly_outputs: list[Path] | None = None,
     source_tables: list[Path] | None = None,
     validate_result: Callable[[dict], None] | None = None,
+    review_program: Callable[[dict], dict] | None = None,
 ) -> dict:
     """Repair execution/serialization faults without substituting scientific data.
 
@@ -260,6 +261,7 @@ def execute_analysis_program(
         exit_code = 1
         promoted: list[tuple[Path, Path]] = []
         archived_outputs: list[dict] = []
+        contract_review = None
         try:
             if not code:
                 detail = plan.get('error')
@@ -334,6 +336,36 @@ def execute_analysis_program(
             summary = summary_path.read_text().strip()
             if not summary:
                 raise ValueError('Analysis summary is empty')
+            if review_program is not None:
+                from .analysis_review import assess_review, program_digest
+                review_input = {
+                    "request_text": str(payload.get("request_text") or ""),
+                    "task_type": payload.get("task_type"),
+                    "request_envelope": payload.get("request_envelope"),
+                    "declared_inputs": payload.get("declared_inputs"),
+                    "execution_contract": execution_contract,
+                    "program": code, "program_sha256": program_digest(code),
+                    "result": result, "summary": summary,
+                    "output_paths": [str(path) for path in required_outputs],
+                }
+                try:
+                    raw_review = review_program(review_input)
+                except Exception as exc:
+                    # A review transport failure is not a scientific finding or
+                    # a reason to rewrite a successfully executed program.
+                    raw_review = {"error": f"{type(exc).__name__}: {exc}"}
+                contract_review = assess_review(raw_review, code, review_input["request_text"])
+                review_path = local / "contract_review.json"
+                review_path.write_text(json.dumps({
+                    "program_sha256": program_digest(code),
+                    "raw_review": raw_review, **contract_review,
+                }, indent=2))
+                if contract_review["findings"]:
+                    raise ValueError("Analysis request requirements not implemented: "
+                                     + json.dumps(contract_review["findings"], ensure_ascii=False))
+                result["analysis_contract_review"] = {
+                    "status": contract_review["status"], "receipt_path": str(review_path)}
+                result_path.write_text(json.dumps(result, indent=2))
             error = None
         except (ValueError, SyntaxError, OSError, subprocess.TimeoutExpired) as exc:
             error = f'{type(exc).__name__}: {exc}'
@@ -389,6 +421,12 @@ def execute_analysis_program(
             receipt['serialization'] = json.loads(serialization_path.read_text())
         if archived_outputs:
             receipt['previous_output_archives'] = archived_outputs
+        if contract_review is not None:
+            receipt['contract_review'] = {
+                'status': contract_review['status'],
+                'receipt_path': str(local / 'contract_review.json'),
+                'findings_count': len(contract_review['findings']),
+            }
         if promoted:
             receipt['promoted_same_named_exports'] = [
                 {'source': str(source), 'requested_output': str(output)} for source, output in promoted]

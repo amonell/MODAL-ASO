@@ -82,3 +82,8 @@ def _stub_runtime_binaries(request: pytest.FixtureRequest, monkeypatch: pytest.M
         monkeypatch.setattr(pipeline_tools, "tiling_cli_missing", lambda: [])
         monkeypatch.setattr(pipeline_tools, "ensure_run_runtime", _ensure_runtime)
         monkeypatch.setattr(pipeline_tools, "bind_snakemake_command", lambda command: str(command or ""))
+        # Existing unit tests isolate external model calls. Contract-review
+        # integration tests supply their own reviewer or use real_runtime
+        # with a mocked provider; live qualification is separate.
+        monkeypatch.setattr(pipeline_tools, "_run_analysis_contract_review_sync",
+                            lambda payload: {"program_sha256": payload["program_sha256"], "findings": []})
