@@ -225,8 +225,11 @@ def test_initialize_run_state_does_not_activate_artifact_analysis_input_run(monk
     assert not any(source_run_dir.glob("agentic_*"))
     assert state["ignored_run_dir_override"] == str(source_run_dir)
     assert state["ignored_run_dir_override_reason"] == "artifact_analysis_input_run"
-    assert state["request_envelope"]["workflow_name"] == "analyze_artifact"
-    assert state["request_envelope"]["tasks"][0]["task_type"] == "analyze_artifact"
+    # Protect the source run immediately, but let semantic intake decide
+    # whether the requested analysis needs calculations, exports or review.
+    assert state["request_envelope"] == {}
+    assert state["task_graph"]["tasks"] == []
+    assert (source_run_dir / "generated_aso_set.json").read_text() == '{"rows": []}'
 
 
 def test_relocate_agentic_state_moves_sibling_folder_into_run_dir(monkeypatch, tmp_path: Path) -> None:
