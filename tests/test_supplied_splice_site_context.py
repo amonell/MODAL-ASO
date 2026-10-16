@@ -116,7 +116,15 @@ def test_mapping_skip_reason_and_search_scope_reach_response_evidence():
     assert compact["provided_asos"][1]["splice_eval_summary"]["site_search_scope"] == scope
 
 
-def test_evaluation_dispatches_local_sites_and_keeps_unmapped_reason(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scope, request_text", [
+    ("classification", "Evaluate the supplied steric ASOs and nearby splice junctions."),
+    ("intent", "Evaluate the supplied molecules under the declared mechanism."),
+    ("outcome", "Evaluate the supplied molecules against the declared donor outcome."),
+    ("reference_only", "Compare supplied molecules against mature spliced transcript references."),
+    ("excluded", "Evaluate binding only. Splice prediction is not required."),
+    ("other_task", "An earlier unrelated task used splice prediction. This task evaluates binding only."),
+])
+def test_evaluation_dispatches_only_declared_splice_work(scope, request_text, tmp_path, monkeypatch):
     import json
     import random
     from pathlib import Path
@@ -137,7 +145,8 @@ def test_evaluation_dispatches_local_sites_and_keeps_unmapped_reason(tmp_path, m
     catalog = {"TX_NEUTRAL": ref}
     monkeypatch.setattr(pipeline, "_goal_runtime_module", lambda: runtime)
     monkeypatch.setattr(pipeline, "_candidate_run_dirs_for_task", lambda *_: [])
-    monkeypatch.setattr(pipeline, "_reference_goal_context_for_request", lambda *_: {})
+    base_goal = {"intent": "splice_modulation"} if scope == "intent" else {}
+    monkeypatch.setattr(pipeline, "_reference_goal_context_for_request", lambda *_: {"structured_goal": base_goal})
     monkeypatch.setattr(pipeline, "_ensure_eval_transcript_catalog", lambda *_: (catalog, catalog, []))
     monkeypatch.setattr(pipeline, "_choose_eval_transcript", lambda *_: ("TX_NEUTRAL", "TX_NEUTRAL", ref))
     monkeypatch.setattr(pipeline, "_score_provided_asos_with_existing_pipeline", lambda **_: {})
@@ -160,16 +169,27 @@ def test_evaluation_dispatches_local_sites_and_keeps_unmapped_reason(tmp_path, m
 
     monkeypatch.setattr(pipeline, "_run_splice_eval_on_tiles_json", score)
     rc = lambda sequence: sequence.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+    target = {"transcript_id": "TX_NEUTRAL.3", "site_kind": "donor", "position": 200}
+    if scope == "outcome":
+        target.update(objective_type="primary_outcome", desired_delta="decrease")
     result = pipeline._evaluate_existing_asos_payload(
-        state={"request": "Evaluate the supplied steric ASOs and nearby splice junctions."},
-        request_envelope={"request_classifications": ["splice_modification"],
-            "evaluation_targets": [{"transcript_id": "TX_NEUTRAL.3", "site_kind": "donor", "position": 200}],
+        state={"request": request_text},
+        request_envelope={"request_classifications": ["splice_modification"] if scope == "classification" else [],
+            "evaluation_targets": [target],
             "provided_asos": [{"name": "mapped", "sequence": rc(genome[4202:4222]), "sequence_role": "aso"},
                               {"name": "unmapped", "sequence": "A" * 20, "sequence_role": "aso"}]},
         run_dir=str(tmp_path / "output"), task_id="neutral_eval")
     assert "error" not in result
-    assert {s["exon_index"] for s in dispatched} == {1, 2, 3, 4}
     mapped, unmapped = result["provided_asos"]
+    assert mapped["mapping_status"] == "mapped"
+    expected_splice_work = scope in {"classification", "intent", "outcome"}
+    assert result["splice_related_request"] is expected_splice_work
+    if not expected_splice_work:
+        assert dispatched == []
+        assert not mapped.get("splice_eval_summary", {}).get("delta_deletion")
+        assert unmapped["mapping_status"] == "unmapped"
+        return
+    assert {s["exon_index"] for s in dispatched} == {1, 2, 3, 4}
     assert mapped["splice_eval_summary"]["delta_inclusion_deletion"] == 0.0
     assert len(mapped["splice_eval_summary"]["site_search_scope"]["selected_sites"]) == 7
     assert unmapped["splice_eval_summary"]["splice_eval_skip_reason"] == "no_exact_binding_mapping"

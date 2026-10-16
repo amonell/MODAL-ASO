@@ -36167,8 +36167,9 @@ def _overlay_request_context_on_goal(
                 explicit_splice_targets.append(explicit_target)
         if explicit_splice_targets:
             goal["explicit_splice_targets"] = explicit_splice_targets
-    if "splice" in str(request_text or "").lower() and not str(goal.get("intent") or "").strip():
-        goal["intent"] = "splice_modulation"
+    # Evaluation dispatch uses declared intent, classifications and outcome
+    # targets. References, exclusions and unrelated tasks in the full request
+    # must not create an additional biological mechanism here.
     return goal
 
 
