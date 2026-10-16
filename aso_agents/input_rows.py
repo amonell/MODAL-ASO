@@ -6,6 +6,38 @@ import json
 import unicodedata
 
 
+def reconcile_file_row_references(file_rows, inline_items, sequence_like):
+    """Resolve a bare non-sequence ID only against one actual attached row.
+
+    Explicit sequence dictionaries, nucleotide strings and ambiguous IDs remain
+    separate inputs. Real file observations are never deduplicated or repaired.
+    """
+    files = deepcopy(file_rows)
+    names = defaultdict(list)
+    for row in files:
+        name = str(row.get('name') or row.get('id') or row.get('aso_id') or row.get('Name') or '').strip()
+        if name:
+            names[name].append(row)
+    remaining = []
+    for position, item in enumerate(inline_items):
+        reference = item.strip() if isinstance(item, str) else ''
+        matches = names.get(reference, [])
+        compact = ''.join(reference.split()).replace('-', '').upper()
+        possible_nucleotide_sequence = bool(compact) and set(compact) <= set('ACGTURYSWKMBDHVN')
+        if (len(matches) != 1 or possible_nucleotide_sequence
+                or (reference and sequence_like(reference))):
+            remaining.append(item)
+            continue
+        row = matches[0]
+        row.setdefault('input_reconciliation', []).append({
+            'kind': 'attached_row_id_reference', 'reference_text': item,
+            'inline_position': position,
+            'basis': 'Exact unique attached row ID; bare reference is not a nucleotide or supported annotated sequence.',
+            'matching_source_rows': [{'source_file': row.get('source_file'), 'source_row': row.get('source_row')}],
+        })
+    return files, remaining
+
+
 def _file_expansion_identity(row):
     """Compare formatting-equivalent chemistry without changing source text."""
     chemistry = unicodedata.normalize('NFKC', str(row.get('chemistry') or ''))

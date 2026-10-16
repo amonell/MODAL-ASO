@@ -19,7 +19,7 @@ import importlib
 from pathlib import Path
 from aso_agents.reporting_contracts import generated_sequence_fields, exact_count_unit, ISOFORM_SCORE_DEFINITION
 from aso_agents.sequence_orientation import molecule_key, preferred_binding_hits, interpret_orientation
-from aso_agents.input_rows import assign_input_row_ids, reconcile_file_expansions, assessment_row_lookup
+from aso_agents.input_rows import assign_input_row_ids, reconcile_file_expansions, reconcile_file_row_references, assessment_row_lookup
 from aso_agents.feature_identity import exon_number
 from aso_agents.objective_roles import explicit_biological_role
 from aso_agents.evaluation_evidence import (
@@ -21742,6 +21742,8 @@ def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str,
             continue
         inline_items.append(item)
 
+    file_rows, inline_items = reconcile_file_row_references(
+        file_rows, inline_items, lambda value: _normalize_aso_sequence(value)['valid_bases'])
     for idx, item in enumerate(file_rows + inline_items, start=1):
         if isinstance(item, dict):
             base = dict(item)
@@ -21781,13 +21783,13 @@ def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str,
                 "aso_sequence", "oligo_sequence", "chemistry", "Chemistry", "platform", "Platform",
             )):
                 entry["declared_sequence_role"] = "antisense_oligo_sequence"
-            for field in ("source_file", "source_row", "input_metadata", "input_origin"):
+            for field in ("source_file", "source_row", "input_metadata", "input_origin", "input_reconciliation"):
                 if base.get(field) not in (None, "", [], {}):
                     entry[field] = deepcopy(base.get(field))
             identity_keys = {"name", "id", "aso_id", "Name", "sequence", "aso_sequence",
                 "oligo_sequence", "target_sequence", "Sequence", "seq", "chemistry", "Chemistry",
                 "platform", "Platform", "notes", "Notes", "source_file", "source_row",
-                "input_metadata", "input_origin", "input_row_id"}
+                "input_metadata", "input_origin", "input_row_id", "input_reconciliation"}
             extra_metadata = {k: deepcopy(v) for k, v in base.items() if k not in identity_keys}
             if extra_metadata:
                 entry["input_metadata"] = {**extra_metadata, **(entry.get("input_metadata") or {})}
