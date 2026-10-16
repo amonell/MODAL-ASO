@@ -12775,6 +12775,52 @@ def _child_design_evidence_scope(
     return scoped_task, scoped_context
 
 
+def _scoped_obligation_evidence(state: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
+    """Carry original user evidence only when one design owns the parent scope.
+
+    Child request prose is generated from a compiled task, so its field names
+    cannot establish user-authored quantitative obligations. Multiple independent
+    design tasks still require their existing separate scope resolution.
+    """
+    envelope = state.get("canonical_request_envelope") or state.get("request_envelope") or {}
+    designs = [item for item in envelope.get("tasks") or [] if isinstance(item, dict)
+               and _normalize_task_type_value(item.get("task_type")) == "design_new_asos"]
+    task_id = str(task.get("task_id") or "")
+    if len(designs) != 1 or not task_id or str(designs[0].get("task_id") or "") != task_id:
+        return {}
+    inherited = state.get("request_obligation_evidence")
+    if (isinstance(inherited, dict) and inherited.get("task_id") == task_id
+            and inherited.get("provenance") == "single_design_parent_request"):
+        return deepcopy(inherited)
+    request = str(state.get("request") or "")
+    if not request.strip():
+        return {}
+    return {
+        "provenance": "single_design_parent_request", "task_id": task_id,
+        "original_request": request, "qa_history": deepcopy(_clarification_qa_history(state)),
+    }
+
+
+def _obligation_audit_source(state: Dict[str, Any], request: str, history: List[Dict[str, Any]]):
+    evidence = state.get("request_obligation_evidence")
+    preseed = state.get("request_envelope_preseed") or {}
+    tasks = preseed.get("tasks") or []
+    if (isinstance(evidence, dict) and evidence.get("provenance") == "single_design_parent_request"
+            and len(tasks) == 1 and isinstance(tasks[0], dict)
+            and tasks[0].get("task_type") == "design_new_asos"
+            and tasks[0].get("task_id") == evidence.get("task_id")
+            and isinstance(evidence.get("original_request"), str)
+            and evidence["original_request"].strip()
+            and isinstance(evidence.get("qa_history"), list)):
+        # Answers to later child questions extend the original user evidence.
+        combined = deepcopy(evidence["qa_history"])
+        for item in history:
+            if item not in combined:
+                combined.append(deepcopy(item))
+        return evidence["original_request"], combined
+    return request, history
+
+
 def _task_scoped_response_metadata(
     *,
     parent_request_text: Any,
@@ -43479,11 +43525,12 @@ def tool_parse_goal_request(
             # silently lose a physical site, count, or accessibility rule.
             audit_obligations = getattr(runtime, "_audit_request_obligations", None)
             if callable(audit_obligations):
+                obligation_request, obligation_history = _obligation_audit_source(state, request_text, qa_history)
                 audited = run_async_from_sync(
                     lambda: audit_obligations(
                         {"status": "ready", "structured_goal": deepcopy(structured_goal),
                          "request_envelope": deepcopy(request_envelope)},
-                        request_text, qa_history,
+                        obligation_request, obligation_history,
                     )
                 )
                 if isinstance(audited, dict) and audited.get("status") == "ready":
@@ -43497,6 +43544,9 @@ def tool_parse_goal_request(
                         final_payload["request_obligation_audit"] = deepcopy(
                             audited["request_obligation_audit"]
                         )
+                    # Child preseeds read this canonical copy, not the runtime
+                    # envelope. Keep the independently audited constraints.
+                    canonical_request_envelope = deepcopy(request_envelope)
             final_payload["status"] = "ready"
             final_payload["structured_goal"] = structured_goal
         elif request_envelope and design_task_count == 1:
@@ -44008,6 +44058,11 @@ def tool_execute_design_task(state_path: str) -> Dict[str, Any]:
                 fatal=True,
             )
         child_state_path = str(init_result.get("state_path") or "").strip()
+        obligation_evidence = _scoped_obligation_evidence(state, evidence_task)
+        if obligation_evidence and child_state_path:
+            child_state = _load_state(child_state_path)
+            child_state["request_obligation_evidence"] = obligation_evidence
+            _save_state(child_state_path, child_state, snapshot_reason="parent_request_obligation_evidence")
 
     if child_state_path or child_run_dir:
         artifact_entry = task_artifacts.setdefault(task_id, {})

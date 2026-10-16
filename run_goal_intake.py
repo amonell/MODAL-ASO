@@ -3562,10 +3562,11 @@ async def _audit_request_obligations(
     envelope = intake_out.get("request_envelope")
     if isinstance(envelope, dict):
         tasks = envelope.get("tasks")
-        if isinstance(tasks, list) and tasks and not (
-            len(tasks) == 1 and isinstance(tasks[0], dict)
-            and str(tasks[0].get("task_type") or "").strip().lower() == "design_new_asos"
-        ):
+        design_tasks = [task for task in tasks or [] if isinstance(task, dict)
+                        and str(task.get("task_type") or "").strip().lower() == "design_new_asos"]
+        # Supporting analysis/report tasks do not create additional design
+        # scopes. A global design obligation still has exactly one recipient.
+        if isinstance(tasks, list) and tasks and len(design_tasks) != 1:
             return await _audit_supplied_observation_count(intake_out, user_request, qa_history)
     elif not isinstance(goal.get("design_programs"), list):
         return intake_out
@@ -3682,10 +3683,10 @@ async def _audit_request_obligations(
             intake_out.pop(field, None)
     envelope = intake_out.get("request_envelope")
     tasks = envelope.get("tasks") if isinstance(envelope, dict) else None
-    if isinstance(tasks, list) and len(tasks) == 1 and isinstance(tasks[0], dict) and (
-        str(tasks[0].get("task_type") or "").strip().lower() == "design_new_asos"
-    ):
-        task = tasks[0]
+    design_tasks = [task for task in tasks or [] if isinstance(task, dict)
+                    and str(task.get("task_type") or "").strip().lower() == "design_new_asos"]
+    if len(design_tasks) == 1:
+        task = design_tasks[0]
         context = task.get("context") if isinstance(task.get("context"), dict) else None
         containers = [envelope, envelope.get("default_context"), task, context,
                       context.get("structured_goal") if isinstance(context, dict) else None]
