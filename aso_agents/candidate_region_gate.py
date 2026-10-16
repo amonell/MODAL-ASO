@@ -36,10 +36,13 @@ def filter_final_rows_by_regions(rows, goal, intervals_for_row):
     by_program = {str(key): value for key, value in (materialized.get("by_program") or {}).items() if value}
     receipt = {"input_count": len(rows), "retained_count": len(rows), "excluded_count": 0,
                "scope": "global_and_program"}
-    if not source and not by_program:
+    from .mature_steric import uses_mature_rna
+    mature_programs = {str(p['program_id']): p for p in goal.get('design_programs') or []
+                       if isinstance(p, dict) and p.get('program_id') and uses_mature_rna(p)}
+    if not source and not by_program and not mature_programs:
         return list(rows), {**receipt, "status": "not_required"}
     global_filters = _filters(goal, None, source)
-    if global_filters is None:
+    if global_filters is None and not mature_programs:
         return list(rows), {**receipt, "status": "materialization_incomplete"}
     local_filters = {key: _filters(goal, key, value) for key, value in by_program.items()}
     programs = {str(item['program_id']): item for item in goal.get('design_programs') or []
@@ -50,22 +53,52 @@ def filter_final_rows_by_regions(rows, goal, intervals_for_row):
                 programs.setdefault(str(job['program_id']), {'program_id': str(job['program_id']), 'modality': modality})
     for key in by_program:
         programs.setdefault(key, {'program_id': key})
-    bound = bind_candidate_program_groups(rows, {**goal, 'design_programs': list(programs.values())}) if by_program else rows
+    needs_program = bool(by_program or mature_programs)
+    bound = bind_candidate_program_groups(rows, {**goal, 'design_programs': list(programs.values())}) if needs_program else rows
+    binding_contexts = {}
     kept, excluded, unresolved = [], [], []
     for index, row in enumerate(bound):
         program_id = str(row.get('program_id') or '')
-        if by_program and not program_id and len(programs) == 1 and not any(
+        if needs_program and not program_id and len(programs) == 1 and not any(
                 row.get(key) for key in ('program_id', 'job_id', 'job_label', 'target_region_label')):
             only_id, only = next(iter(programs.items()))
             if not row.get('source_modality') or only.get('modality') == row['source_modality']:
                 program_id = only_id
                 row = {**row, 'program_id': program_id}
         filters = global_filters
-        if by_program and program_id not in programs:
+        if needs_program and program_id not in programs:
             unresolved.append({'row_index': index, 'reason': 'program_scope_unresolved'})
+            (excluded if mature_programs else kept).append(rows[index])
+            continue
+        if program_id in mature_programs:
+            try:
+                if program_id not in binding_contexts:
+                    import run_goal_intake as runtime
+                    from .mature_steric import compile_regions
+                    from .mature_binding import BindingContext
+                    program = mature_programs[program_id]
+                    base, _ = runtime._build_steric_program_region_rows(goal, program)
+                    _, compiled = compile_regions(runtime, goal, program, base)
+                    scope = compiled['mature_rna'].get('shared_binding')
+                    binding_contexts[program_id] = BindingContext(runtime, goal, scope) if scope else None
+                context = binding_contexts[program_id]
+                if context:
+                    evidence = context.verify_row(row)
+                    if evidence:
+                        kept.append({**row, 'mature_rna_binding': evidence})
+                    else:
+                        excluded.append(row)
+                    continue
+            except (ValueError, KeyError, TypeError, OSError) as exc:
+                unresolved.append({'row_index': index, 'program_id': program_id,
+                                   'reason': 'mature_binding_unverified', 'error_type': type(exc).__name__})
+                excluded.append(row)
+                continue
+        if global_filters is None:
+            unresolved.append({'row_index': index, 'reason': 'materialization_incomplete'})
             kept.append(rows[index])
             continue
-        elif program_id in local_filters:
+        if program_id in local_filters:
             if local_filters[program_id] is None:
                 unresolved.append({'row_index': index, 'program_id': program_id,
                                    'reason': 'materialization_incomplete'})
@@ -86,7 +119,7 @@ def filter_final_rows_by_regions(rows, goal, intervals_for_row):
                                              if isinstance(value, list) else []
                                              for key, value in by_program.items()},
                   "unresolved_rows": unresolved,
-                  "unresolved_scope": "Rows with unknown program scope or incomplete materialization are retained as unverified."}
+                  "unresolved_scope": "Unverified shared mature-RNA binding is excluded. Other unresolved materialization retains legacy rows as unverified."}
 
 
 def filter_final_rows_by_global_regions(rows, goal, intervals_for_row):

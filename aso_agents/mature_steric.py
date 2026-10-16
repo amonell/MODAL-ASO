@@ -56,6 +56,21 @@ def compile_regions(runtime, goal, program, base_rows):
             length = sum(exon['end']-exon['start']+1 for exon in exons)
             base = [[transcript, 0, length, str(label), 0,
                      '-' if str(entry.get('strand')) in {'-', '-1'} else '+']]
+    from .mature_binding import compile_scope
+    shared_binding = compile_scope(runtime, goal, program, label, base, sources)
+    if shared_binding:
+        global_sources = (goal.get('materialized_region_constraints') or {}).get('global') or []
+        if global_sources and sources[:len(global_sources)] != global_sources:
+            sources = [*global_sources, *sources]
+            shared_binding = compile_scope(runtime, goal, program, label, base, sources)
+        projected_base = runtime._map_cdna_bed_rows_to_genomic(base, entry, label)
+        return projected_base, {'constraint_count': len(sources), 'output_space': 'genomic',
+            'tile_filter_rows': projected_base, 'tile_overlap_requirement': 'full_containment',
+            'tile_constraint_filters': [],
+            'constraint_enforcement': 'reference_verified_mature_binding',
+            'mature_rna': {'transcript_label': label, 'transcript_id': transcript,
+                'search_rows_cdna': base, 'constraint_filters_cdna': [],
+                'shared_binding': shared_binding}}
     for constraint in sources:
         rows = runtime._constraint_rows_in_output_space(structured_goal=goal, constraint=constraint,
             output_space='cdna', base_rows=base, isoform_transcripts=catalog, iso_label_primary=label)
@@ -102,6 +117,10 @@ def build_tiles(runtime, goal, job, chemistry, output_dir):
     transcript = scope['transcript_id']
     strand = '-' if str(entry.get('strand')) in {'-', '-1'} else '+'
     limits = runtime._resolve_homopolymer_per_base_limits(goal)
+    binding = None
+    if scope.get('shared_binding'):
+        from .mature_binding import BindingContext
+        binding = BindingContext(runtime, goal, scope['shared_binding'])
     rows = []
     for start in range(len(sequence)-length+1):
         interval = [(transcript,start,start+length)]
@@ -110,6 +129,9 @@ def build_tiles(runtime, goal, job, chemistry, output_dir):
         if not matches_constraint_filters(interval, scope['constraint_filters_cdna']):
             continue
         target = sequence[start:start+length]
+        binding_evidence = binding.evaluate(target, start) if binding else None
+        if binding and not binding_evidence:
+            continue
         idt, synthesis, warning = runtime._format_idt_and_synthesis(target, chemistry_label)
         if warning:
             raise ValueError('mature_steric_chemistry_unresolved: '+str(warning))
@@ -124,7 +146,8 @@ def build_tiles(runtime, goal, job, chemistry, output_dir):
             'No_homopolymer':not limits or runtime.sequence_passes_homopolymer_limits(synthesis,limits),
             'source':'steric_cdna','coordinate_system':'1based_inclusive',
             'Genomic_segments':json.dumps([{'chrom':c,'start':a,'end':b} for c,a,b in segments]),
-            'mature_rna_reference':transcript, 'design_job_id':job['job_id']})
+            'mature_rna_reference':transcript, 'design_job_id':job['job_id'],
+            **({'mature_rna_binding': binding_evidence} if binding_evidence else {})})
     runtime._annotate_tile_rows_with_rnafold(rows)
     Path(output_dir).mkdir(parents=True,exist_ok=True)
     result = runtime._write_tiles_json_payload(rows, output_dir, 'mature_steric_tiles',

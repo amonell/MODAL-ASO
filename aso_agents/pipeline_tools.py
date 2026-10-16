@@ -5540,6 +5540,8 @@ def _filter_tiles_json_to_output(
     chemistry_group_id: str = "",
     allow_empty_subset: bool = False,
     constraint_filters: Optional[List[Dict[str, Any]]] = None,
+    mature_binding_scope: Optional[Dict[str, Any]] = None,
+    structured_goal: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     from .region_overlap import candidate_matches_regions, matches_constraint_filters
     source_path = Path(source_json_path).expanduser()
@@ -5547,7 +5549,13 @@ def _filter_tiles_json_to_output(
     if not source_path.exists():
         return {"error": f"source_tiles_missing: {source_path}"}
     output_obj.parent.mkdir(parents=True, exist_ok=True)
+    binding = None
+    if mature_binding_scope:
+        from .mature_binding import BindingContext
+        binding = BindingContext(_goal_runtime_module(), structured_goal or {}, mature_binding_scope)
     if not region_rows:
+        if binding:
+            return {'error': 'mature_binding_search_rows_missing'}
         if not allow_full_copy:
             return {"error": "region_rows_missing"}
         try:
@@ -5580,6 +5588,11 @@ def _filter_tiles_json_to_output(
         row_group_id = str(row.get("chemistry_group_id") or "").strip()
         if chemistry_group_id and row_group_id and row_group_id != chemistry_group_id:
             continue
+        if binding:
+            evidence = binding.verify_row(row)
+            if not evidence:
+                continue
+            row = {**row, 'mature_rna_binding': evidence}
         intervals = _tile_row_intervals(row)
         requirement = tile_overlap_requirement if tile_overlap_requirement != "mixed" else "any_overlap"
         matched = candidate_matches_regions(intervals, region_rows, requirement)
@@ -5851,6 +5864,8 @@ def _export_job_tile_views(
             chemistry_group_id=str(job.get("chemistry_group_id") or "").strip(),
             allow_empty_subset=allow_empty_subset,
             constraint_filters=((job.get("selection_meta") or {}).get("region_constraints") or {}).get("tile_constraint_filters"),
+            mature_binding_scope=(((job.get("selection_meta") or {}).get("region_constraints") or {}).get("mature_rna") or {}).get("shared_binding"),
+            structured_goal=structured_goal,
         )
         if subset_result.get("path"):
             entry[result_key] = subset_result["path"]
@@ -29008,6 +29023,8 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "Genomic_span_end",
         "Genomic_span_length",
         "Genomic_segments",
+        "mature_rna_reference",
+        "mature_rna_binding",
         "Genomic_chrom",
         "Genomic_start",
         "Genomic_end",
@@ -54804,6 +54821,8 @@ def tool_run_gapmer_tiling(
             allow_full_copy=bool(job.get("allow_full_copy")) or not job_region_rows,
             tile_overlap_requirement=str(job.get("tile_overlap_requirement") or "any_overlap").strip().lower() or "any_overlap",
             constraint_filters=((job.get("selection_meta") or {}).get("region_constraints") or {}).get("tile_constraint_filters"),
+            mature_binding_scope=(((job.get("selection_meta") or {}).get("region_constraints") or {}).get("mature_rna") or {}).get("shared_binding"),
+            structured_goal=structured_goal,
         )
         if subset_result.get("error"):
             return _tool_failure(
