@@ -19593,8 +19593,10 @@ async def _run_sandbox_analysis_agent_once(payload: Dict[str, Any]) -> Dict[str,
         if repair.get("error"):
             return {"python_code": "", "error": repair}
         return apply_program_repair(repair_context.get("previous_plan") or {}, code, repair)
+    from .sandbox_analysis_agent import design_workbook_analysis_agent
+    agent = design_workbook_analysis_agent if payload.get("source_bound_design_workbooks") else sandbox_analysis_agent
     result = await Runner.run(
-        sandbox_analysis_agent,
+        agent,
         input=json.dumps(payload, ensure_ascii=False, indent=2),
         max_steps=4,
     )
@@ -32930,10 +32932,17 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             "chemistry": chemistry.get("recommendation") if isinstance(chemistry, dict) else chemistry,
             "candidate_selection_policy": resolved_goal.get("candidate_selection_policy"),
         }
-    (directory / "declared_inputs.json").write_text(json.dumps(declared, indent=2))
     bound_design_tasks = {entry["task_id"] for entry in design_evidence if entry.get("observations")}
     source_bound_workbooks = [str(path) for path in pending if path.suffix.lower() == ".xlsx"
                               and bindings.get(path, (None,))[0] in bound_design_tasks]
+    design_catalog = None
+    if source_bound_workbooks:
+        from .design_workbooks import write_design_catalog
+        design_catalog = write_design_catalog(declared, directory / "design_catalog.json")
+        declared["completed_run"]["design_catalog"] = design_catalog
+        declared["requested_design_workbooks"] = [{"path": path, "task_id": bindings[Path(path)][0]}
+                                                   for path in source_bound_workbooks]
+    (directory / "declared_inputs.json").write_text(json.dumps(declared, indent=2))
     result = execute_analysis_program(
         directory=directory,
         payload={"operation": "render_requested_outputs", "task_type": "sandbox_analysis",
@@ -32947,7 +32956,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             [path for path in requested if path not in pending]
             + [Path(path) for catalog in native_sources.values() for path in catalog.values()
                if Path(path) not in pending]
-            + [Path(source["path"]) for evidence in design_evidence for source in evidence["sources"]])),
+            + [Path(source["path"]) for evidence in design_evidence for source in evidence["sources"]]
+            + ([Path(design_catalog["path"])] if design_catalog else []))),
         max_attempts=3 - len(prior_attempts),
     )
     fallback_exports = []

@@ -83,6 +83,26 @@ sandbox_analysis_agent = Agent(
 )
 
 
+design_workbook_analysis_agent = Agent(
+    name="ASO Design Workbook Analyst",
+    instructions=(
+        "Write a concise deterministic Python analysis of completed ASO design results. The platform renders the requested Excel workbooks from your result plan.\n"
+        "Return one JSON object: analysis_plan (string), python_code (standalone Python), assumptions (list), limitations (list), expected_outputs (list).\n"
+        "The program reads declared_inputs.json in the working directory. It is the runtime manifest itself. Read the canonical candidate table at manifest['completed_run']['design_catalog']['path']; its JSON object has a rows array. The requested paths and producer task IDs are in manifest['requested_design_workbooks'].\n"
+        "Each canonical row contains binding_id, task_id, stage_roles, program_ids, transcript_ids, target_5to3, antisense_5to3, genomic_blocks_bed0_half_open, strand, recorded_chemistry, length_nt, gc_bases, gc_fraction, longest_homopolymer, off_target_exact_count, off_target_1mm_count, off_target_search_status, off_target_mismatch_budget, primary_delta_deletion, primary_delta_replacement, physical_splice_elements, recorded_fields (JSON-pointer keys), splice_predictions and evidence_conflicts. Its binding_id is the exact source identity to copy into every output row. Use this canonical table for candidate facts and joins. Other declared sources supply the recorded scientific contract, methods and provenance.\n"
+        "Select raw_generated stage rows for a complete library, including screening failures; final_output stage rows are the native selected panel. Scope every table to the requested task. Canonical rows already reconcile duplicate source observations using program/reference/site/chemistry identity; retain unresolved rows and conflicts as unknown.\n"
+        "Compute only requested additional annotations, eligibility and rankings. Use Fraction(gc_bases, length_nt) or exact Decimal arithmetic through threshold comparisons; format only for display. Use recorded exonic_overlap_bp, intronic_overlap_bp, boundary_1based and relative_interval_inclusive from the matching physical_splice_elements when available. Zero is exonic at both annotated donor and acceptor boundaries. An empty element list does not establish absence outside the recorded reference catalog. Any derived genomic relative interval is [start-anchor,end-anchor] on '+' or [anchor-end,anchor-start] on '-', after one-based inclusive conversion.\n"
+        "Keep zero measurements distinct from missing values. Preserve unknowns and scope conflicts. A failed criterion makes eligibility fail; otherwise any unknown required criterion makes it indeterminate. Apply the user's ranking to the complete eligible set, keep missing ranking inputs unranked unless the user supplied another ordering, retain ties, and derive the shortlist and narrative from that same ordering. Observed counts, genomic hits, transcript matches and affected genes have different meanings. Copy actual screening scope and searched mismatch bins; computational perturbations do not prove ASO efficacy.\n"
+        "The program writes sandbox_result.json and sandbox_summary.md. sandbox_result.json MUST contain design_workbooks, an array with one object for each requested workbook: {path, tables, notes}. Each table is {title, task_id, coverage, extra_columns, rows}; coverage is all_raw, all_final or subset. Each row is exactly {binding_id, values}, where values is a dictionary using the extra_columns names. The platform writes every native core column and the complete recorded site-prediction evidence sheet automatically. Put requested IDs, flags, numeric ranks, relative coordinates and interpretations in values. Preserve requested sheet names. Use all_raw for complete libraries; the platform checks that every raw binding is present exactly once.\n"
+        "Minimal shape example: result={'design_workbooks':[{'path':output['path'],'tables':[{'title':'Candidates','task_id':output['task_id'],'coverage':'all_raw','extra_columns':['ID'],'rows':[{'binding_id':row['binding_id'],'values':{'ID':str(i+1)}} for i,row in enumerate(rows)]}],'notes':[{'title':'Methods','rows':[['Method','Description']]}]}]}. Here rows is the complete canonical raw_generated list for output['task_id']. Adapt the table names, selected rows, extra columns and notes to the actual user request. Additional copied scalar columns may be declared as source_columns={'display header':'recorded:/actual_JSON_pointer'}.\n"
+        "Excel creation, source copying, formatting basics and prediction sheets are the platform's responsibility. Your Python must produce the table plan and summary rather than construct or save a workbook. Do not import openpyxl or instantiate DesignWorkbook. Keep candidate facts in their source catalog and put only derived additions in values; do not rebuild sequences, rediscover source rows or transcribe a parallel candidate table.\n"
+        "Notes are arrays of {title, rows}, with rows as arrays of cells, for Methods and other requested narrative sheets. Document unavailable analyses and limitations honestly. Other requested non-Excel files are written directly by your program. If you write requested CSV/TSV files, declare report_tables with id, source_path, columns, rank_column and preview_limit, and use {{table:ID}} in the summary.\n"
+        "Read only declared input files, keep source bytes unchanged, perform no network calls, and use the exact requested output paths. Reconcile analysis_plan, assumptions, limitations and expected_outputs with the actual program. Return JSON only."
+    ),
+    tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
+)
+
+
 analysis_program_repair_agent = Agent(
     name="ASO Analysis Program Repair",
     instructions=(
@@ -91,6 +111,8 @@ analysis_program_repair_agent = Agent(
         "and unaffected code; do not rewrite unrelated ranking or reporting logic. When a name must "
         "change, update all its uses in the same repair. Check the complete edited program for "
         "syntax and unbound names before returning the patches. "
+        "For a platform-rendered workbook, keep its design_workbooks plan and source binding IDs; "
+        "repair the analysis or plan rather than replacing it with manual workbook construction. "
         "The program hash and one-based inclusive line spans bind edits to the exact failed code; "
         "base_plan_sha256 binds descriptive updates to the exact previous plan. "
         "Use the concrete traceback, runtime variable types and previous failed attempts. "

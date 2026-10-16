@@ -144,6 +144,23 @@ def _source_value(row, field):
     return row[field]
 
 
+def write_design_catalog(declared, path):
+    """Expose the renderer's exact row schema as a protected analysis input."""
+    rows, sources = _catalog(declared)
+    path = Path(path)
+    if path.is_symlink() or path.resolve() in {Path(source["path"]).resolve() for source in sources}:
+        raise ValueError("Design catalog destination overlaps a source")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = (_json({"schema": "modal-aso-design-catalog/1", "rows": rows,
+                      "observation_sources": sources}) + "\n").encode()
+    path.write_bytes(content)
+    return {"path": str(path), "sha256": hashlib.sha256(content).hexdigest(),
+            "schema": "modal-aso-design-catalog/1", "row_collection": "rows", "row_count": len(rows),
+            "columns": list(rows[0]) if rows else [],
+            "task_ids": sorted({row["task_id"] for row in rows}),
+            "scope": "One row per verified binding; unresolved source identities remain separate. Stage roles distinguish complete raw libraries from selected subsets."}
+
+
 def _prediction_rows(indexed, tables):
     seen = set()
     for table in tables:
@@ -251,6 +268,79 @@ class DesignWorkbook:
         self.workbook.save(path)
         return {"design_tables": [{"path": str(path.resolve()), **table} for table in self._tables],
                 "design_observation_sources": deepcopy(self.sources), "design_prediction_sheet": title}
+
+
+def render_design_workbook_plans(payload, result, required_outputs):
+    """Render a model's analysis table plan with platform-owned source cells.
+
+    The program chooses rows and additional calculations, never reconstructs
+    native source columns or controls the workbook's provenance machinery.
+    """
+    required = {Path(p).resolve() for p in payload.get("source_bound_design_workbooks") or []}
+    required &= set(required_outputs)
+    if not required:
+        return
+    plans = result.get("design_workbooks")
+    if plans is None and result.get("design_tables"):
+        return  # Previously supported source-bound writer output; still verified below.
+    if not isinstance(plans, list) or not plans:
+        raise ValueError("Return design_workbooks in sandbox_result.json: each workbook has path, tables, and notes; "
+                         "each table has title, task_id, coverage, extra_columns, and rows of {binding_id, values}. "
+                         "Read binding_id from completed_run.design_catalog. The platform writes the Excel files.")
+    declared = payload["declared_inputs"]
+    scope = {Path(entry["path"]).resolve(): entry["task_id"]
+             for entry in declared.get("requested_design_workbooks") or []}
+    seen, tables, sources = set(), [], []
+    try:
+        for plan in plans:
+            path = Path(plan["path"]).resolve()
+            if path not in required or path in seen or path.suffix.lower() != ".xlsx":
+                raise ValueError("Workbook plan path is duplicate or outside its requested design scope")
+            seen.add(path)
+            writer = DesignWorkbook(declared)
+            catalog = {row["binding_id"]: row for row in writer.rows()}
+            for table in plan["tables"]:
+                task_id = table.get("task_id", scope.get(path))
+                if not task_id or scope.get(path) != task_id:
+                    raise ValueError("Workbook table must use its requested producer task")
+                columns = table.get("extra_columns", [])
+                if not isinstance(columns, list) or not all(isinstance(name, str) for name in columns):
+                    raise ValueError("Workbook extra_columns must be an array of column names")
+                rows, values = [], []
+                for entry in table["rows"]:
+                    if not isinstance(entry, dict) or set(entry) - {"binding_id", "values"}:
+                        raise ValueError("Workbook rows contain only binding_id and derived values; source facts are supplied by the renderer")
+                    key, extra = entry["binding_id"], entry.get("values", {})
+                    if key not in catalog:
+                        raise ValueError("Workbook row binding_id is absent from the canonical design catalog")
+                    if not isinstance(extra, dict) or set(extra) - set(columns):
+                        raise ValueError("Workbook values must use declared extra_columns")
+                    rows.append(catalog[key])
+                    values.append(extra)
+                writer.add_table(table["title"], rows, task_id=task_id,
+                                 coverage=table["coverage"], extra_columns=columns, extra_values=values,
+                                 source_columns=table.get("source_columns"))
+            for note in plan.get("notes", []):
+                title = note["title"]
+                if title in writer.workbook.sheetnames or title == PREDICTION_SHEET:
+                    raise ValueError("Workbook note sheet collides with a source table")
+                sheet = writer.workbook.create_sheet(title)
+                for cells in note["rows"]:
+                    if not isinstance(cells, list):
+                        raise ValueError("Workbook note rows must be arrays of cells")
+                    sheet.append([_cell(value) for value in cells])
+            rendered = writer.save(path)
+            tables.extend(rendered["design_tables"])
+            sources.extend(rendered["design_observation_sources"])
+        if seen != required:
+            raise ValueError("A rendering plan is required for every requested design workbook")
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError("Malformed design workbook rendering plan: " + str(exc)) from exc
+    result["design_tables"] = tables
+    result["design_observation_sources"] = _unique(sources)
+    result["design_prediction_sheet"] = PREDICTION_SHEET
+    result["design_workbook_rendering"] = {"owner": "platform", "workbooks": len(seen),
+        "source_facts": "copied from verified catalog", "additional_values": "model-authored analysis; scientifically assessed separately"}
 
 
 def _agrees(expected, observed):

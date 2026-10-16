@@ -302,9 +302,13 @@ def execute_analysis_program(
                 raise ValueError(f'Analysis program exited {exit_code}: {stderr[-6000:]}')
             # Require a real result and summary before moving same-named
             # working-directory exports to their declared delivery paths.
-            if result_path.is_file() and summary_path.is_file():
+            if result_path.is_file():
                 preview = json.loads(result_path.read_text())
-                if isinstance(preview, dict) and summary_path.read_text().strip():
+                if isinstance(preview, dict):
+                    from .design_workbooks import render_design_workbook_plans
+                    render_design_workbook_plans(payload, preview, required_outputs)
+                    result_path.write_text(json.dumps(preview, indent=2))
+                if isinstance(preview, dict) and summary_path.is_file() and summary_path.read_text().strip():
                     promoted = _promote_same_named_exports(directory, required_outputs, same_named_before)
             missing = [str(p) for p in [result_path, summary_path, *required_outputs] if not p.is_file()]
             if missing:
