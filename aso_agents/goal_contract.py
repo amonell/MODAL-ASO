@@ -92,7 +92,7 @@ CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS = {
     "gene_id": "Explicitly supplied stable gene identifier for this task.",
     "gene_symbol": "Explicitly supplied gene symbol for this task.",
     "platform": "User-supplied experimental or computational platform context.",
-    "provided_aso_files": "User-supplied files containing existing ASOs.",
+    "provided_aso_files": "Files whose records the user supplied as candidate observations for ASO evaluation, preserving their explicitly declared sequence role, including target_site_sequence. Every readable sequence record becomes an observation. Reference transcripts, target windows, genomes and annotations used only as evidence belong in artifact_refs; file format, name, sequence length or sequence-like content does not establish a candidate-input role.",
     "provided_asos": "Existing ASO values supplied by the user for evaluation or comparison.",
     "provided_sequence_role": "Explicit user-declared role of the supplied 5-prime to 3-prime sequence strings in this task: antisense molecules, target sites, or unknown. Per-row declarations take precedence; binding outcomes do not change this input fact.",
     "species": "Requested organism for this task.",

@@ -15758,6 +15758,9 @@ def _request_graph_review_contract_errors(
     if status == "valid" and issues != []:
         errors.append("$.issues: valid graph review requires an empty array")
     elif status == "revise" and (not isinstance(issues, list) or not issues):
+        from .input_file_roles import has_non_candidate_file
+        if has_non_candidate_file(payload):
+            return errors
         errors.append("$.issues: revise graph review requires at least one issue")
     return errors
 
@@ -17630,6 +17633,9 @@ def _goal_contract_audit_schema_for_prompt(prompt: str) -> Dict[str, Any]:
 
 
 async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
+    from .input_file_roles import (
+        declared_candidate_files, with_file_role_schema, apply_file_role_checks,
+    )
     evidence_sources = _declared_evidence_sources_from_prompt(prompt)
     span_map = _evidence_span_map(evidence_sources)
     schema = _schema_with_allowed_evidence_refs(
@@ -17637,6 +17643,8 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
         [str(item.get("evidence_id") or "") for item in evidence_sources],
         list(span_map),
     )
+    files = declared_candidate_files(prompt)
+    schema = with_file_role_schema(schema, files)
     agent = _agent_with_strict_output_schema(
         request_graph_review_agent,
         schema_name="aso_request_graph_review_evidence_bound",
@@ -17655,6 +17663,7 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
     if str(reviewed.get("error") or "").strip():
         return reviewed
     materialized = _materialize_evidence_span_ids(reviewed, span_map)
+    materialized = apply_file_role_checks(materialized, files)
     errors = _request_graph_review_contract_errors(materialized)
     if errors:
         return {

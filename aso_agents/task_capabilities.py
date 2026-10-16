@@ -1,5 +1,42 @@
 """Shared executor boundaries for planning and independent plan review."""
 
+SUBMITTED_MOLECULE_INPUT_CONTRACT = (
+    "Resolve supplied-file roles before choosing molecule inputs. "
+    "provided_asos and provided_aso_files declare user-submitted candidate "
+    "observations to evaluate: every readable sequence record in such a file "
+    "is ingested as an observation. Preserve their explicitly declared "
+    "provided_sequence_role, including target_site_sequence when the user "
+    "supplies candidate target-site strings rather than antisense strings. "
+    "These collections are not a list of all task inputs. "
+    "Reference transcripts, target windows, genomes, exon maps, annotations and "
+    "regulatory sequences belong in artifact_refs when used as evidence, even "
+    "when their format can also store ASOs. A file's presence, readable DNA, "
+    "extension, name, sequence length or use by an evaluation task does not "
+    "establish that the user submitted its records as candidate inputs. Conversely, "
+    "FASTA and other sequence files can be actual candidate panels when the "
+    "user assigns that role. Preserve every such panel and its original path.\n"
+    "For each proposed provided_aso_files entry, trace its candidate-input role to the "
+    "original request or supplied source evidence. If the evidence assigns it "
+    "only a reference or annotation role, remove that entry from the candidate "
+    "collection and retain it in artifact_refs for the consuming task. Do not "
+    "drop the reference, modify its content, remove the task or ask the user "
+    "to confirm an explicit role. A file may serve both roles only when the "
+    "evidence supports both. Review this assignment for every task, including "
+    "non-design evaluation tasks; it is input scope, not deferred design-goal "
+    "completeness. Identify the exact task-context path and evidence-supported "
+    "correction using the current stage's response contract. Preserve actual "
+    "submitted inputs; correct roles require no repair.\n"
+    "When the response schema includes file_role_checks, classify every listed "
+    "file separately using original evidence and an exact evidence_span_id. "
+    "candidate_input includes explicitly submitted antisense strings, declared "
+    "candidate target-site strings, and a file explicitly assigned both candidate "
+    "and reference roles. Use reference_or_annotation_only only when evidence "
+    "assigns no candidate-input role, and not_established for a genuinely "
+    "unresolved role. Do not infer a role from the proposed graph's placement. "
+    "The host converts non-candidate role checks into graph-repair issues; "
+    "include other independently supported graph issues in issues as usual.\n"
+)
+
 ANNOTATION_SCOPE_CONTRACT = (
     "Keep candidate eligibility separate from annotations. mirna_binding, rbp_binding, "
     "motif_tiling and region_constraints restrict where ASOs may be designed; populate "
@@ -13,7 +50,7 @@ ANNOTATION_SCOPE_CONTRACT = (
     "coordinates or database-reported target predictions.\n"
 )
 
-ANALYSIS_TASK_CAPABILITIES = (ANNOTATION_SCOPE_CONTRACT +
+ANALYSIS_TASK_CAPABILITIES = (SUBMITTED_MOLECULE_INPUT_CONTRACT + ANNOTATION_SCOPE_CONTRACT +
     "Executor selection follows the canonical task_type. The native flag is derived "
     "metadata: false for sandbox_analysis and true for all other supported operations, "
     "including analyze_artifact and build_composite_report. Changing that flag does not "

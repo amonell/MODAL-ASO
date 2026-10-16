@@ -4,7 +4,10 @@ from typing import Optional
 from agents import Agent, ModelSettings
 
 from aso_agents.goal_contract import CANONICAL_DESIGN_GOAL_INSTRUCTIONS
-from aso_agents.task_capabilities import ANALYSIS_TASK_CAPABILITIES, EVALUATION_TARGET_CONTRACT
+from aso_agents.task_capabilities import (
+    ANALYSIS_TASK_CAPABILITIES, EVALUATION_TARGET_CONTRACT,
+    SUBMITTED_MOLECULE_INPUT_CONTRACT,
+)
 from aso_agents.structured_outputs import (
     DESIGN_GOAL_SYNTHESIS_OUTPUT_SCHEMA,
     GOAL_CONTRACT_AUDIT_OUTPUT_SCHEMA,
@@ -350,7 +353,7 @@ design_goal_synthesis_agent = Agent(
 goal_contract_audit_agent = Agent(
     name="ASO Design Goal Evidence Auditor",
     instructions=(
-        CANONICAL_DESIGN_GOAL_INSTRUCTIONS
+        SUBMITTED_MOLECULE_INPUT_CONTRACT + CANONICAL_DESIGN_GOAL_INSTRUCTIONS
         + "Audit a proposed V3 request envelope against the supplied evidence sources.\n"
         "Return only the compact audit object required by the response schema. Always include patches, goal_replacements, field_dispositions, and unresolved arrays; use empty arrays when a channel is unused. Never reproduce or summarize the request envelope.\n"
         "Emit each necessary patch exactly once. Repeated patches are invalid; do not fill the audit with repeated defaults or re-audit patches you have just proposed.\n"
