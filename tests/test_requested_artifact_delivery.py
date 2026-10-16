@@ -125,6 +125,34 @@ def test_requested_files_materialize_even_with_separate_scientific_blocker(tmp_p
     assert not any(error.startswith("requested_output_missing:") for error in result["integrity"]["blocking_errors"])
 
 
+@pytest.mark.parametrize("writer_succeeds", [True, False])
+def test_finalizer_checks_custom_content_when_all_requested_paths_already_exist(tmp_path, monkeypatch, writer_succeeds):
+    run, state = setup_completed_analysis(tmp_path)
+    destination = run / "requested.json"
+    destination.write_text('{"generic_export": true}')
+    before = pipeline._extract_pipeline_integrity(str(run), pipeline._discover_core_artifacts(str(run)), skip_router=True)
+    assert before["ok"] is True
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state))
+    calls = []
+
+    def generate(payload):
+        calls.append(payload)
+        return export_program(payload) if writer_succeeds else {"python_code": "raise RuntimeError('Writer failed')"}
+
+    monkeypatch.setattr(pipeline, "_run_sandbox_analysis_sync", generate)
+    result = pipeline.finalize_run_state(str(state_path))
+    assert len(calls) == (1 if writer_succeeds else 3)
+    if writer_succeeds:
+        assert result["terminal_status"] == "run_complete"
+        assert json.loads(destination.read_text()) == {"score": 0, "unknown": None}
+        assert pipeline.finalize_run_state(str(state_path))["terminal_status"] == "run_complete"
+        assert len(calls) == 1
+    else:
+        assert result["terminal_status"] == "fatal" and result["integrity"]["ok"] is False
+        assert "requested_output_delivery_failed" in result["integrity"]["blocking_errors"]
+
+
 def test_supplied_panel_schema_reaches_analysis_without_treating_outputs_as_inputs(tmp_path):
     source = tmp_path / "observations.csv"
     source.write_text("candidate_id,measured_hits,other_bin\nA,0,\nB,1,2\n")
@@ -267,12 +295,15 @@ def test_failed_custom_design_writer_delivers_only_same_producer_native_files(tm
     assert "scientific review" in delivery["limitation"]
 
 
-def test_only_missing_outputs_are_generated_and_completed_outputs_are_protected(tmp_path, monkeypatch):
+def test_only_missing_outputs_are_generated_and_attested_outputs_are_protected(tmp_path, monkeypatch):
     run, state = setup_completed_analysis(tmp_path)
     existing = run / "already_delivered.json"
     existing.write_text('{"measured_value": 9}')
-    original = existing.read_bytes()
     state["request_envelope"]["final_outputs"].append({"kind": "result", "task_id": "a", "path": str(existing)})
+    monkeypatch.setattr(pipeline, "_run_sandbox_analysis_sync", export_program)
+    assert pipeline._materialize_requested_final_outputs(state, str(run))["ok"]
+    original = existing.read_bytes()
+    (run / "requested.json").unlink()
     calls = []
     def generate(payload):
         calls.append(payload)

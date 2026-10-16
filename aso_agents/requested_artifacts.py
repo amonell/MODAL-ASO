@@ -16,6 +16,15 @@ NATIVE_EXPORT_FORMATS = {
 }
 
 
+def requested_artifact_sha256(path: Path) -> str:
+    """Bind a completed delivery to bytes, independently of file timestamps."""
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def requested_file_destination(spec: dict, path: Path) -> Path:
     """Give a directory request a concrete, producer-bound filename.
 

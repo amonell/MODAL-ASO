@@ -32871,16 +32871,25 @@ def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[s
 def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) -> Dict[str, Any]:
     """Render explicit files from native results without replacing those results."""
     from .analysis_execution import execute_analysis_program
-    from .requested_artifacts import requested_artifact_errors, native_export_key, copy_native_export
+    from .requested_artifacts import (
+        requested_artifact_errors, requested_artifact_sha256,
+        native_export_key, copy_native_export,
+    )
     envelope = state.get("request_envelope") or {}
     requested = _requested_output_paths(run_dir, envelope.get("final_outputs"))
     directory = _write_run_path(run_dir, "requested_artifacts")
     receipt_path = directory / "delivery.json"
     prior_delivery = _read_json(receipt_path) if receipt_path.is_file() else {}
-    # A failed generated program can leave partial files, so its receipt is
-    # binding unless a later completed native task independently attests the
-    # exact requested path. This permits real task outputs to supersede an
-    # earlier failed writer without accepting partial generated files.
+    # A generic exporter or failed program may already have created these
+    # paths without satisfying the custom output contract. Reuse requires a
+    # completed analysis task or a successful delivery of the same bytes for
+    # this request. File existence alone must not bypass content review.
+    contract_sha256 = hashlib.sha256(json.dumps({
+        "request_text": str(state.get("request") or ""),
+        "request_envelope": envelope,
+    }, sort_keys=True).encode()).hexdigest()
+    prior_verified = (prior_delivery.get("ok") is True
+                      and prior_delivery.get("contract_sha256") == contract_sha256)
     completed_native_paths: Set[str] = set()
     tasks_by_id = {
         str(task.get("task_id") or ""): task
@@ -32898,7 +32907,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                               task_id)
         status_path = task_root / "task_status.json"
         status = _read_json(status_path) if status_path.is_file() else {}
-        if status.get("task_id") != task_id or status.get("status") != "report_ready":
+        if (status.get("task_id") != task_id
+                or status.get("status") not in {"sandbox_analysis_ready", "report_ready", "completed"}):
             continue
         artifact_paths = {
             str(value) for key, value in (status.get("artifacts") or {}).items()
@@ -32907,10 +32917,12 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
         for path in _requested_output_paths(run_dir, [spec]):
             if str(path) in artifact_paths and not requested_artifact_errors([path]):
                 completed_native_paths.add(str(path))
-    pending = [path for path in requested if requested_artifact_errors([path])
-               or (prior_delivery.get("ok") is False
-                   and str(path) in prior_delivery.get("attempted_paths", [])
-                   and str(path) not in completed_native_paths)]
+    current_hashes = {str(path): requested_artifact_sha256(path) for path in requested
+                      if not requested_artifact_errors([path])}
+    pending = [path for path in requested if str(path) not in current_hashes
+               or (str(path) not in completed_native_paths
+                   and (not prior_verified or (prior_delivery.get("output_sha256") or {}).get(str(path))
+                        != current_hashes[str(path)]))]
     if not requested or not pending:
         return {"ok": True, "already_present": True, "paths": [str(path) for path in requested]}
     directory.mkdir(parents=True, exist_ok=True)
@@ -32954,6 +32966,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
         receipt = {"ok": True, "paths": [str(path) for path in requested],
                    "attempted_paths": [str(path) for path in attempted_paths],
                    "native_exports": native_exports, "execution_attempts": [], "validation_errors": []}
+        receipt.update(contract_sha256=contract_sha256,
+                       output_sha256={str(path): requested_artifact_sha256(path) for path in requested})
         receipt_path.write_text(json.dumps(receipt, indent=2))
         return receipt
     prior_attempts = [p for p in (directory / "execution_attempts").glob("*") if p.is_dir() and p.name.isdigit()]
@@ -33109,6 +33123,9 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                "limitation": ("Native files delivered after custom writer failure; requested custom "
                               "content remains subject to scientific review.") if fallback_complete else None,
                "result_path": str(directory / "sandbox_result.json")}
+    if receipt["ok"]:
+        receipt.update(contract_sha256=contract_sha256,
+                       output_sha256={str(path): requested_artifact_sha256(path) for path in requested})
     (directory / "delivery.json").write_text(json.dumps(receipt, indent=2))
     return receipt
 
@@ -56265,7 +56282,9 @@ def finalize_run_state(state_path: str) -> Dict[str, Any]:
     artifacts = _discover_core_artifacts(run_dir)
     integrity = _extract_pipeline_integrity(run_dir, artifacts, skip_router=skip_router)
     blocking_outputs = integrity.get("blocking_errors") or []
-    if any(error.startswith("requested_output_") for error in blocking_outputs):
+    requested_outputs = _requested_output_paths(
+        run_dir, (state.get("request_envelope") or {}).get("final_outputs"))
+    if requested_outputs or any(error.startswith("requested_output_") for error in blocking_outputs):
         try:
             delivery = _materialize_requested_final_outputs(state, run_dir)
         except Exception as exc:
@@ -56275,6 +56294,7 @@ def finalize_run_state(state_path: str) -> Dict[str, Any]:
             integrity = _extract_pipeline_integrity(run_dir, artifacts, skip_router=skip_router)
         else:
             integrity["blocking_errors"].append("requested_output_delivery_failed")
+            integrity["ok"] = False
     state["artifacts"] = artifacts
     state["integrity"] = integrity
     if integrity.get("ok"):

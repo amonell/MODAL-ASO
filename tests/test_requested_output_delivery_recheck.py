@@ -1,11 +1,13 @@
 """A failed earlier delivery receipt cannot invalidate later completed files."""
 
 import json
+import pytest
 
 from aso_agents.pipeline_tools import _materialize_requested_final_outputs, _run_path
 
 
-def test_completed_native_outputs_supersede_failed_delivery_receipt(tmp_path):
+@pytest.mark.parametrize("completed_status", ["report_ready", "sandbox_analysis_ready", "completed"])
+def test_completed_native_outputs_supersede_failed_delivery_receipt(tmp_path, completed_status):
     csv_path = tmp_path / "comparison.csv"
     markdown_path = tmp_path / "comparison.md"
     csv_path.write_text("id,result\nA,ok\n")
@@ -20,7 +22,7 @@ def test_completed_native_outputs_supersede_failed_delivery_receipt(tmp_path):
     task_root = _run_path(str(tmp_path), "v3_tasks", "analysis")
     task_root.mkdir(parents=True)
     (task_root / "task_status.json").write_text(json.dumps({
-        "task_id": "analysis", "status": "report_ready",
+        "task_id": "analysis", "status": completed_status,
         "artifacts": {"requested_export_1": str(csv_path),
                       "requested_export_2": str(markdown_path)},
     }))
