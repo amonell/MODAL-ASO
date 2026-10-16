@@ -32811,7 +32811,9 @@ def _composite_design_output_producer(task, tasks_by_id, spec, destination, key)
     return next(iter(selected)) if len(selected) == 1 else None
 
 
-def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _bounded_completed_evaluation_evidence(
+    state: Dict[str, Any], *, evidence_directory: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
     """Carry attested per-molecule measurements to downstream report writers."""
     _, completed_tasks = _collect_completed_task_outputs(state)
     task_artifacts = state.get("task_artifacts") if isinstance(state.get("task_artifacts"), dict) else {}
@@ -32852,19 +32854,26 @@ def _bounded_completed_evaluation_evidence(state: Dict[str, Any]) -> List[Dict[s
                 "near_match_candidates_preview_truncated": len(near) > 3,
                 "off_target_count_scope": row.get("off_target_count_scope"),
             })
-        evaluation_evidence.append({
+        entry = {
             "task_id": task.get("task_id"),
             "context_summary": source.get("context_summary"),
             "total_rows": len(source["provided_asos"]),
             "rows_truncated": len(source["provided_asos"]) > len(rows),
             "source_json_path": str(
-                (task_artifacts.get(task.get("task_id")) or {}).get("json") or ""
+                (task_artifacts.get(task.get("task_id")) or {}).get("json")
+                or (task_artifacts.get(task.get("task_id")) or {}).get("response_json") or ""
             ),
             "rows": rows,
-            "reference_projection": projection,
             "reference_projection_is_complete": True,
             "reference_projection_scope": "All supplied observations and all retained alignment records. This does not establish exhaustive reference search coverage; retain each recorded search_scope.",
-        })
+            "preview_count_scope": "Counts describe recorded observations across reference groups, RNA contexts, orientations and mismatch criteria. They are not the expected count for a requested subset or a newly computed search.",
+        }
+        if evidence_directory is None:
+            entry["reference_projection"] = projection
+        else:
+            from .output_evidence import store_reference_projection
+            entry["reference_projection_file"] = store_reference_projection(projection, evidence_directory)
+        evaluation_evidence.append(entry)
     return evaluation_evidence
 
 
@@ -32974,6 +32983,15 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
     if len(prior_attempts) >= 3:
         return {"ok": False, "error": "requested_output_execution_budget_exhausted"}
     declared = _build_sandbox_declared_inputs(state, envelope)
+    # Inputs can belong to individual task contexts rather than the outer
+    # envelope. Retain those producer boundaries and actual source schemas;
+    # the writer must not reconstruct them from a prose result or a sibling.
+    declared["task_inputs"] = [
+        {"task_id": task_id, "task_type": task.get("task_type"),
+         "declared_inputs": _build_sandbox_declared_inputs(
+             {}, _task_scoped_request_envelope(envelope, task))}
+        for task_id, task in tasks_by_id.items()
+    ]
     # Generated code reads this manifest at runtime. Keep its task-scoped
     # native catalog identical to the catalog supplied to the model below;
     # core-artifact inventories need not contain every final export source.
@@ -33006,9 +33024,20 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
     # and prose report can omit reference identity, exon membership or exact
     # mapping coordinates even though the completed evaluation recorded them.
     # Keep this bounded per molecule; full alignment catalogs stay on disk.
-    evaluation_evidence = _bounded_completed_evaluation_evidence(state)
+    evaluation_evidence = _bounded_completed_evaluation_evidence(
+        state, evidence_directory=directory / "evaluation_observations")
     if evaluation_evidence:
         declared["completed_run"]["evaluation_evidence"] = evaluation_evidence
+    evaluation_sources = [Path(entry["reference_projection_file"]["path"])
+                          for entry in evaluation_evidence if entry.get("reference_projection_file")]
+    supplied_sources = [
+        Path(item["path"])
+        for inputs in [declared, *(entry["declared_inputs"] for entry in declared["task_inputs"])]
+        for key in ("artifact_refs", "provided_input_files")
+        for item in inputs.get(key) or []
+        if isinstance(item, dict) and item.get("path") and Path(item["path"]).is_file()
+        and (key != "artifact_refs" or Path(item["path"]) not in requested)
+    ]
     from .design_export_evidence import design_export_evidence
     from .design_observation_tables import write_design_observations
     design_evidence = []
@@ -33081,6 +33110,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             + [Path(path) for catalog in native_sources.values() for path in catalog.values()
                if Path(path) not in pending]
             + [Path(source["path"]) for evidence in design_evidence for source in evidence["sources"]]
+            + evaluation_sources + supplied_sources
             + ([Path(design_catalog["path"])] if design_catalog else []))),
         max_attempts=3 - len(prior_attempts),
     )

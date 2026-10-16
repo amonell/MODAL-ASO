@@ -1,4 +1,7 @@
 from copy import deepcopy
+import hashlib
+import json
+from pathlib import Path
 
 from aso_agents import pipeline_tools as pipeline
 from aso_agents.reference_report_projection import evaluation_projection
@@ -55,3 +58,35 @@ def test_export_preview_is_bounded_but_complete_projection_keeps_all_records(mon
     assert row['near_match_candidates'][0]['mismatch_details_in_target_orientation'] == source['provided_asos'][0]['near_match_candidates'][0]['mismatch_details_in_target_orientation']
     assert len(evidence['reference_projection'][0]['reference_alignment_groups'][0]['near_alignments']) == 7
     assert 'exhaustive' in evidence['reference_projection_scope']
+
+
+def test_complete_projection_file_preserves_all_records_outside_prompt(tmp_path, monkeypatch):
+    source = sample()
+    source['provided_asos'][0]['near_match_candidates'] *= 100
+    before = deepcopy(source)
+    monkeypatch.setattr(pipeline, '_collect_completed_task_outputs', lambda _: ({}, [{
+        'task_type': 'evaluate_existing_aso_set', 'task_id': 'eval', 'payload': source}]))
+    state = {'task_artifacts': {'eval': {'response_json': '/source/completed.json'}}}
+    entry = pipeline._bounded_completed_evaluation_evidence(state, evidence_directory=tmp_path)[0]
+    assert 'reference_projection' not in entry
+    record = entry['reference_projection_file']; path = Path(record['path'])
+    assert path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == record['sha256']
+    assert json.loads(path.read_text()) == evaluation_projection(source)
+    assert len(json.loads(path.read_text())[0]['reference_alignment_groups'][0]['near_alignments']) == 700
+    assert len(json.dumps(entry)) < path.stat().st_size / 10
+    assert entry['source_json_path'] == '/source/completed.json'
+    assert len(entry['rows'][0]['near_match_candidates']) == 3
+    assert entry['rows'][0]['near_match_candidates_total'] == 700
+    assert source == before
+    again = pipeline._bounded_completed_evaluation_evidence(state, evidence_directory=tmp_path)[0]
+    assert again['reference_projection_file'] == record
+
+
+def test_changed_evidence_file_is_not_silently_reused(tmp_path):
+    from aso_agents.output_evidence import store_reference_projection
+    import pytest
+    projection = evaluation_projection(sample())
+    record = store_reference_projection(projection, tmp_path)
+    Path(record['path']).write_text('[]')
+    with pytest.raises(ValueError, match='evidence changed'):
+        store_reference_projection(projection, tmp_path)
