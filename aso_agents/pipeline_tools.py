@@ -28381,7 +28381,14 @@ def _apply_generated_candidate_limit(
         indexed_rows = _sort_generated_candidate_indexed_rows(grouped.get(label, []))
         limits = [value for value in (candidate_limit, (group_limits or {}).get(label)) if value is not None]
         group_limit = min(limits) if limits else None
-        selected = indexed_rows if group_limit is None else indexed_rows[:group_limit]
+        if diversify:
+            from .target_accessibility import select_panel_rows
+            chosen = select_panel_rows(
+                [row for _, row in indexed_rows], group_limit or len(indexed_rows), diversify=True)
+            positions = {id(row): idx for idx, row in indexed_rows}
+            selected = [(positions[id(row)], row) for row in chosen]
+        else:
+            selected = indexed_rows if group_limit is None else indexed_rows[:group_limit]
         selected_indexed.extend(selected)
         shortfall = 0
         if group_limit is not None:
@@ -28404,7 +28411,8 @@ def _apply_generated_candidate_limit(
     global_selection: Dict[str, Any] = {}
     if global_candidate_limit is not None:
         selected_rows, global_selection = _apply_generated_candidate_limit(
-            selected_rows, candidate_limit=global_candidate_limit, per_site=False)
+            selected_rows, candidate_limit=global_candidate_limit, per_site=False,
+            diversify=diversify, candidate_minimum=candidate_minimum)
         for group in groups_summary:
             count = sum(_generated_candidate_group_label(row, group_scope=group_scope) == group["group_label"]
                         for row in selected_rows)
@@ -28413,7 +28421,8 @@ def _apply_generated_candidate_limit(
             group["shortfall_count"] = max(0, (group["candidate_limit"] or 0) - count)
     return selected_rows, {
         "status": "complete",
-        "method": "top_ranked_after_required_evidence_and_constraints_per_site",
+        "method": ("ranked_diverse_targets_per_site_then_global_diversity"
+                   if diversify else "top_ranked_after_required_evidence_and_constraints_per_site"),
         "selection_scope": "per_site",
         "group_scope": group_scope,
         "candidate_limit": candidate_limit,
