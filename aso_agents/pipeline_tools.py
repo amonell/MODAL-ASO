@@ -32881,6 +32881,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
     if evaluation_evidence:
         declared["completed_run"]["evaluation_evidence"] = evaluation_evidence
     from .design_export_evidence import design_export_evidence
+    from .design_observation_tables import write_design_observations
     design_evidence = []
     for task_id, task in tasks_by_id.items():
         if task.get("task_type") != "design_new_asos":
@@ -32891,7 +32892,14 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             design_evidence.append({"task_id": task_id, "sources": [], "resolution_error": str(exc)})
             continue
         if producer is not None:
-            design_evidence.append(design_export_evidence(task_id, producer, _run_path))
+            evidence = design_export_evidence(task_id, producer, _run_path)
+            observations = write_design_observations(
+                evidence, directory / "design_observations",
+                _goal_runtime_module()._tile_row_overlap_intervals)
+            if observations:
+                evidence["observations"] = observations
+                evidence["sources"].append(observations)
+            design_evidence.append(evidence)
     if design_evidence:
         declared["completed_run"]["design_evidence"] = design_evidence
     # The file inventory identifies the native report but does not convey its
