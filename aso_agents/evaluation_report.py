@@ -8,6 +8,7 @@ import uuid
 
 from .input_rows import assessment_row_lookup
 from .sequence_orientation import preferred_binding_hits
+from .splice_prediction_records import METRICS, splice_prediction_records
 
 
 EVIDENCE_FILE = "evaluation_evidence.html"
@@ -71,6 +72,47 @@ def _cell(value):
     return str(value if value is not None else "unavailable").replace("|", "\\|").replace("\n", " ")
 
 
+def splice_prediction_tables(rows):
+    """Render every saved site record directly, independently of model prose."""
+    scoped = [(row, splice_prediction_records(row)) for row in rows]
+    if not any(records for _, records in scoped):
+        return []
+    lines = ['', '## Recorded splice predictions', '',
+             'These are computational perturbation deltas, not measured ASO activity. '
+             'Summary and individual site records have separate scope. Missing values remain unrecorded; '
+             'zero is a recorded prediction. Repeated records are retained and do not imply distinct junctions.', '']
+    metric_labels = {
+        'delta_acceptor_deletion': 'Acceptor Δ deletion',
+        'delta_acceptor_replacement': 'Acceptor Δ replacement',
+        'delta_donor_deletion': 'Donor Δ deletion',
+        'delta_donor_replacement': 'Donor Δ replacement',
+        'delta_inclusion_deletion': 'Inclusion proxy Δ deletion',
+        'delta_inclusion_replacement': 'Inclusion proxy Δ replacement',
+    }
+    for row, records in scoped:
+        if not records:
+            continue
+        anchor = 'row-' + str(row.get('input_row_id') or row.get('name'))
+        lines.extend(['', '### ' + str(row.get('name') or row.get('input_row_id') or 'ASO'), '',
+                      evidence_link('Reference geometry and complete prediction records', anchor), ''])
+        fields = [key for key in METRICS if any(key in record['numeric_measurements'] or
+                  key in record['unrecorded_metric_fields'] for record in records)]
+        headers = ['Record', 'Recorded labels', 'Exon index', 'Reference transcript', 'Reference binding', 'Recorded status']
+        headers += [metric_labels.get(key, key) for key in fields]
+        lines.extend(['| ' + ' | '.join(headers) + ' |', '| ' + ' | '.join(['---'] * len(headers)) + ' |'])
+        for number, record in enumerate(records):
+            identity = record['recorded_identity']
+            record_labels = [key + ': ' + str(identity[key]) for key in
+                      ('label', 'primary_label', 'selected_label') if identity.get(key) is not None]
+            values = ['Summary' if number == 0 else record['source_field'].split('.')[-1], '; '.join(record_labels) or None,
+                      identity.get('exon_index'), identity.get('reference_transcript_id') or identity.get('isoform_label'),
+                      identity.get('reference_binding_status'),
+                      identity.get('evaluation_status') or identity.get('splice_eval_status')]
+            values += [record['numeric_measurements'].get(key) for key in fields]
+            lines.append('| ' + ' | '.join(_cell(value) for value in values) + ' |')
+    return lines
+
+
 def evaluation_markdown(response, summary):
     rows = summary.get("provided_asos") or []
     resolve = assessment_row_lookup(rows)
@@ -90,6 +132,7 @@ def evaluation_markdown(response, summary):
                   len(exact), min(mismatches) if mismatches else None,
                   row.get("off_target_gene_count"), row.get("off_target_count_status") or "not attested"]
         lines.append("| " + " | ".join(_cell(value) for value in values) + " |")
+    lines.extend(splice_prediction_tables(rows))
     lines.extend(["", "## Reference context", ""])
     for key, value in (summary.get("context_summary") or {}).items():
         rendered = evidence_link(key.replace("_", " "), "context_summary") if isinstance(value, (dict, list)) else str(value)

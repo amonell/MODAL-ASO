@@ -201,6 +201,23 @@ def attach_measurement_references(summary):
             evidence[ref] = {"name": row.get("name"), "input_row_id": row.get("input_row_id"), "field": "splice_eval_summary." + field, "value": deepcopy(value)}
             refs[field] = "{{" + ref + "}}"
         row["measurement_tokens"] = refs
+        from .splice_prediction_records import splice_prediction_records
+        prediction_records = splice_prediction_records(row)
+        for record_index, record in enumerate(prediction_records):
+            tokens = {}
+            for field, value in record['numeric_measurements'].items():
+                if record['source_field'] == 'splice_eval_summary':
+                    tokens[field] = refs[field]
+                    continue
+                ref = f'M{index + 1:03d}_splice_record_{record_index:03d}_{field}'
+                evidence[ref] = {
+                    'name': row.get('name'), 'input_row_id': row.get('input_row_id'),
+                    'field': record['source_field'] + '.' + field, 'value': value,
+                    'recorded_identity': deepcopy(record['recorded_identity']),
+                }
+                tokens[field] = '{{' + ref + '}}'
+            record['measurement_tokens'] = tokens
+        row['recorded_splice_predictions'] = prediction_records
         reference_tokens = {}
         # Genomic coordinates are reference facts, not generated narrative.
         # Bind a whole interval so endpoints and the coordinate convention travel together.
