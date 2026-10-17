@@ -4,6 +4,7 @@ Run as a script so the analysis interpreter needs no application installation.
 Local variable values are not recorded; names, types and array shapes suffice
 to diagnose scalar/Series and numeric/string boundary errors.
 """
+import ast
 import json
 from pathlib import Path
 import runpy
@@ -75,6 +76,60 @@ def describe(value, *, depth=0, seen=None):
     return result
 
 
+def definition_order_context(code_path, exc):
+    """Explain an observed missing global whose definition has not been reached.
+
+    This is diagnostic context for the existing repair loop, not a speculative
+    execution-order validator. A forward reference in a deferred function body
+    is valid when the module finishes binding the helper before calling it.
+    Only an actual NameError at a generated source name load is considered.
+    """
+    if not isinstance(exc, NameError) or isinstance(exc, UnboundLocalError):
+        return None
+    name = getattr(exc, 'name', None)
+    frames = list(traceback.walk_tb(exc.__traceback__))
+    if not name or not frames:
+        return None
+    use_frame, use_line = frames[-1]
+    if (Path(use_frame.f_code.co_filename).resolve() != code_path
+            or name in use_frame.f_globals):
+        return None
+    module_lines = [line for frame, line in frames
+                    if Path(frame.f_code.co_filename).resolve() == code_path
+                    and frame.f_code.co_name == '<module>']
+    if not module_lines:
+        return None
+    try:
+        tree = ast.parse(code_path.read_text())
+    except (OSError, UnicodeError, SyntaxError):
+        return None  # Never obscure the original exception with a diagnostic.
+    definitions = [node for node in tree.body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                   and node.name == name]
+    if len(definitions) != 1 or definitions[0].lineno <= module_lines[-1]:
+        return None
+    # Explicitly raising a NameError is not evidence of a failed name lookup.
+    if not any(isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+               and node.id == name and node.lineno <= use_line <= node.end_lineno
+               for node in ast.walk(tree)):
+        return None
+    definition = definitions[0]
+    return {
+        'name': name, 'use_line': use_line,
+        'module_execution_line': module_lines[-1],
+        'definition_line': definition.lineno,
+        'definition_kind': type(definition).__name__,
+        'repair_instruction':
+            f"The failing global {name!r} is referenced at line {use_line}, while module "
+            f"execution is still at line {module_lines[-1]}. Its top-level definition "
+            f"at line {definition.lineno} has not been reached. Arrange for the definition "
+            "and its dependencies to execute before this module-level invocation. "
+            "Changing only the helper body does not repair this execution order. "
+            "Preserve the requested calculations, inputs and definition semantics; "
+            "do not drop the call or substitute empty results.",
+    }
+
+
 def execute(code_path, diagnostic_path):
     code_path = Path(code_path).resolve()
     # Match direct `python generated_code.py` execution. The diagnostic wrapper's
@@ -94,6 +149,9 @@ def execute(code_path, diagnostic_path):
                                "local_types": {name: describe(value) for name, value in frame.f_locals.items()
                                                if not name.startswith("__")}})
         record = {"exception_type": type(exc).__name__, "message": str(exc), "frames": frames}
+        order = definition_order_context(code_path, exc)
+        if order is not None:
+            record['definition_order'] = order
         if isinstance(exc, SyntaxError):
             record["syntax_location"] = {"line": exc.lineno, "offset": exc.offset}
         Path(diagnostic_path).write_text(json.dumps(record, indent=2))

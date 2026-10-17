@@ -10,6 +10,16 @@ because a lexical check cannot resolve their bindings reliably. This check does
 not prove dependency installation, execution order, reachability or scientific
 correctness. Syntax errors also enter the normal execution-repair path.
 
+After an actual `NameError`, the runtime can identify a referenced global with
+a later top-level function or class definition. Its value-free diagnostic
+records the use, active module invocation and definition line numbers, and
+explains that the definition must execute before the invocation. The existing
+repair loop receives that context with the original program and traceback;
+the host does not move definitions, alter calculations or add attempts. Valid
+deferred references, missing definitions, external-module faults and local
+binding errors are not labeled as this ordering defect. This is a narrow
+explanation of an observed error, not a complete Python execution-order proof.
+
 Each execution attempt must create its declared outputs. Before execution, any
 existing result JSON, summary and explicitly requested output files are copied
 to that attempt's `previous_outputs` directory. Their bytes and provenance are
