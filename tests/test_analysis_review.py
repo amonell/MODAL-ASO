@@ -34,11 +34,11 @@ def program(total_expression):
     )
 
 
-def execute(tmp_path, generate, review, max_attempts=2):
+def execute(tmp_path, generate, review, max_attempts=2, **kwargs):
     return execute_analysis_program(
         directory=tmp_path, payload={"request_text": REQUEST},
         generate=generate, review_program=review,
-        required_outputs=[tmp_path / "totals.json"], max_attempts=max_attempts)
+        required_outputs=[tmp_path / "totals.json"], max_attempts=max_attempts, **kwargs)
 
 
 def test_actual_output_finding_repairs_program_and_preserves_first_attempt(tmp_path):
@@ -112,6 +112,151 @@ def test_persistent_omission_stops_at_existing_attempt_bound(tmp_path):
                                       "checks": [finding()]})
     assert not result["ok"] and len(result["attempts"]) == 2
     assert all(a["contract_review"]["status"] == "needs_repair" for a in result["attempts"])
+
+
+def reviewed_sequence(tmp_path, codes, **kwargs):
+    requests, reviews = [], []
+
+    def generate(payload):
+        requests.append(payload)
+        return {"python_code": codes[len(requests) - 1]}
+
+    def review(payload):
+        reviews.append(payload)
+        actual = json.loads(Path(payload["output_paths"][0]).read_text())
+        return {"program_sha256": payload["program_sha256"],
+                "checks": [satisfied()] if actual["total"] == 5 else [finding()]}
+
+    result = execute(tmp_path, generate, review, **kwargs)
+    return result, requests, reviews
+
+
+@pytest.mark.parametrize("repaired", [True, False])
+def test_late_first_review_gets_one_bounded_repair(tmp_path, repaired):
+    broken = "raise ValueError('execution failed')"
+    incomplete = program("sum(values[:1])")
+    final = program("sum(values)") if repaired else incomplete
+    result, requests, reviews = reviewed_sequence(
+        tmp_path, [broken, broken, incomplete, final], max_attempts=3,
+        first_review_repair=True)
+    assert result["ok"] is repaired
+    assert len(requests) == 4 and len(reviews) == 2
+    assert [a["attempt"] for a in result["attempts"]] == [1, 2, 3, 4]
+    assert result["attempts"][2]["first_review_repair"]["authorized_attempt"] == 4
+    assert result["attempts"][3]["review_repair_from_attempt"] == 3
+    assert REQUEST in requests[3]["execution_repair"]["error"]
+    assert requests[3]["execution_repair"]["previous_code"] == incomplete.strip()
+    archived = result["attempts"][3]["previous_output_archives"]
+    original = next(item for item in archived if item["path"].endswith("totals.json"))
+    assert json.loads(Path(original["archive"]).read_text())["total"] == 2
+    assert json.loads((tmp_path / "execution_attempts/03/contract_review.json").read_text())["status"] == "needs_repair"
+
+
+@pytest.mark.parametrize("early_review", [True, False])
+def test_extra_attempt_requires_first_review_at_regular_limit(tmp_path, early_review):
+    broken = "raise ValueError('execution failed')"
+    codes = [program("sum(values[:1])") if early_review else broken, broken, broken]
+    result, requests, reviews = reviewed_sequence(
+        tmp_path, codes, max_attempts=3, first_review_repair=True)
+    assert not result["ok"] and len(requests) == 3
+    assert len(reviews) == int(early_review)
+    assert not any(a.get("first_review_repair") for a in result["attempts"])
+
+
+def test_late_review_does_not_extend_default_budget(tmp_path):
+    broken = "raise ValueError('execution failed')"
+    result, requests, _ = reviewed_sequence(
+        tmp_path, [broken, broken, program("sum(values[:1])")], max_attempts=3)
+    assert not result["ok"] and len(requests) == 3
+
+
+def test_one_attempt_without_earlier_failure_cannot_extend_budget(tmp_path):
+    result, requests, _ = reviewed_sequence(
+        tmp_path, [program("sum(values[:1])")], max_attempts=1,
+        first_review_repair=True)
+    assert not result["ok"] and len(requests) == 1
+
+
+def test_readonly_violation_cannot_authorize_extra_attempt(tmp_path):
+    original = tmp_path / "original.csv"
+    original.write_text("value\n5\n")
+    changed = program("sum(values[:1])") + "Path('original.csv').write_text('changed')\n"
+    result, requests, _ = reviewed_sequence(
+        tmp_path, ["raise ValueError('execution failed')", changed],
+        first_review_repair=True, readonly_outputs=[original])
+    assert not result["ok"] and len(requests) == 2
+    assert original.read_text() == "value\n5\n"
+    assert result["attempts"][-1]["restored_output_paths"] == [str(original)]
+    assert "first_review_repair" not in result["attempts"][-1]
+
+
+def test_persisted_first_review_cannot_grant_another_allowance(tmp_path):
+    incomplete = program("sum(values[:1])")
+    first, _, _ = reviewed_sequence(tmp_path, [incomplete], max_attempts=1)
+    original = (tmp_path / "execution_attempts/01/execution.json").read_bytes()
+    assert not first["ok"]
+    result, requests, _ = reviewed_sequence(
+        tmp_path, ["raise ValueError('execution failed')", incomplete],
+        first_review_repair=True)
+    assert not result["ok"] and len(requests) == 2
+    assert [a["attempt"] for a in result["attempts"]] == [2, 3]
+    assert (tmp_path / "execution_attempts/01/execution.json").read_bytes() == original
+
+
+def test_persisted_execution_failures_allow_late_first_review_repair(tmp_path):
+    broken = "raise ValueError('execution failed')"
+    reviewed_sequence(tmp_path, [broken, broken])
+    result, requests, reviews = reviewed_sequence(
+        tmp_path, [program("sum(values[:1])"), program("sum(values)")],
+        max_attempts=1, first_review_repair=True)
+    assert result["ok"] and len(requests) == len(reviews) == 2
+    assert [a["attempt"] for a in result["attempts"]] == [3, 4]
+
+
+def test_incomplete_persisted_history_cannot_extend_budget(tmp_path):
+    prior = tmp_path / "execution_attempts/01"
+    prior.mkdir(parents=True)
+    result, requests, _ = reviewed_sequence(
+        tmp_path, ["raise ValueError('execution failed')", program("sum(values[:1])")],
+        first_review_repair=True)
+    assert not result["ok"] and len(requests) == 2
+
+
+@pytest.mark.real_runtime
+def test_requested_delivery_uses_late_review_repair_without_bypassing_review(tmp_path, monkeypatch):
+    from aso_agents import pipeline_tools as pipeline
+    intake = tmp_path / "artifacts/intake"
+    intake.mkdir(parents=True)
+    (intake / "structured_goal.json").write_text("{}")
+    output = tmp_path / "totals.json"
+    requests, reviews = [], []
+
+    def generate(payload):
+        requests.append(payload)
+        if len(requests) < 3:
+            return {"python_code": "raise ValueError('execution failed')"}
+        expression = "sum(values[:1])" if len(requests) == 3 else "sum(values)"
+        code = program(expression).replace("Path('totals.json')", f"Path({str(output)!r})")
+        return {"python_code": code}
+
+    def review(payload):
+        reviews.append(payload)
+        total = json.loads(output.read_text())["total"]
+        return {"program_sha256": payload["program_sha256"],
+                "checks": [satisfied()] if total == 5 else [finding()]}
+
+    monkeypatch.setattr(pipeline, "_run_sandbox_analysis_sync", generate)
+    monkeypatch.setattr(pipeline, "_run_analysis_contract_review_sync", review)
+    state = {"request": REQUEST, "request_envelope": {
+        "schema_version": "v3", "tasks": [{"task_id": "sum", "task_type": "sandbox_analysis"}],
+        "final_outputs": [{"path": str(output), "kind": "custom", "task_id": "sum"}]}}
+    result = pipeline._materialize_requested_final_outputs(state, str(tmp_path))
+    assert result["ok"] and json.loads(output.read_text())["total"] == 5
+    assert len(requests) == 4 and len(reviews) == 2
+    assert len(result["execution_attempts"]) == 4
+    # Rechecking successful delivery neither rewrites the files nor remints a budget.
+    assert pipeline._materialize_requested_final_outputs(state, str(tmp_path))["already_present"]
+    assert len(requests) == 4
 
 
 def test_quoted_and_unquoted_findings_are_kept_separate():

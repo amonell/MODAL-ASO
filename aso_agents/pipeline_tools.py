@@ -33266,6 +33266,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                  "resource_limits": {"timeout_seconds": None}, "require_tabular_report_views": True},
         generate=_run_sandbox_analysis_sync, required_outputs=pending,
         review_program=_run_analysis_contract_review_sync,
+        first_review_repair=True,
         readonly_outputs=list(dict.fromkeys(
             [path for path in requested if path not in pending]
             + [Path(path) for catalog in native_sources.values() for path in catalog.values()
@@ -45807,6 +45808,7 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
         },
         generate=_run_sandbox_analysis_sync,
         review_program=_run_analysis_contract_review_sync,
+        first_review_repair=True,
         required_outputs=requested_paths,
         readonly_outputs=source_tables,
         source_tables=source_tables,

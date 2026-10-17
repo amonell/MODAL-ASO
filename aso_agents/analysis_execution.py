@@ -206,12 +206,15 @@ def execute_analysis_program(
     source_tables: list[Path] | None = None,
     validate_result: Callable[[dict], None] | None = None,
     review_program: Callable[[dict], dict] | None = None,
+    first_review_repair: bool = False,
 ) -> dict:
     """Repair execution/serialization faults without substituting scientific data.
 
     Every generated program and error stays on disk. Success requires a valid
     result, an actual summary and all explicitly requested files. An exit-zero
-    program that only promises files is incomplete.
+    program that only promises files is incomplete. Opting into first-review
+    repair permits one additional attempt if earlier execution failures delay
+    the first actionable content review until the regular attempt limit.
     """
     directory = directory.resolve()
     required_outputs = [path.resolve() for path in required_outputs]
@@ -251,7 +254,27 @@ def execute_analysis_program(
     request['execution_contract'] = execution_contract
     previous = [int(p.name) for p in (directory / "execution_attempts").glob("*") if p.is_dir() and p.name.isdigit()]
     offset = max(previous, default=0)
-    for attempt in range(offset + 1, offset + max_attempts + 1):
+    review_seen, failed_execution_seen = False, False
+    for number in previous:
+        prior = directory / 'execution_attempts' / f'{number:02d}'
+        review_seen |= (prior / 'contract_review.json').exists()
+        try:
+            prior_receipt = json.loads((prior / 'execution.json').read_text())
+            if not isinstance(prior_receipt, dict):
+                raise ValueError('Invalid execution receipt')
+        except (OSError, ValueError):
+            # An incomplete history cannot prove this is the first review.
+            review_seen = True
+            continue
+        review_seen |= prior_receipt.get('contract_review') is not None or bool(prior_receipt.get('first_review_repair'))
+        failed_execution_seen |= bool(prior_receipt.get('error')
+                                      and prior_receipt.get('contract_review') is None
+                                      and not prior_receipt.get('restored_output_paths'))
+    regular_last_attempt = offset + max_attempts
+    extra_attempt_authorized = False
+    for attempt in range(offset + 1, regular_last_attempt + 1 + int(first_review_repair)):
+        if attempt > regular_last_attempt and not extra_attempt_authorized:
+            break
         local = directory / 'execution_attempts' / f'{attempt:02d}'
         local.mkdir(parents=True, exist_ok=False)
         protected = {}
@@ -448,6 +471,18 @@ def execute_analysis_program(
         if readonly_outputs:
             receipt['readonly_outputs'] = [str(p) for p in readonly_outputs]
             receipt['restored_output_paths'] = changed_readonly
+        if (first_review_repair and attempt == regular_last_attempt
+                and failed_execution_seen and not review_seen and not changed_readonly
+                and contract_review is not None and contract_review['findings']):
+            extra_attempt_authorized = True
+            receipt['first_review_repair'] = {
+                'authorized_attempt': attempt + 1,
+                'reason': 'Earlier execution failures delayed the first actionable content review until the regular attempt limit.',
+            }
+        if attempt > regular_last_attempt:
+            receipt['review_repair_from_attempt'] = regular_last_attempt
+        review_seen |= contract_review is not None
+        failed_execution_seen |= bool(error and contract_review is None and not changed_readonly)
         if error:
             receipt['workspace_files'] = [str(path.relative_to(directory)) for path in sorted(directory.rglob('*'))
                 if path.is_file() and not path.is_symlink()
