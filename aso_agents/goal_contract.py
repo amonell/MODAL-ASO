@@ -750,7 +750,7 @@ _SEQUENCE_CONSTRAINT_SCHEMA = {
 CANONICAL_GOAL_FIELD_SCHEMAS = {
     "num_mismatches": {"type": "integer", "minimum": 0, "description": "Explicit off-target substitution search budget. Preserve requested values, including zero; runtime supports 0 through 3 and must report larger requests as unsupported rather than silently reduce them."},
     "transcript_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": True,
-                       "description": "Required transcript cohort for this program. For a shared-sequence gapmer panel every selected target must match every member. Independent transcript panels use separate programs; alternative isoform directions use splice_isoform_objectives."},
+                       "description": "Required transcript cohort for this program. For a shared-sequence gapmer panel every selected target must match every member. Avoided or preserved transcripts belong in preservation_targets, and reference-only sequences in artifact_refs; neither is an additional required knockdown target. Independent transcript panels use separate programs; alternative isoform directions use splice_isoform_objectives."},
     "coordinate_space": {"type": "string", "enum": ["genomic", "cdna"]},
     "coordinate_convention": {"type": "string", "enum": ["bed0_half_open", "one_based_inclusive"]},
     "action": {"type": "string", "enum": ["preserve"]},
