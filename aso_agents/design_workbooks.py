@@ -266,7 +266,17 @@ class DesignWorkbook:
         if any(columns[name] != name for name in CORE_COLUMNS):
             raise ValueError("Core design columns cannot be rebound")
         if len(set(extra_columns)) != len(extra_columns) or set(columns).intersection(extra_columns):
-            raise ValueError("Extra columns must be unique and separate from source facts")
+            duplicates = sorted({name for name in extra_columns if extra_columns.count(name) > 1})
+            collisions = sorted(set(columns).intersection(extra_columns))
+            raise ValueError(
+                f"Extra columns must be unique and separate from source facts in table {title!r}. "
+                f"Duplicate extra-column names: {duplicates!r}. "
+                f"Source-column collisions: {collisions!r}. "
+                "Keep source columns renderer-owned: remove colliding names from both "
+                "extra_columns and each row's values. Put genuinely different derived "
+                "quantities under distinct extra-column names; do not relabel a derived "
+                "value as a recorded source fact. No columns or values were discarded."
+            )
         if title in self.workbook.sheetnames:
             raise ValueError("Duplicate design table sheet")
         if coverage not in {"subset", "all_raw", "all_final"}:
@@ -369,7 +379,17 @@ def render_design_workbook_plans(payload, result, required_outputs):
                             "borrow a representative candidate ID for a non-candidate row."
                         )
                     if not isinstance(extra, dict) or set(extra) - set(columns):
-                        raise ValueError("Workbook values must use declared extra_columns")
+                        location = f"design_workbooks[{workbook_index}].tables[{table_index}].rows[{row_index}].values"
+                        undeclared = sorted(set(extra) - set(columns)) if isinstance(extra, dict) else None
+                        raise ValueError(
+                            f"Workbook values must use declared extra_columns at {location}, "
+                            f"table {table.get('title')!r}. Undeclared column names: {undeclared!r}. "
+                            f"Declared extra_columns: {columns!r}. "
+                            "values must be an object. Declare each additional derived column "
+                            "once in extra_columns; for source_columns or core source facts, "
+                            "remove the duplicate value and let the renderer supply it. "
+                            "Do not remove required scientific information to bypass validation."
+                        )
                     rows.append(catalog[key])
                     values.append(extra)
                 writer.add_table(table["title"], rows, task_id=task_id,
