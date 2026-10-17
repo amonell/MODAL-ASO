@@ -650,6 +650,16 @@ CANONICAL_REGION_CONSTRAINT_FIELDS = frozenset(
     }
 )
 
+_MINIMUM_OVERLAP_SEMANTICS = (
+    "Threshold on the positive overlap predicate, evaluated before the constraint operator. "
+    "For any_overlap the predicate is overlap_nt >= minimum_overlap_bp; exclude negates it. "
+    "To allow at most M overlapping bases (M >= 0), use exclude, any_overlap and minimum_overlap_bp=M+1. "
+    "To require fewer than M overlapping bases (M > 0), the exclusion threshold is M. "
+    "An exclusion threshold of 1 forbids every overlap, including partial overlaps that a positive upper bound permits. "
+    "A minimum requested overlap uses the positive predicate with the requested threshold."
+)
+
+
 _REGION_CONSTRAINT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -672,7 +682,8 @@ _REGION_CONSTRAINT_SCHEMA = {
         },
         "isoform_label": {"type": "string"},
         "label": {"type": "string"},
-        "minimum_overlap_bp": {"type": "integer", "minimum": 1},
+        "minimum_overlap_bp": {"type": "integer", "minimum": 1,
+                               "description": _MINIMUM_OVERLAP_SEMANTICS},
         "mirna_binding": _MIRNA_BINDING_SCHEMA,
         "motif_tiling": _MOTIF_TILING_SCHEMA,
         "notes": {"type": "string"},
@@ -1071,7 +1082,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "isoform_scope_source": "Evidence provenance for the chosen isoform scope.",
     "junction_gapmers": "Requested gapmer targeting policy for transcript junctions.",
     "min_asos_per_site": "Minimum selected eligible molecules required for every independently requested target site. This is separate from complete library enumeration or annotation counts.",
-    "minimum_overlap_bp": "Minimum number of bases by which a candidate must overlap an allowed interval.",
+    "minimum_overlap_bp": _MINIMUM_OVERLAP_SEMANTICS,
     "mirna_binding": "Required miRNA-site overlap restricting candidate eligibility. Omit for annotation-only overlap analysis, which belongs in a downstream analysis task and must preserve the requested library.",
     "motif_tiling": "Required sequence-motif targeting that restricts candidate eligibility. Omit when motifs are only annotations on an otherwise complete library.",
     "off_target_expression": "Off-target expression analysis settings, including biological context.",
@@ -1454,6 +1465,10 @@ REGION_CONSTRAINT_SCOPE_INSTRUCTIONS = (
     "silently excludes a zero-overlap target that a local maximum-overlap rule permits, or a local union broadens a shared restriction. "
     "Do not infer scope from repeated coordinates, labels or a plausible biological relationship. Preserve genuinely shared filters "
     "and legitimate alternatives; correct model-authored scope errors through evidence-bound patches, not user clarification.\n"
+    + _MINIMUM_OVERLAP_SEMANTICS + " "
+    "Keep an upper overlap bound separate from any required covered feature or lower overlap bound. "
+    "Check the resulting Boolean predicate at zero overlap and at the requested bound and its adjacent integers. "
+    "An instruction not to cover an entire feature negates contains_feature; it does not necessarily forbid partial overlap.\n"
 )
 
 

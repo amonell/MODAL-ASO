@@ -1261,8 +1261,12 @@ def _apply_region_overlap_requirement_guard(intake_out: Dict[str, Any]) -> Dict[
         if not constraints:
             continue
         requirements, missing_requirement = _scope_requirement(constraints)
-        if missing_requirement or len(requirements) > 1:
+        if missing_requirement:
             return {"status": "need_clarification", "questions": [CONSTRAINT_OVERLAP_REQUIREMENT_QUESTION]}
+        if len(requirements) > 1:
+            # Different explicit predicates are a complete policy, not an
+            # ambiguity. Keep each rule rather than invent a shared default.
+            continue
         overlap_requirement = next(iter(requirements), None)
         if overlap_requirement:
             _apply_requirement(container, overlap_requirement)
@@ -1374,9 +1378,11 @@ def _enforce_region_constraint_overlap_requirement(
                 "Region-constrained ASO design requires aso_overlap_requirement set to 'any_overlap', 'full_containment', or 'contains_feature'."
             )
         if len(requirements) > 1:
-            raise ValueError(
-                "Mixed aso_overlap_requirement values are not supported within one constrained scope. Use one overlap rule per request/program."
-            )
+            # Execution evaluates each ordered constraint with its own rule.
+            # A containing window, covered core and partial-overlap exclusion
+            # can coexist; none is a valid replacement for the others or a
+            # common default to copy into unrelated binding sources.
+            continue
         overlap_requirement = next(iter(requirements), None)
         if not overlap_requirement:
             continue
@@ -2974,6 +2980,7 @@ def _build_binding_constraint_repair_prompt(prompt: str, intake_out: Dict[str, A
         "Current normalized intake JSON:\n"
         f"{current}\n\n"
         "If the original prompt explicitly requests a feature region (UTR, coding sequence, or translation start), a numeric mature-RNA window, supported RBP/eCLIP/ENCODE or miRNA/TargetScan sites, or a concrete motif that is missing or malformed in the current goal, return an updated structured_goal_patch using only allowed fields. Relative upstream/downstream distances belong in flanks. Absolute mature-RNA positions belong in reference-bound cdna region_constraints with normalized BED0 bounds; absolute positions must not become flanks. Preserve an allowed outer window and a required covered feature as separate intersected constraints. Do not infer genomic coordinates. Use any_overlap plus minimum_overlap_bp for a minimum partial overlap.\n"
+        "For a correction to an existing region constraint, copy its unique constraint_id; that identified entry is updated in place, preserving its position in the Boolean policy and any omitted fields. A different ID or an unidentified entry adds a separate rule. Do not append a corrected exclusion while leaving its obsolete stricter predicate active.\n"
         "Otherwise return {\"status\":\"no_change\"}."
     )
 
@@ -3037,9 +3044,23 @@ def _merge_binding_constraint_repair(
                 for item in constraints
                 if isinstance(item, dict)
             }
+            patched_ids = set()
             for item in value if isinstance(value, list) else [value]:
                 if not isinstance(item, dict):
                     continue
+                identity = item.get("constraint_id")
+                if identity:
+                    matches = [index for index, current in enumerate(constraints)
+                               if isinstance(current, dict) and current.get("constraint_id") == identity]
+                    if identity in patched_ids or len(matches) > 1:
+                        raise ValueError("binding_constraint_repair_contract_invalid: ambiguous region constraint_id")
+                    patched_ids.add(identity)
+                    if matches:
+                        index = matches[0]
+                        seen.discard(json.dumps(constraints[index], sort_keys=True, default=str))
+                        constraints[index] = {**constraints[index], **deepcopy(item)}
+                        seen.add(json.dumps(constraints[index], sort_keys=True, default=str))
+                        continue
                 fingerprint = json.dumps(item, sort_keys=True, default=str)
                 if fingerprint in seen:
                     continue
