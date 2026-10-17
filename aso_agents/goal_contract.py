@@ -43,6 +43,60 @@ CANONICAL_TARGET_TYPES = frozenset({
 })
 
 
+EVALUATION_TARGET_ROLE_CONTRACT = {
+    "identity_anchor": {
+        "desired_delta": "forbidden",
+        "meaning": "Target identity or coordinates needed for execution, with no requested change in this entity's abundance or usage.",
+    },
+    "primary_outcome": {
+        "desired_delta": "required",
+        "meaning": "A requested directional biological outcome for this identified entity.",
+    },
+    "route_target": {
+        "desired_delta": "required",
+        "meaning": "A requested directional biological outcome assigned to an intervention route.",
+    },
+    "monitoring_safeguard": {
+        "desired_delta": "forbidden",
+        "meaning": "A requested observation whose outcome direction was not specified.",
+    },
+}
+
+
+EVALUATION_TARGET_ROLE_INSTRUCTIONS = (
+    "Every evaluation_targets item classifies objective_type as identity_anchor, "
+    "primary_outcome, route_target, or monitoring_safeguard. An identity_anchor "
+    "preserves a site, coordinate, exon endpoint or other target identity needed "
+    "for execution without requesting a change in that entity's abundance or usage; "
+    "it applies to directional and non-directional programs alike and omits desired_delta. "
+    "A primary_outcome or route_target requires an evidence-supported desired_delta "
+    "of increase or decrease for that identified biological outcome. A named panel "
+    "role or sequence-coverage requirement alone does not establish such an outcome. "
+    "A monitoring_safeguard records a requested observation without a specified "
+    "direction and also omits desired_delta. If an unsupported model-authored role "
+    "makes direction required, repair objective_type from the request evidence; "
+    "do not invent a direction, treat an enum value as a neutral placeholder, or "
+    "ask the user to complete that generated classification. Preserve real requested "
+    "directional outcomes and clarify a genuinely missing required user choice."
+)
+
+
+def evaluation_target_direction_issues(target: Dict[str, Any]) -> List[str]:
+    """Execution rules shared by validation and the repair context, without inference."""
+    role = str(target.get("objective_type") or "").strip().lower()
+    direction = str(target.get("desired_delta") or "").strip().lower()
+    rule = EVALUATION_TARGET_ROLE_CONTRACT.get(role)
+    issues = [] if rule else ["objective_type"]
+    if rule and rule["desired_delta"] == "forbidden":
+        if direction:
+            issues.append("desired_delta")
+    elif (direction and direction not in {"increase", "decrease"}) or (
+        rule and rule["desired_delta"] == "required" and not direction
+    ):
+        issues.append("desired_delta")
+    return issues
+
+
 CANONICAL_TASK_TYPES = frozenset(
     {
         "analyze_artifact",
@@ -871,12 +925,8 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     },
     "objective_type": {
         "type": "string",
-        "enum": [
-            "identity_anchor",
-            "primary_outcome",
-            "route_target",
-            "monitoring_safeguard",
-        ],
+        "enum": list(EVALUATION_TARGET_ROLE_CONTRACT),
+        "description": EVALUATION_TARGET_ROLE_INSTRUCTIONS,
     },
     "off_target_expression": _OFF_TARGET_EXPRESSION_SCHEMA,
     "off_target_species": {"type": "array", "items": {"type": "string"}},
@@ -1412,7 +1462,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- Put each target fact in the object whose scope the evidence supports. Global biological outcomes belong in evaluation_targets and splice_isoform_objectives. Put a target identity on a design program only when the evidence explicitly assigns that identity to that intervention branch; never distribute global outcome identities across parallel programs merely because their counts match. Use exon_label for a numeric exon, site_kind for acceptor/donor/both, transcript_id for an explicitly supplied transcript identifier in that object's scope, isoform_label for a user-supplied isoform description without an identifier, and desired_delta for direction. Do not leave target identity only in prose.\n"
     "- transcript_id holds one accession. A program targeting a transcript cohort stores its members in transcript_ids, never a comma-joined singular ID. Distinct requested isoform directions remain in splice_isoform_objectives; shared knockdown and splice switching are separate programs with their own mechanisms. Exact per-site or per-panel counts set both candidate_limit_per_site and min_asos_per_site.\n"
     "- When the request assigns a named isoform or transcript to a particular intervention route, store that identity on the route_target evaluation target, the corresponding design program, and a corresponding splice_isoform_objectives item. Use design_programs[*].isoform_label or design_programs[*].transcript_id; a name present only in the program label or objective is not executable route scope. The splice objective must use the same typed identity, objective_scope='specific_isoform' or 'specific_transcript' as appropriate, and the evidence-supported desired_abundance. Never downgrade a named isoform-abundance route to default_exon_context. A transcript supplied only to locate an exon or splice junction is a reference identity, not an isoform-abundance outcome: preserve it on transcript_lock and the program, use an exon evaluation target and default_exon_context for the structural splice objective, and do not alternate that objective between default_exon_context and specific_transcript during repair. Do not add an identity to a program when the evidence states only a global outcome.\n"
-    "- Every evaluation_targets item must classify objective_type as exactly identity_anchor, primary_outcome, route_target, or monitoring_safeguard. Use identity_anchor when the item preserves a site, coordinate, exon endpoint, or other target identity needed to execute a directional program but the request does not define a change in that item's own abundance or usage; identity anchors must omit desired_delta. A primary_outcome or route_target must carry the evidence-supported desired_delta for that identified outcome. A monitoring_safeguard records a requested observation whose outcome direction was not specified and must also omit desired_delta. Monitoring or identity anchoring alone never creates a directional claim or a clarification need.\n"
+    "- " + EVALUATION_TARGET_ROLE_INSTRUCTIONS + "\n"
     "- When the user asks to spare, preserve, protect, or avoid changing a named gene, transcript, or isoform, add one preservation_targets item per protected entity. Set action='preserve', set preservation_target_type to exactly 'gene', 'transcript', or 'isoform', and store its identity in gene_symbol, transcript_id, or isoform_label. Do not represent a preservation constraint as increase/decrease, and do not leave it only in objective, label, notes, assumptions, or request prose.\n"
     "- Use patient_variant for a user-supplied variant that defines the patient, disease, or target sequence context, whether or not the requested ASO must discriminate between alleles. Preserve the supplied notation without inventing an accession; downstream authoritative resolution qualifies a bare or gene-qualified cDNA coordinate against an explicit reference accession when available or a source-backed canonical transcript otherwise. The presence of patient_variant alone does not imply allele-specific targeting. Add constraints.allele_specific only when request or clarification evidence explicitly requires selecting a target allele while avoiding a non-target allele; in that case, preserve target_allele, non_target_allele, and require_variant_overlap there.\n"
     "- Treat exon_label, exon_labels, and requested_exon_label as request-nomenclature fields. Preserve the exact biological label or ordered labels stated by the user; they are not storage for a resolver's structural transcript-exon index. Public annotation, declared artifacts, and resolved coordinates may map a requested label to a different internal exon index for execution, but they must not renumber the request-facing fields. Keep the requested label in the canonical goal and let explicit target coordinates or downstream resolution metadata carry the structural mapping. Change request nomenclature only when the user request or a later user clarification explicitly supplies the replacement label.\n"

@@ -39,6 +39,9 @@ from aso_agents.goal_contract import (
     CANONICAL_GOAL_COLLECTION_FIELDS,
     CANONICAL_GOAL_FIELD_SCHEMAS,
     CANONICAL_TASK_TYPES,
+    EVALUATION_TARGET_ROLE_CONTRACT,
+    EVALUATION_TARGET_ROLE_INSTRUCTIONS,
+    evaluation_target_direction_issues,
     canonical_gapmer_programs_exclude_splicing,
     canonical_goal_destination_catalog,
     canonical_goal_field_registry,
@@ -226,8 +229,15 @@ goal_unresolved_adjudication_agent = Agent(
         "obligation when that ancestor is absent and the request evidence does not require "
         "creating it. In that situation classify the item as nonblocking, or as "
         "remove_model_authored_field when the unsupported optional ancestor already exists. "
-        "Use canonical_path_context to distinguish schema requiredness from an actual "
-        "request requirement. "
+        "Use canonical_path_context to distinguish sparse construction-schema requiredness "
+        "from execution conditions and an actual request requirement. Its execution_conditions "
+        "show the controlling field, current object, legal alternatives and current execution "
+        "issues. A missing dependent field can require repairing an unsupported controlling "
+        "classification instead of populating the dependent field. The canonical_path of a "
+        "repair may name that controlling sibling; it need not repeat the proposed unresolved "
+        "leaf. A sparse optional field is not automatically nonblocking when its current "
+        "execution condition requires it. "
+        + EVALUATION_TARGET_ROLE_INSTRUCTIONS + " "
         "First compare the current value with the evidence-supported value. If they already "
         "agree, classify the item as nonblocking; rejecting a clarification does not require "
         "changing the contract. Otherwise classify a model-authored contradiction as "
@@ -22719,38 +22729,11 @@ def _canonical_design_goal_contract_issues(
                 # Do not infer a different biological entity from an unknown
                 # category and then report an unrelated isoform-objective error.
                 continue
-            objective_type = str(
-                target.get("objective_type") or ""
-            ).strip().lower()
-            if objective_type not in {
-                "identity_anchor",
-                "primary_outcome",
-                "route_target",
-                "monitoring_safeguard",
-            }:
+            for field in evaluation_target_direction_issues(target):
                 issues.append(
-                    f"context.structured_goal.evaluation_targets[{index}].objective_type"
+                    f"context.structured_goal.evaluation_targets[{index}].{field}"
                 )
             desired_delta = str(target.get("desired_delta") or "").strip().lower()
-            if objective_type in {
-                "identity_anchor",
-                "monitoring_safeguard",
-            }:
-                if desired_delta:
-                    issues.append(
-                        f"context.structured_goal.evaluation_targets[{index}].desired_delta"
-                    )
-            elif desired_delta and desired_delta not in {"increase", "decrease"}:
-                issues.append(
-                    f"context.structured_goal.evaluation_targets[{index}].desired_delta"
-                )
-            elif (
-                objective_type in {"primary_outcome", "route_target"}
-                and desired_delta not in {"increase", "decrease"}
-            ):
-                issues.append(
-                    f"context.structured_goal.evaluation_targets[{index}].desired_delta"
-                )
             desired_effect = str(target.get("desired_effect") or "").strip().lower()
             if desired_effect and desired_effect not in {"inclusion", "skipping"}:
                 issues.append(
@@ -24944,10 +24927,27 @@ def _canonical_goal_path_context(
         schema = child_schema
         current = child_value
         goal_exists = child_exists
+    execution_conditions = []
+    if len(tokens) >= 6 and tokens[4] == "evaluation_targets" and tokens[5].isdigit():
+        exists, target = _json_pointer_value(request_envelope, tokens[:6])
+        if exists and isinstance(target, dict):
+            object_pointer = "/" + "/".join(_json_pointer_escape(t) for t in tokens[:6])
+            execution_conditions.append({
+                "object_pointer": object_pointer,
+                "current_object": deepcopy(target),
+                "controlling_field": object_pointer + "/objective_type",
+                "dependent_field": object_pointer + "/desired_delta",
+                "alternatives": deepcopy(EVALUATION_TARGET_ROLE_CONTRACT),
+                "allowed_direction_values": ["increase", "decrease"],
+                "current_execution_issues": [object_pointer + "/" + field
+                                             for field in evaluation_target_direction_issues(target)],
+                "value_authority": "Request or clarification evidence; classification alone never authorizes inventing direction.",
+            })
     return {
         "is_canonical_goal_path": True,
         "ancestry": ancestry,
         "missing_optional_ancestor_paths": missing_optional_paths,
+        "execution_conditions": execution_conditions,
     }
 
 
