@@ -60,6 +60,7 @@ CANONICAL_TASK_TYPES = frozenset(
 CANONICAL_TASK_CONTEXT_FIELDS = frozenset(
     {
         "num_mismatches",
+        "off_target_screening",
         "artifact_refs",
         "chemistry",
         "chemistry_policy",
@@ -83,6 +84,7 @@ CANONICAL_TASK_CONTEXT_FIELDS = frozenset(
 
 CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS = {
     "num_mismatches": "Explicit requested maximum substitution count for off-target sequence searching in this task, including zero. This is a search budget, not a maximum off-target hit count or permission to mismatch the intended target.",
+    "off_target_screening": "For supplied-ASO evaluation or comparison, enabled requests external transcriptome gene screening and disabled explicitly excludes that screening. Matching against the requested reference transcripts still runs. Preserve explicit user exclusions independently from local-reference mismatch counts; omit when unspecified to retain normal screening.",
     "oligoai_evaluation": "Explicit OligoAI prediction conditions: enabled, dosage_nm and transfection_method; omit unstated values so runtime assumptions remain labelled.",
     "artifact_refs": "User-supplied run, file, or artifact references consumed by this task.",
     "chemistry": "User-supplied ASO chemistry or mechanism context for this task.",
@@ -933,6 +935,8 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
 
 CANONICAL_TASK_CONTEXT_FIELD_SCHEMAS = {
     "num_mismatches": {"type": "integer", "minimum": 0, "description": "Requested off-target substitution search budget for this task, independent of hit-count filters."},
+    "off_target_screening": {"type": "string", "enum": ["enabled", "disabled"],
+                             "description": CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS["off_target_screening"]},
     "oligoai_evaluation": deepcopy(_OLIGOAI_CONDITIONS_SCHEMA),
     "artifact_refs": {"type": "array", "items": _ARTIFACT_REF_SCHEMA},
     "chemistry": {"type": "string"},
@@ -1424,6 +1428,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- Preserve the direction of containment: full_containment means the complete ASO lies INSIDE a target interval. contains_feature means the complete target feature lies INSIDE the ASO. To require junction crossing with at least U bases before and D bases after an acceptor boundary, use a splice_relative_window from -U to D-1 with contains_feature; for a donor use 1-U to D because offset zero is the last exonic base. Both offset conventions follow transcript orientation on either genomic strand. Create separate acceptor and donor constraints with operator=union when either junction is allowed; a whole-exon any_overlap constraint does not encode junction crossing. Never encode the required covered core as full_containment.\n"
     "- region_constraints, aso_overlap_requirement, and minimum_overlap_bp are direct children of context.structured_goal, never children of constraints. constraints contains only gc_content, homopolymers, and max_binding_sites. Represent GC bounds at constraints.gc_content with min, max, min_inclusive, and max_inclusive; use fractional values from 0 through 1. Keep an explicitly supplied oligo length on each affected design program.\n"
     "- Preserve an explicit off-target substitution search budget at context.num_mismatches for evaluation/comparison tasks and context.structured_goal.num_mismatches for design tasks. A request for exact plus one-mismatch evidence has budget 1, including separate exact evidence. Zero means exact-only. This is independent of max_binding_sites, sequence identity at the intended target, and any filtering threshold. Do not invent a budget when unspecified or silently lower an unsupported request.\n"
+    "- For supplied-ASO evaluation/comparison, represent an explicit exclusion of new genome-wide or transcriptome-wide off-target screening as context.off_target_screening='disabled'. An explicit request to perform that screening can use 'enabled'; omit when unspecified. Matching to the user's named or supplied reference transcripts remains independent and must still run. Do not turn a local-reference mismatch allowance into permission for an excluded wider search. Scope this setting to the applicable task, not unrelated design branches.\n"
     "- evaluation_targets contain target identity and coordinates only. A transcript-level primary outcome does not acquire a splice-site kind merely because the request also defines splice-site intervention routes; site_kind is present only when evidence explicitly scopes it to that target. Store genome_build, coordinate_convention, source_type, operator, and intervals_bed0_half_open on region_constraints items, not on evaluation_targets.\n"
     "- Store program target fields directly at design_programs[*].transcript_id, isoform_label, exon_label, exon_labels, site_kind, position, start, or end as applicable. Do not wrap them in a target or evaluation_target object. For an exon-level splice program that does not restrict targeting to one junction, use site_kind='both' to declare that the execution plan must consider both acceptor and donor sites.\n"
     "- For a splice_modulation program with splice_relative_window constraints, site_kind is the execution anchor, not a claim that the named feature is itself a splice junction. When all of that program's windows use one anchor_site, set site_kind to that exact acceptor or donor value; when its windows use both anchor types, set site_kind='both'. Do not remove the anchor merely because the window describes a regulatory feature.\n"

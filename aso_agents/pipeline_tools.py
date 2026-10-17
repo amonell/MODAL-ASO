@@ -9988,6 +9988,7 @@ _RESTART_STAGE_ALIASES: Dict[str, str] = {
 
 _REQUEST_CONTEXT_SCALAR_FIELDS: Tuple[str, ...] = (
     "num_mismatches",
+    "off_target_screening",
     "gene_symbol",
     "gene_id",
     "transcript_id",
@@ -36189,7 +36190,10 @@ def _overlay_request_context_on_goal(
     request_text: str,
 ) -> Dict[str, Any]:
     goal = deepcopy(base_goal) if isinstance(base_goal, dict) else {}
-    for field in ("gene_symbol", "gene_id", "species", "target_context", "platform", "chemistry", "oligoai_evaluation", "num_mismatches"):
+    # A previous evaluation may supply reference context, but its permission
+    # to perform an external search is not a policy for this task.
+    goal.pop("off_target_screening", None)
+    for field in ("gene_symbol", "gene_id", "species", "target_context", "platform", "chemistry", "oligoai_evaluation", "num_mismatches", "off_target_screening"):
         value = request_envelope.get(field)
         if value not in (None, "", [], {}):
             goal[field] = deepcopy(value)
@@ -37409,7 +37413,7 @@ def _merge_scored_tiles_into_provided_asos(
         for field in _PROVIDED_ASO_SCORED_TILE_FIELDS:
             if scored.get(field) not in (None, "", [], {}):
                 entry[field] = deepcopy(scored[field])
-        if scored.get("off_target_count_status") in {"incomplete", "unavailable"}:
+        if scored.get("off_target_count_status") in {"incomplete", "unavailable", "not_run"}:
             for field in ("off_target_gene_count", "Off_target_exact_count", "Times_mapped_off_target_genes",
                           "Off_target_total_upto_mismatch_count", "Off_target_weighted_risk_score",
                           "Off_target_1mm_count", "Off_target_2mm_count", "Off_target_3mm_count"):
@@ -37428,6 +37432,9 @@ def _merge_scored_tiles_into_provided_asos(
                 "method": "ungapped_genome_exon_junction_mapping",
                 "mismatch_budget": scored.get("Off_target_mismatch_budget", 0),
             }
+        elif scored.get("off_target_count_status") == "not_run":
+            stage_results["off_target_mapping"] = {
+                "status": "not_run", "reason_code": "excluded_by_task_scope"}
         elif scored.get("off_target_count_status") in {"incomplete", "unavailable"}:
             stage_results["off_target_mapping"] = {"status": scored["off_target_count_status"],
                 "reason_code": "count_search_incomplete_or_unavailable", "method": "ungapped_genome_exon_junction_mapping"}
@@ -37556,6 +37563,18 @@ def _score_provided_asos_with_existing_pipeline(
     if not tile_rows:
         scoring_summary["reason"] = "no_scoring_sequences"
         return scoring_summary
+    screen_off_targets = eval_goal.get("off_target_screening") != "disabled"
+    if not screen_off_targets:
+        scoring_summary["notes"] = [
+            "External off-target gene screening is excluded by this task's explicit scope. "
+            "Unsearched counts are unknown, not zero; requested reference matching is separate."
+        ]
+        for row in tile_rows:
+            row["off_target_count_status"] = "not_run"
+            for field in ("off_target_gene_count", "Off_target_exact_count", "Times_mapped_off_target_genes",
+                          "Off_target_total_upto_mismatch_count", "Off_target_weighted_risk_score",
+                          "Off_target_1mm_count", "Off_target_2mm_count", "Off_target_3mm_count"):
+                row[field] = None
     try:
         annotate_rnafold = getattr(runtime, "_annotate_tile_rows_with_rnafold", None)
         if callable(annotate_rnafold):
@@ -37567,13 +37586,16 @@ def _score_provided_asos_with_existing_pipeline(
     scoring_summary["tiles_json_path"] = str(tiles_path)
     scoring_summary["row_count"] = len(tile_rows)
 
-    gene_resolution = _maybe_resolve_eval_gene_id(eval_goal, runtime)
+    gene_resolution = (_maybe_resolve_eval_gene_id(eval_goal, runtime) if screen_off_targets else
+                       {"status": "not_run", "reason": "excluded_by_task_scope"})
     scoring_summary["gene_resolution"] = gene_resolution
 
     parameter_constraints = eval_goal.get("constraints") if isinstance(eval_goal.get("constraints"), dict) else None
     off_target_summary: Optional[Dict[str, Any]] = None
     annotate_off_targets = getattr(runtime, "_annotate_gapmer_off_targets", None)
-    if callable(annotate_off_targets):
+    if not screen_off_targets:
+        off_target_summary = {"status": "not_run", "reason": "excluded_by_task_scope"}
+    elif callable(annotate_off_targets):
         try:
             off_target_summary = annotate_off_targets(str(tiles_path), eval_goal, parameter_constraints)
         except Exception as exc:
@@ -37582,7 +37604,7 @@ def _score_provided_asos_with_existing_pipeline(
         off_target_summary = {"error": "runtime_off_target_annotator_missing"}
     if isinstance(off_target_summary, dict):
         scoring_summary["off_target_mapping"] = off_target_summary
-        if not off_target_summary.get("error"):
+        if screen_off_targets and not off_target_summary.get("error"):
             count_scope = exact_gene_count_scope(
                 get_species_config(normalize_species(eval_goal.get("species"))),
                 eval_goal.get("gene_id"), off_target_summary,
@@ -37591,7 +37613,9 @@ def _score_provided_asos_with_existing_pipeline(
             scoring_summary["exact_off_target_bins"] = _enrich_exact_off_target_bins_for_tiles(str(tiles_path), count_scope)
 
     expression_summary: Optional[Dict[str, Any]] = None
-    if isinstance(off_target_summary, dict) and not off_target_summary.get("error") and int(off_target_summary.get("rows_with_hits") or 0) > 0:
+    if not screen_off_targets:
+        expression_summary = {"status": "not_run", "reason": "off_target_screening_not_run"}
+    elif isinstance(off_target_summary, dict) and not off_target_summary.get("error") and int(off_target_summary.get("rows_with_hits") or 0) > 0:
         try:
             expression_summary = annotate_off_target_expression(
                 initial_filter_json_path=str(tiles_path),
