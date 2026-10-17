@@ -440,6 +440,7 @@ def execute_analysis_program(
                 from .analysis_review import assess_review, program_digest
                 review_input = {
                     "request_text": str(payload.get("request_text") or ""),
+                    "task_request_text": payload.get("task_request_text"),
                     "task_type": payload.get("task_type"),
                     "request_envelope": payload.get("request_envelope"),
                     "declared_inputs": payload.get("declared_inputs"),

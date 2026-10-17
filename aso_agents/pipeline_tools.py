@@ -45809,11 +45809,24 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
         task_context=task_context,
     )
     response_request_envelope = response_meta["request_envelope"]
+    # The scoped response label is useful delegation metadata, but composite
+    # labels can omit the user's detailed computation and export requirements.
+    # Keep those requirements authoritative without expanding this task's
+    # already-scoped inputs, producers or output destinations.
+    original_request = state.get("request")
+    analysis_request_text = (original_request
+                             if isinstance(original_request, str) and original_request.strip()
+                             else str(response_meta.get("request_text") or ""))
+    task_request_text = str(response_meta.get("request_text") or "")
+    response_request_envelope["request_text"] = analysis_request_text
 
     output_dir = _task_output_dir(run_dir, task_id, request_envelope=request_envelope)
     sandbox_dir = output_dir / "sandbox"
     sandbox_dir.mkdir(parents=True, exist_ok=True)
     declared_inputs = _build_sandbox_declared_inputs(state, request_envelope)
+    declared_inputs.update(request_text=analysis_request_text,
+                           task_request_text=task_request_text,
+                           request_envelope=deepcopy(response_request_envelope))
     declared_inputs_path = sandbox_dir / "declared_inputs.json"
     declared_inputs_path.write_text(json.dumps(declared_inputs, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -45845,7 +45858,8 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
         directory=sandbox_dir,
         payload={
             "task_type": str(prepared["task"].get("task_type") or "sandbox_analysis"),
-            "request_text": response_meta.get("request_text"),
+            "request_text": analysis_request_text,
+            "task_request_text": task_request_text,
             "request_summary": response_meta.get("request_summary"),
             "request_envelope": response_request_envelope,
             "declared_inputs": declared_inputs,
