@@ -15552,8 +15552,9 @@ def _should_seed_default_splice_context(structured_goal: Optional[Dict[str, Any]
     explicit_targets = structured_goal.get("explicit_splice_targets")
     if isinstance(explicit_targets, list) and explicit_targets:
         return False
-    if not _resolve_run_splice_eval(structured_goal):
-        return False
+    # Transcript geometry is required to locate splice targets even when the
+    # user excludes model-based effect prediction. The objective/scope guards
+    # here select reference context; prediction has its own execution gate.
     target_region = _normalize_target_region(structured_goal.get("target_region"))
     if target_region in {"utr3", "utr5", "utrs", "translation_start"}:
         return False
