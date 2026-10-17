@@ -46483,7 +46483,9 @@ def tool_resolve_isoforms_and_sites(
                 ],
                 reason=str((variant_resolution or {}).get("reason") or "patient_variant_resolution_incomplete"),
                 clarification_kind="goal_intake",
-                restart_stage="resolution",
+                # Rebuild the typed identity from the answer before resolving it.
+                # Resolution alone reloads the same unresolved intake fields.
+                restart_stage="intake",
                 context="Variant identity must resolve to one gene and an exact reference/mutant sequence before variant-aware sequence construction.",
                 why_this_matters=(
                     "An unresolved or conflicting variant could create the wrong sequence context, place candidates at the wrong locus, or reverse target and non-target alleles when selectivity is requested."
