@@ -15,11 +15,14 @@ _HELPERS = (
      "observation presence do not change latest selection; no coverage/count inference"),
     ("SplicedSequenceCoordinates", "aso_agents.spliced_coordinates",
      "SplicedSequenceCoordinates(*, chromosome, strand, exons)",
-     "exons are complete genomic (start1,end1) pairs; project_interval(start1,end1) "
-     "returns chrom,strand,genomic_start1,genomic_end1,mature_start1,mature_end1,exon_ordinal "
-     "blocks in transcript order; length, to_genomic, to_mature; "
-     "extract(start1,end1,fetch_genomic=callable) fetches plus-genomic blocks and returns "
-     "transcript-oriented DNA; all endpoints one-based inclusive; no origin/strand inference"),
+     "exons are complete genomic (start1,end1) pairs; length is mature transcript length; "
+     "project_interval(start1,end1) takes mature/cDNA endpoints in 1..length and returns "
+     "chrom,strand,genomic_start1,genomic_end1,mature_start1,mature_end1,exon_ordinal blocks "
+     "in transcript order; to_genomic(mature_position1) maps one mature base to genomic; "
+     "to_mature(genomic_position1) maps one genomic exon base to mature and rejects introns; "
+     "extract(start1,end1,fetch_genomic=callable) also takes mature/cDNA endpoints, but its "
+     "fetch_genomic(chrom,start1,end1) callback receives plus-genomic bounds; returns "
+     "transcript-oriented DNA; all endpoints one-based inclusive; no origin/strand inference or clipping"),
     ("SequenceCoordinates", "aso_agents.sequence_coordinates",
      "SequenceCoordinates(*, first_coordinate, length, direction=1)",
      "to_index(coordinate), to_coordinate(index), inclusive_slice(lower,upper), "

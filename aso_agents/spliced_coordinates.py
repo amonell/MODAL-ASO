@@ -43,14 +43,23 @@ class SplicedSequenceCoordinates:
     def project_interval(self, start1, end1):
         """Return genomic blocks in mature 5prime-to-3prime order, never a span.
 
-        Both input and output endpoints are one-based inclusive. Genomic bounds
+        start1 and end1 are mature/cDNA positions in 1..length. Both input and
+        output endpoints are one-based inclusive. Convert an exonic genomic
+        position with to_mature(genomic_position1) before projecting it.
+        Genomic bounds
         within each block are ascending on either strand; block order follows
         the transcript and is therefore decreasing genomically on minus strand.
         The complete exon list defines mature position one; no clipping occurs.
         """
         start1, end1 = _integer(start1, "start1"), _integer(end1, "end1")
         if not 1 <= start1 <= end1 <= self.length:
-            raise ValueError("Interval must lie entirely within the mature sequence")
+            raise ValueError(
+                "Interval must lie entirely within the mature sequence: "
+                f"project_interval received start1={start1}, end1={end1}; "
+                f"expected mature/cDNA coordinates with 1 <= start1 <= end1 <= {self.length}. "
+                "Convert an exonic genomic position with to_mature(genomic_position1). "
+                "No coordinates were converted or clipped."
+            )
         blocks, cursor = [], 1
         for ordinal, (left, right) in enumerate(self.exons, 1):
             exon_end = cursor + right - left
@@ -77,11 +86,18 @@ class SplicedSequenceCoordinates:
             if left <= position <= right:
                 return cursor + (position - left if self.strand == "+" else right - position)
             cursor += right - left + 1
-        raise ValueError("Genomic position is not an exonic base of this transcript")
+        raise ValueError(
+            "Genomic position is not an exonic base of this transcript: "
+            f"to_mature received genomic_position1={position} on {self.chromosome} "
+            f"({self.strand} strand). It requires a one-based genomic exon position. "
+            f"A mature/cDNA position in 1..{self.length} maps through to_genomic(mature_position1). "
+            "Intronic and outside positions are not projected."
+        )
 
     def extract(self, start1, end1, *, fetch_genomic):
         """Fetch plus-reference blocks and return transcript-oriented sequence.
 
+        start1 and end1 are mature/cDNA positions in 1..length.
         fetch_genomic(chrom, start1, end1) must return exactly the ascending,
         one-based inclusive genomic interval as a string. Minus-strand blocks
         are reverse-complemented individually and joined in transcript order.
