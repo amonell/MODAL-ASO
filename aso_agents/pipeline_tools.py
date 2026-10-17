@@ -24256,6 +24256,17 @@ def _goal_audit_prompt(
     from .region_overlap import constraint_execution_summary, effective_program_constraint_summary
     from .goal_contract import REGION_CONSTRAINT_SCOPE_INSTRUCTIONS
     from .coordinate_contract import coordinate_execution_summary, COORDINATE_ORIGIN_INSTRUCTIONS
+    optional_remove_paths = set(_canonical_optional_remove_paths(
+        request_envelope, required_goal_fields=required_goal_fields,
+    )) if issue_records else set()
+    repair_options = []
+    for record in issue_records:
+        item = deepcopy(record)
+        operation = item.get("required_operation")
+        item["allowed_operations"] = ([operation] if operation in {"add", "replace"} else [])
+        if item.get("json_pointer") in optional_remove_paths:
+            item["allowed_operations"].append("remove")
+        repair_options.append(item)
     audit_input = {
         "required_goal_fields": required_goal_fields or [],
         "audit_mode": (
@@ -24271,7 +24282,7 @@ def _goal_audit_prompt(
         ),
         "validation_issues": validation_issues,
         "validation_issue_ledger": validation_issue_ledger or [],
-        "canonical_contract_issues": issue_records,
+        "canonical_contract_issues": repair_options,
         "canonical_task_types": sorted(CANONICAL_TASK_TYPES),
         "noncanonical_field_findings": noncanonical_findings,
         "canonical_task_context_registry": (
@@ -24343,9 +24354,14 @@ def _goal_audit_prompt(
         audit_input["program_length_checks_required"] = length_obligations
     return (
         "Audit the supplied request envelope. Return only the compact audit object "
-        "defined by your response schema. Use canonical_contract_issues.json_pointer "
-        "as the exact patch path and canonical_contract_issues.required_operation as "
-        "the add or replace operation for listed violations. Every item in "
+        "defined by your response schema. canonical_contract_issues describes defects "
+        "in the model-authored draft, not additional user requirements. For a value "
+        "repair use the listed json_pointer and required_operation (add or replace). "
+        "When allowed_operations includes remove, you may instead remove that existing "
+        "optional field with value=null and verified request evidence. A listed issue "
+        "does not require retaining or replacing an unsupported optional field. "
+        "Resolve conflicting draft declarations from the original evidence; do not ask "
+        "the user to confirm a choice already explicit in that evidence. Every item in "
         "validation_issue_ledger is still open and must be discharged by a canonical "
         "repair or an unresolved item; status='valid' is unavailable while that ledger "
         "is non-empty. You may instead remove an "

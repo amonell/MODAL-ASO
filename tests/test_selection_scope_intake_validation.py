@@ -81,7 +81,9 @@ def test_evidence_bound_repair_supports_either_algorithm_without_changing_other_
         evidence_sources=sources, semantic_audit=False,
     )
     protocol = pipeline._goal_audit_protocol_payload(prompt)
-    assert protocol["canonical_contract_issues"] == records
+    assert protocol["canonical_contract_issues"] == [
+        {**record, "allowed_operations": ["replace", "remove"]} for record in records
+    ]
     schema = pipeline._goal_contract_audit_schema_for_prompt(prompt)
     assert not list(Draft202012Validator(schema["properties"]["patches"]).iter_errors([patch]))
     result = pipeline._apply_goal_audit_patches(
