@@ -24,6 +24,10 @@ Do not write length/ID/array-structure patches for that expansion. The executor
 keeps the original ID, sets its scalar length and creates exact copies for the
 remaining values with unique IDs. Other supported leaf repairs are applied first
 and copied to every variant. This avoids retyping or omitting branch constraints.
+The same compilation applies to an evidence-bound incomplete finding that names
+only its current template and supplies no effective program length, ID or array
+structure repair. Identifying the finite missing domain is sufficient; another
+command is not needed. Explicit multi-program repairs keep their existing path.
 Expansion is explicit, evidence-bound and subject to the ordinary repair/verify
 loop; it does not infer a domain from a label. If the branch already has multiple
 variants, use complete or incomplete with actual IDs and canonical repairs instead.
@@ -118,8 +122,25 @@ def compile_program_length_expansions(payload, obligations, span_map, *, project
     original_patches = payload.get('patches') or []
     for obligation in obligations:
         finding = checks[obligation['check_id']]
-        if finding['verdict'] != 'expand':
+        if finding['verdict'] not in {'expand', 'incomplete'}:
             continue
+        if finding['verdict'] == 'incomplete':
+            root = obligation['programs_pointer']
+            if finding['represented_program_ids'] != [obligation['program_id']]:
+                continue
+            # Respect an explicit variant repair rather than duplicating it.
+            # No-op edits were already removed by the ordinary normalizer.
+            def changes_program_structure(patch):
+                path = patch['path']
+                if path == root or root.startswith(path + '/'):
+                    return True
+                if path.startswith(root + '/'):
+                    suffix = path[len(root) + 1:].split('/')
+                    return len(suffix) == 1 or suffix[1] in {'length', 'program_id'}
+                return False
+
+            if any(changes_program_structure(patch) for patch in original_patches):
+                continue
         prefix = '$.program_length_checks.' + obligation['check_id'] + ': '
 
         def require(condition, message):

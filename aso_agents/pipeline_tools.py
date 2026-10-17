@@ -18667,7 +18667,7 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
             audited["patches"] = _goal_audit_effective_patches(envelope, audited.get("patches"))
             audited = _normalize_goal_contract_audit_status(audited)
         if length_obligations and isinstance(audited.get("program_length_checks"), dict) and any(
-            isinstance(check, dict) and check.get("verdict") == "expand"
+            isinstance(check, dict) and check.get("verdict") in {"expand", "incomplete"}
             for check in (audited.get("program_length_checks") or {}).values()
         ):
             errors = _json_schema_validation_errors(audited, schema)
