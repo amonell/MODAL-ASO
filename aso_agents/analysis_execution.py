@@ -235,6 +235,18 @@ def execute_analysis_program(
         'required_output_files': [str(p) for p in [result_path, summary_path, *required_outputs]],
         'relative_path_base': str(directory), 'readonly_output_files': [str(p) for p in readonly_outputs],
         'report_source_tables': [str(p) for p in source_tables],
+        'report_table_views': {
+            'declaration': 'sandbox_result.json.report_tables',
+            'allowed_source_paths': [str(p) for p in required_outputs
+                                     if p.suffix.lower() in {'.csv', '.tsv', '.xlsx'}]
+                                    + [str(p) for p in source_tables],
+            'workbook_identity': 'For XLSX, source_sheet is the exact worksheet name; '
+                                 'header_row is a positive one-based row, default 1. '
+                                 'Use unique nonempty headers and computed values, not formulas.',
+            'rendering': 'Write {{table:ID}} markers in Markdown and declare id/source_path, '
+                         'optional columns, rank_column and preview_limit. The host renders '
+                         'after execution; do not import or implement a Markdown binder.',
+        },
         'shared_analysis_helpers': shared_analysis_helpers()}
     request['execution_contract'] = execution_contract
     previous = [int(p.name) for p in (directory / "execution_attempts").glob("*") if p.is_dir() and p.name.isdigit()]

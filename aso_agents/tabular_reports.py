@@ -11,6 +11,51 @@ from copy import deepcopy
 from pathlib import Path
 
 
+def _workbook_report_table(path, sheet_name, header_row):
+    """Read an explicitly identified rectangular sheet without evaluating formulas."""
+    if not isinstance(sheet_name, str) or not sheet_name:
+        raise ValueError("A workbook report view needs an explicit nonempty source_sheet.")
+    if type(header_row) is not int or header_row < 1:
+        raise ValueError("Workbook header_row must be a positive integer.")
+    from openpyxl import load_workbook
+
+    book = load_workbook(path, read_only=True, data_only=False)
+    try:
+        if sheet_name not in book.sheetnames:
+            raise ValueError("Report source worksheet does not exist: " + sheet_name)
+        sheet = book[sheet_name]
+        if header_row > sheet.max_row:
+            raise ValueError("Workbook header_row is outside the source worksheet.")
+        iterator = sheet.iter_rows(min_row=header_row)
+        header = list(next(iterator))
+        while header and header[-1].value in (None, ""):
+            header.pop()
+        if not header or any(not isinstance(cell.value, str) or not cell.value.strip()
+                             for cell in header):
+            raise ValueError("Workbook table headers must be nonempty column names.")
+        fields = [cell.value for cell in header]
+        if len(set(fields)) != len(fields):
+            raise ValueError("Workbook table headers must be unique.")
+        if any(cell.data_type == "f" for cell in header):
+            raise ValueError("A workbook report view cannot evaluate a formula header.")
+        rows = []
+        for cells in iterator:
+            if not any(cell.value not in (None, "") for cell in cells):
+                continue
+            if any(cell.value not in (None, "") for cell in cells[len(fields):]):
+                raise ValueError("Workbook data extends beyond its declared header columns.")
+            if any(cell.data_type == "f" for cell in cells[:len(fields)]):
+                raise ValueError(
+                    "A workbook report view cannot evaluate formula cells. "
+                    "Export computed values in the requested source sheet."
+                )
+            rows.append({name: "" if cell.value is None else str(cell.value)
+                         for name, cell in zip(fields, cells)})
+        return fields, rows
+    finally:
+        book.close()
+
+
 def _repeated_export_table_columns(text, source_columns, source_rows, alternative_sources=()):
     """Find a hand-written export table that is not faithful to its source."""
     columns = set(source_columns)
@@ -295,12 +340,13 @@ def _canonicalize_selection_report_views(texts, export_tables):
 def render_report_tables(result, required_outputs, summary_path, *, required=False, source_tables=()):
     outputs = {str(Path(path).resolve()): Path(path) for path in required_outputs}
     export_tables = {key: path for key, path in outputs.items() if path.suffix.lower() in {".csv", ".tsv"}}
+    workbook_exports = {key: path for key, path in outputs.items() if path.suffix.lower() == ".xlsx"}
     tables = dict(export_tables)
     for source in source_tables:
         path = Path(source).resolve()
         if path.suffix.lower() in {".csv", ".tsv"} and path.is_file():
             tables.setdefault(str(path), path)
-    if not tables:
+    if not tables and not workbook_exports:
         return {}
     for path in export_tables.values():
         _validate_eligibility_reason_columns(path)
@@ -332,7 +378,7 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
             return key
         source_digest = file_digest(source)
         matching = [
-            output_key for output_key, output_path in tables.items()
+            output_key for output_key, output_path in {**tables, **workbook_exports}.items()
             if output_path.name == relative.name
             and file_digest(output_path) == source_digest
         ]
@@ -349,6 +395,29 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
     views = deepcopy(direct_views or nested_views or [])
     if not isinstance(views, list):
         raise ValueError("report_tables must be an array of table declarations.")
+    # A workbook sheet can contain a different population or computation from
+    # an upstream native panel. Preserve its explicit identity; never replace
+    # it with the only available CSV merely because no CSV export was requested.
+    workbook_sources = {}
+    for view in views:
+        if not isinstance(view, dict):
+            continue  # The regular declaration validation below reports this.
+        key = table_key(view.get("source_path"))
+        if Path(key).suffix.lower() == ".xlsx" and key not in workbook_exports:
+            raise ValueError("A workbook report source must be an actual requested XLSX output.")
+        if key in workbook_exports:
+            sheet_name, header_row = view.get("source_sheet"), view.get("header_row", 1)
+            data = _workbook_report_table(workbook_exports[key], sheet_name, header_row)
+            workbook_sources[(key, sheet_name, header_row)] = data
+    if not tables and not views:
+        markdown = [Path(summary_path), *(path for path in outputs.values()
+                                         if path.suffix.lower() == ".md")]
+        if any("{{table:" in path.read_text() for path in markdown):
+            raise ValueError(
+                "A workbook report marker needs a report_tables declaration with "
+                "the requested source_path and exact source_sheet."
+            )
+        return {}  # Workbook-only narrative reports have no implicit sheet choice.
     declaration_path = "report_tables" if direct_views else "sandbox_result.report_tables" if nested_views else None
     texts = {str(Path(summary_path).resolve()): Path(summary_path).read_text()}
     texts.update({key: path.read_text() for key, path in outputs.items() if path.suffix.lower() == ".md"})
@@ -362,7 +431,7 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
     _validate_selection_report_views(texts, export_tables)
     original_model_texts = dict(texts)
     canonicalization = None
-    if len(source_tables) == 1 and not export_tables:
+    if len(source_tables) == 1 and not export_tables and not workbook_sources:
         source = Path(source_tables[0]).resolve()
         with source.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle, delimiter="\t" if source.suffix.lower() == ".tsv" else ",")
@@ -427,7 +496,8 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
                           "native_source_order_view": True}
                          for marker, paths in sorted(matches.items()))
         existing = {table_key(view.get("source_path")) for view in views if isinstance(view, dict)}
-        for key, path in tables.items():
+        automatic_sources = export_tables if workbook_sources else tables
+        for key, path in automatic_sources.items():
             if key in existing:
                 continue
             view_id = "export_" + hashlib.sha256(key.encode()).hexdigest()[:16]
@@ -469,6 +539,7 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
         with source_path.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle, delimiter="\t" if source_path.suffix.lower() == ".tsv" else ",")
             source_data[source_key] = (reader.fieldnames or [], list(reader))
+    source_data.update(workbook_sources)
     declared, ids, receipts = set(), set(), []
     for view in views:
         if not isinstance(view, dict) or not isinstance(view.get("id"), str) or not view["id"]:
@@ -478,16 +549,22 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
             raise ValueError("Duplicate report table id: " + view_id)
         ids.add(view_id)
         declared_source = str(view.get("source_path") or "")
-        key = table_key(declared_source)
-        if key != declared_source:
-            view["source_path"] = key
-        if key not in tables:
+        path_key = table_key(declared_source)
+        if path_key != declared_source:
+            view["source_path"] = path_key
+        if path_key not in tables and path_key not in workbook_exports:
             raise ValueError(
-                "A report table source_path must be an actual requested CSV/TSV output "
+                "A report table source_path must be an actual requested CSV/TSV output, "
+                "a requested XLSX output, "
                 "or an exact declared read-only report_source_tables path. "
+                "For XLSX use source_sheet and optional header_row (default 1). "
                 "Do not create a competing unrequested table."
             )
-        path = tables[key]
+        if path_key in workbook_exports:
+            path = workbook_exports[path_key]
+            key = (path_key, view["source_sheet"], view.get("header_row", 1))
+        else:
+            path, key = tables[path_key], path_key
         fields, rows = source_data[key]
         columns = view.get("columns") or fields
         if not isinstance(columns, list) or not columns or any(column not in fields for column in columns):
@@ -541,10 +618,13 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
         for destination, text in list(texts.items()):
             texts[destination] = text.replace(marker, "\n".join(lines))
         declared.add(key)
-        receipts.append({"id": view_id, "source_path": key, "declared_source_path": declared_source,
+        receipt = {"id": view_id, "source_path": path_key, "declared_source_path": declared_source,
                          "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                          "rank_column": rank_column, "row_count": len(rows), "shown_rows": len(shown),
-                         "native_source_order_view": bool(view.get("native_source_order_view"))})
+                         "native_source_order_view": bool(view.get("native_source_order_view"))}
+        if path_key in workbook_exports:
+            receipt.update(source_sheet=view["source_sheet"], header_row=view.get("header_row", 1))
+        receipts.append(receipt)
     if required and not set(export_tables).issubset(declared):
         raise ValueError("Every requested CSV/TSV output needs a report_tables view; missing: " + ", ".join(sorted(set(export_tables) - declared)))
     if any("{{table:" in text for text in texts.values()):
