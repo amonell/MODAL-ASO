@@ -63,6 +63,24 @@ ANALYSIS_RESULT_DELIVERY_RULES = (
 )
 
 
+ANALYSIS_SPLICED_COORDINATE_RULES = (
+    "\nFor mature-to-genomic projection, import "
+    "aso_agents.spliced_coordinates.SplicedSequenceCoordinates and supply the exact "
+    "reference chromosome, explicit '+'/'-' strand and complete genomic exon bounds "
+    "as one-based inclusive pairs. Derive fields from actual source headers; do not "
+    "zip rows from different orderings or guess absent columns. The helper orders "
+    "exons in transcript direction and project_interval returns separate genomic "
+    "blocks in mature 5prime-to-3prime order, with ascending bounds inside each block. "
+    "Minus-strand block order is therefore decreasing genomic order. Verify the sum "
+    "of exon lengths against the complete mature sequence. If reference sequence "
+    "correspondence is requested and a genome is available, use extract with a "
+    "plus-reference fetch_genomic(chrom,start1,end1) callback and compare its actual "
+    "bases to the independent mature sequence; equal lengths alone do not verify "
+    "sequence or coordinate correspondence. Missing reference evidence stays unknown. "
+    "Export these computed blocks without replacing them by a bounding span.\n"
+)
+
+
 ANALYSIS_EVIDENCE_RULES = (
     "\nEvidence and interpretation: Compute and report each requested scientific dimension "
     "from its own observations before combining dimensions into an overall decision. "
@@ -139,6 +157,7 @@ sandbox_analysis_agent = Agent(
         "- If a requested calculation cannot be completed from the declared inputs, write a result explaining that limitation instead of failing.\n"
         "Return JSON only."
         + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
+        + ANALYSIS_SPLICED_COORDINATE_RULES
     ),
     tools=[],
     model=SANDBOX_ANALYSIS_MODEL,
@@ -228,6 +247,7 @@ analysis_contract_review_agent = Agent(
         "A concrete violated check requires both fields. Do not replace the requested "
         "coverage audit with a general approval."
         + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
+        + ANALYSIS_SPLICED_COORDINATE_RULES
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
@@ -252,6 +272,7 @@ design_workbook_analysis_agent = Agent(
         "Notes are arrays of {title, rows}, with rows as arrays of cells, for Methods and other requested narrative sheets. Document unavailable analyses and limitations honestly. Other requested non-Excel files are written directly by your program. If you write requested CSV/TSV files, declare report_tables with id, source_path, columns, rank_column and preview_limit, and use {{table:ID}} in the summary.\n"
         "Read only declared input files, keep source bytes unchanged, perform no network calls, and use the exact requested output paths. Reconcile analysis_plan, assumptions, limitations and expected_outputs with the actual program. Return JSON only."
         + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
+        + ANALYSIS_SPLICED_COORDINATE_RULES
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
@@ -285,6 +306,7 @@ analysis_program_repair_agent = Agent(
         "override the execution_contract or user requirements: fix code that violates those requirements, "
         "rather than changing text to excuse it. Return the bound structured edits, not an entire new plan."
         + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
+        + ANALYSIS_SPLICED_COORDINATE_RULES
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
