@@ -24,6 +24,11 @@ _HELPERS = (
      "summarize_required_criteria(criteria, *, required_names=None)",
      "dict: status (passed/failed/indeterminate), criteria, passed_criteria, failed_criteria, "
      "unverified_criteria; omitted required names stay unknown; extra names are rejected"),
+    ("dense_ranks", "aso_agents.analysis_ranking",
+     "dense_ranks(keys, *, reverse=False)",
+     "list of one-based gap-free integer ranks in original row order; equal complete keys "
+     "share a rank; numbers, strings and tuples compare as supplied without rounding; "
+     "missing/nonfinite components rejected; no filtering or added tie-breakers"),
 )
 
 

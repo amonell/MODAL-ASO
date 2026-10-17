@@ -85,7 +85,11 @@ ANALYSIS_EVIDENCE_RULES = (
     "Binary-float arithmetic can split mathematical ties before the requested tie breakers "
     "are applied; formatting or rounding the exported value does not repair that ordering. "
     "Use the request's precision or tolerance for measured values; do not invent a rounding "
-    "rule that collapses distinct source observations.\n"
+    "rule that collapses distinct source observations. When dense ranking is requested, "
+    "import aso_agents.analysis_ranking.dense_ranks and pass the complete requested keys "
+    "for the eligible, known-key rows. Its results correspond to the original input order; "
+    "equal keys share a rank and each distinct key advances by one. Preserve other requested "
+    "ranking conventions, and do not add identifiers or chemistry as tie-breakers.\n"
 )
 
 
@@ -185,6 +189,9 @@ analysis_contract_review_agent = Agent(
         "and the sort: exact sums or differences must remain exact until tie breakers have "
         "been applied. Display rounding does not establish correct tie handling. Apply any "
         "user-stated precision or tolerance rather than inventing one. "
+        "When dense ranks are requested, verify that the distinct exported ranks are "
+        "consecutive from one across the complete ranked population; sharing a rank for "
+        "ties alone is insufficient if the next distinct key skips rank numbers. "
         "For each such obligation, quote its source in "
         "request_text, assign satisfied, violated or unverified, and cite the concrete "
         "code operation or output field that establishes that status. A Methods sentence "
