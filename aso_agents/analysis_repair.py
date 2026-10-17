@@ -91,6 +91,35 @@ def _validate_repair_boundaries(original, revised, origins):
             )
 
 
+def _validate_repaired_syntax(original, revised, origins, base_lines, patches):
+    """Explain syntax failures against the bound edits without changing code."""
+    try:
+        compile(revised, "generated_code.py", "exec")
+    except SyntaxError as exc:
+        lines = revised.splitlines()
+        center = min(max(exc.lineno or len(lines), 1), len(lines))
+        context = []
+        for index in range(max(0, center - 4), min(len(lines), center + 3)):
+            patch = origins[index]
+            context.append({
+                "revised_line": index + 1, "base_line": base_lines[index],
+                "patch_number": patch + 1 if patch is not None else None,
+                "base_span": list(patches[patch][:2]) if patch is not None else None,
+                "text": lines[index][:1000], "text_truncated": len(lines[index]) > 1000,
+            })
+        evidence = {
+            "base_sha256": code_digest(original), "message": exc.msg,
+            "lineno": exc.lineno, "offset": exc.offset,
+            "end_lineno": exc.end_lineno, "end_offset": exc.end_offset,
+            "context": context,
+            "repair_instruction": "Correct the proposed edits against the original bound "
+                "source_lines. Revised line numbers describe the rejected result, not a new "
+                "patch base. patch_number follows base-span order. Preserve intended block "
+                "structure; no indentation or scientific operation was automatically changed.",
+        }
+        raise ValueError("Repaired program syntax error\n" + json.dumps(evidence)) from exc
+
+
 def apply_program_repair(previous_plan, code, repair):
     if repair.get("base_sha256") != code_digest(code):
         raise ValueError("Code repair is not bound to the failed program.")
@@ -116,6 +145,7 @@ def apply_program_repair(previous_plan, code, repair):
         seen.add(field)
     lines = code.splitlines(keepends=True)
     origins = [None] * len(lines)
+    base_lines = list(range(1, len(lines) + 1))
     patches = repair.get("patches")
     if not isinstance(patches, list) or not patches:
         raise ValueError("Code repair must contain explicit line replacements.")
@@ -133,7 +163,9 @@ def apply_program_repair(previous_plan, code, repair):
         replacement_lines = (replacement.rstrip("\n") + "\n").splitlines(keepends=True) if replacement else []
         lines[start - 1:end] = replacement_lines
         origins[start - 1:end] = [patch_index] * len(replacement_lines)
+        base_lines[start - 1:end] = [None] * len(replacement_lines)
     revised = "".join(lines)
+    _validate_repaired_syntax(code, revised, origins, base_lines, normalized)
     _validate_repair_boundaries(code, revised, origins)
     revised = revised.strip()
     if revised == code.strip():
