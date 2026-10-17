@@ -199,6 +199,37 @@ def _validate_completed_evaluation_export_rows(payload: dict, required_outputs: 
         )
 
 
+def _computed_report_tables(result: dict, directory: Path, root: Path, source_tables: list[Path]) -> list[Path]:
+    """Admit explicitly declared tables from this attempt's fresh directory."""
+    nested = result.get('sandbox_result')
+    views = result.get('report_tables') or (nested.get('report_tables') if isinstance(nested, dict) else [])
+    if not isinstance(views, list):
+        return []  # The renderer reports invalid/conflicting declarations.
+    readonly = {path.resolve() for path in source_tables}
+    tables = []
+    for view in views:
+        if not isinstance(view, dict):
+            continue
+        path = Path(str(view.get('source_path') or ''))
+        if not path.is_absolute():
+            path = directory / path
+        resolved = path.resolve()
+        if resolved in readonly:
+            continue
+        if path.suffix.lower() not in {'.csv', '.tsv', '.xlsx'}:
+            continue
+        if (root.resolve() != root or not resolved.is_relative_to(root)
+                or any(parent.is_symlink() for parent in [path, *path.parents]
+                       if parent.is_relative_to(root))
+                or _file_signature(path) is None):
+            raise ValueError('An intermediate report table must be a new regular file under '
+                             'execution_contract.report_table_views.computed_table_directory: '
+                             + str(root) + '. Recreate the table there and update source_path; '
+                             'do not reuse a previous attempt or a read-only input as a computed result.')
+        tables.append(resolved)
+    return list(dict.fromkeys(tables))
+
+
 def execute_analysis_program(
     *, directory: Path, payload: dict, generate: Callable[[dict], dict],
     required_outputs: list[Path], timeout_seconds: int | None = None, max_attempts: int = 3,
@@ -272,11 +303,28 @@ def execute_analysis_program(
                                       and not prior_receipt.get('restored_output_paths'))
     regular_last_attempt = offset + max_attempts
     extra_attempt_authorized = False
+    computed_root = (directory / 'computed_tables'
+                     if not any(path.suffix.lower() in {'.csv', '.tsv', '.xlsx'}
+                                for path in required_outputs) else None)
+    if computed_root is not None and any(path.is_relative_to(computed_root) for path in readonly_outputs):
+        raise ValueError('The reserved computed_tables directory cannot contain read-only inputs')
     for attempt in range(offset + 1, regular_last_attempt + 1 + int(first_review_repair)):
         if attempt > regular_last_attempt and not extra_attempt_authorized:
             break
         local = directory / 'execution_attempts' / f'{attempt:02d}'
         local.mkdir(parents=True, exist_ok=False)
+        if computed_root is not None:
+            execution_contract = {**execution_contract, 'report_table_views': {
+                **execution_contract['report_table_views'],
+                'computed_table_directory': str(computed_root),
+                'computed_table_policy': 'No tabular final output is assigned to this task. '
+                    'Write derived CSV/TSV/XLSX tables inside this fresh directory and declare '
+                    'their exact paths in report_tables. They support the analysis summary '
+                    'and downstream handoff; they do not replace requested final deliverables. '
+                    'The host preserves and clears this directory before each execution. '
+                    'Never reuse a previous attempt directory or overwrite a read-only source.',
+            }}
+            request = {**request, 'execution_contract': execution_contract}
         protected = {}
         for index, path in enumerate(readonly_outputs):
             backup = local / 'preserved_outputs' / str(index)
@@ -299,6 +347,8 @@ def execute_analysis_program(
         promoted: list[tuple[Path, Path]] = []
         archived_outputs: list[dict] = []
         contract_review = None
+        computed_tables = []
+        computed_archive = None
         try:
             if not code:
                 detail = plan.get('error')
@@ -334,6 +384,16 @@ def execute_analysis_program(
             # relying on delayed/coarse/unstable filesystem timestamps. Keep
             # the previous bytes as evidence, including on unsuccessful retries.
             _archive_previous_outputs(expected_outputs, local, archived_outputs)
+            if computed_root is not None:
+                if computed_root.exists() or computed_root.is_symlink():
+                    if computed_root.is_symlink() or not computed_root.is_dir():
+                        raise ValueError('The computed_tables directory must be a regular directory')
+                    archive = local / 'previous_computed_tables'
+                    shutil.move(str(computed_root), str(archive))
+                    computed_archive = {'path': str(computed_root), 'archive': str(archive)}
+                # Fresh files prove this execution created its observations;
+                # the stable path also survives small generated-code repairs.
+                computed_root.mkdir()
             process = subprocess.run([sys.executable, str(Path(__file__).with_name("analysis_runtime.py")),
                 str(code_path.resolve()), str(diagnostic_path.resolve())], cwd=directory,
                 capture_output=True, text=True, timeout=timeout_seconds)
@@ -360,10 +420,12 @@ def execute_analysis_program(
                 raise ValueError('sandbox_result.json must contain an object')
             if validate_result is not None:
                 validate_result(result)
+            if computed_root is not None:
+                computed_tables = _computed_report_tables(result, directory, computed_root, source_tables)
             from .tabular_reports import render_report_tables
             render_report_tables(result, required_outputs, summary_path,
                                  required=bool(payload.get('require_tabular_report_views')),
-                                 source_tables=source_tables)
+                                 source_tables=source_tables, computed_tables=computed_tables)
             _validate_completed_evaluation_export_rows(payload, required_outputs)
             from .analysis_evidence import validate_recorded_export_facts
             validate_recorded_export_facts(payload, required_outputs)
@@ -384,7 +446,7 @@ def execute_analysis_program(
                     "execution_contract": execution_contract,
                     "program": code, "program_sha256": program_digest(code),
                     "result": result, "summary": summary,
-                    "output_paths": [str(path) for path in required_outputs],
+                    "output_paths": [str(path) for path in [*required_outputs, *computed_tables]],
                 }
                 try:
                     raw_review = review_program(review_input)
@@ -471,6 +533,10 @@ def execute_analysis_program(
         if readonly_outputs:
             receipt['readonly_outputs'] = [str(p) for p in readonly_outputs]
             receipt['restored_output_paths'] = changed_readonly
+        if computed_tables:
+            receipt['computed_report_tables'] = [str(path) for path in computed_tables]
+        if computed_archive is not None:
+            receipt['previous_computed_tables'] = computed_archive
         if (first_review_repair and attempt == regular_last_attempt
                 and failed_execution_seen and not review_seen and not changed_readonly
                 and contract_review is not None and contract_review['findings']):

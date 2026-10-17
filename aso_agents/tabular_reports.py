@@ -337,17 +337,25 @@ def _canonicalize_selection_report_views(texts, export_tables):
     return amended, receipts
 
 
-def render_report_tables(result, required_outputs, summary_path, *, required=False, source_tables=()):
+def render_report_tables(result, required_outputs, summary_path, *, required=False, source_tables=(), computed_tables=()):
     outputs = {str(Path(path).resolve()): Path(path) for path in required_outputs}
     export_tables = {key: path for key, path in outputs.items() if path.suffix.lower() in {".csv", ".tsv"}}
     workbook_exports = {key: path for key, path in outputs.items() if path.suffix.lower() == ".xlsx"}
     tables = dict(export_tables)
+    if computed_tables and (export_tables or workbook_exports):
+        raise ValueError("Intermediate computed tables cannot replace views of requested tabular outputs.")
+    for source in computed_tables:
+        path = Path(source).resolve()
+        if path.suffix.lower() in {".csv", ".tsv"}:
+            tables[str(path)] = path
+        elif path.suffix.lower() == ".xlsx":
+            workbook_exports[str(path)] = path
+        else:
+            raise ValueError("Computed report tables must be CSV, TSV or XLSX files.")
     for source in source_tables:
         path = Path(source).resolve()
         if path.suffix.lower() in {".csv", ".tsv"} and path.is_file():
             tables.setdefault(str(path), path)
-    if not tables and not workbook_exports:
-        return {}
     for path in export_tables.values():
         _validate_eligibility_reason_columns(path)
     def resolve_source(declared_source):
@@ -431,7 +439,7 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
     _validate_selection_report_views(texts, export_tables)
     original_model_texts = dict(texts)
     canonicalization = None
-    if len(source_tables) == 1 and not export_tables and not workbook_sources:
+    if len(source_tables) == 1 and not export_tables and not workbook_sources and not computed_tables:
         source = Path(source_tables[0]).resolve()
         with source.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle, delimiter="\t" if source.suffix.lower() == ".tsv" else ",")
@@ -496,7 +504,7 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
                           "native_source_order_view": True}
                          for marker, paths in sorted(matches.items()))
         existing = {table_key(view.get("source_path")) for view in views if isinstance(view, dict)}
-        automatic_sources = export_tables if workbook_sources else tables
+        automatic_sources = export_tables if workbook_sources or computed_tables else tables
         for key, path in automatic_sources.items():
             if key in existing:
                 continue
