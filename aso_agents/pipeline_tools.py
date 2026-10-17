@@ -54029,10 +54029,20 @@ def _apply_gapmer_species_risk_summary(
     expression_rows_by_species: Dict[str, Dict[str, Any]],
     primary_species: str,
 ) -> None:
+    statuses = row.get("off_target_screening_status_by_species")
+    statuses = statuses if isinstance(statuses, dict) else {}
+    species_keys = (set(off_target_by_species) | set(expression_rows_by_species)
+                    | set(statuses) | {primary_species})
+    # Project only the current primary-species evidence. Missing fields must
+    # not retain measurements from a prior search or another primary species.
+    for field in _SPECIES_OFFTARGET_FIELDS + _SPECIES_EXPRESSION_FIELDS:
+        row.pop(field, None)
     gene_counts: List[Optional[int]] = []
     risk_values: List[float] = []
     risk_by_species: Dict[str, Dict[str, Any]] = {}
-    for species_key in sorted(set(off_target_by_species) | set(expression_rows_by_species)):
+    for species_key in sorted(species_keys):
+        if statuses.get(species_key) == "not_applicable_no_ortholog":
+            continue
         off_target_values = off_target_by_species.get(species_key) or {}
         expression_values = expression_rows_by_species.get(species_key) or {}
         gene_count = _optional_int(off_target_values.get("off_target_gene_count"))
@@ -54281,17 +54291,17 @@ def _annotate_gapmer_offtargets_by_species(
             }
             off_target_by_species[species_key] = off_target_values
             expression_rows_by_species[species_key] = expression_values
+        row["off_target_screening_status_by_species"] = deepcopy(status_by_species)
+        row["off_target_search_provenance_by_species"] = deepcopy(search_provenance_by_species)
+        for species_key, values in off_target_by_species.items():
+            if values.get("off_target_count_status") in {"incomplete", "unavailable"}:
+                row["off_target_screening_status_by_species"][species_key] = values["off_target_count_status"]
         _apply_gapmer_species_risk_summary(
             row,
             off_target_by_species,
             expression_rows_by_species,
             primary_species,
         )
-        row["off_target_screening_status_by_species"] = deepcopy(status_by_species)
-        row["off_target_search_provenance_by_species"] = deepcopy(search_provenance_by_species)
-        for species_key, values in off_target_by_species.items():
-            if values.get("off_target_count_status") in {"incomplete", "unavailable"}:
-                row["off_target_screening_status_by_species"][species_key] = values["off_target_count_status"]
 
     schema = base_payload.get("schema") if isinstance(base_payload.get("schema"), dict) else {}
     columns = schema.get("columns") if isinstance(schema.get("columns"), dict) else {}
