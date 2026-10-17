@@ -3597,6 +3597,12 @@ async def _audit_request_obligations(
         _normalize_requested_accessibility_provenance(goal, source_text)
         return intake_out
 
+    from aso_agents.request_obligation_completion import complete_panel_obligation
+    audit, contract_completion = await complete_panel_obligation(
+        audit, source_text, {'original_request': user_request, 'clarification_history': qa_history},
+        Runner.run, _parse_agent_json,
+    )
+
     synchronized_fields = {"target_accessibility", "target_accessibility_request_quote"}
     count = audit.get("candidate_count")
     per_site = audit.get('per_site_count')
@@ -3784,6 +3790,7 @@ async def _audit_request_obligations(
         "conditional_exon_skip_events": events,
         "program_obligations": program_obligations,
         "quote_repair": quote_repair,
+        "contract_completion": contract_completion,
     }
     return intake_out
 
