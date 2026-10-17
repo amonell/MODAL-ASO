@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixture_id": "cdkn1b_regulatory_intervals",
+  "description": "Four frozen CDKN1B regulatory intervals used by binding-site constraint tests.",
+  "species": "human",
+  "gene_symbol": "CDKN1B",
+  "genome_build": "GRCh38",
+  "intervals": [
+    {"label": "PUM1/eCLIP site 1", "chrom": "chr12", "start": 12721313, "end": 12721416, "strand": "+", "source_type": "rbp_binding"},
+    {"label": "PUM1/eCLIP site 2", "chrom": "chr12", "start": 12721400, "end": 12721460, "strand": "+", "source_type": "rbp_binding"},
+    {"label": "miR-221/miR-222 seed window 1", "chrom": "chr12", "start": 12721208, "end": 12721253, "strand": "+", "source_type": "mirna_binding"},
+    {"label": "miR-221/miR-222 seed window 2", "chrom": "chr12", "start": 12721281, "end": 12721326, "strand": "+", "source_type": "mirna_binding"}
+  ],
+  "provenance": [
+    "tests/test_binding_site_constraints.py::test_user_provided_binding_intervals_are_materialized_verbatim",
+    "tests/adversarial_cases/full_run_cases.json#cdkn1b_utr_binding_paper_request"
+  ],
+  "scope_note": "This is a regression fixture copied from existing contracts, not an independent biological reference assertion."
+}

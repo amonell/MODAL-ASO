@@ -1,0 +1,367 @@
+import re
+import os
+import sys
+import glob
+import warnings 
+import gzip
+from collections import defaultdict
+from datetime import datetime
+from pytz import timezone, utc
+
+utc_time = datetime.utcnow()
+pst_tz = timezone('US/Pacific')
+pst_time = utc_time.replace(tzinfo=utc).astimezone(pst_tz)
+today = pst_time.strftime("%Y%m%d")
+
+locals().update(config)
+"""
+snakemake \
+--configfile /tscc/nfs/home/bay001/projects/katie_aso_20241218/permanent_data/02_snakemake/config.yaml \
+-s /tscc/nfs/home/bay001/projects/katie_aso_20241218/permanent_data/02_snakemake/Snakefile -n
+"""
+
+if not os.path.exists(os.path.join(OUTPUT_FOLDER, "stderr")): os.makedirs(os.path.join(OUTPUT_FOLDER, "stderr"))
+if not os.path.exists(os.path.join(OUTPUT_FOLDER, "stdout")): os.makedirs(os.path.join(OUTPUT_FOLDER, "stdout"))
+REGIONS = config["REGIONS"]
+SAMPLES = [os.path.splitext(os.path.basename(region))[0] for region in REGIONS]
+PHASTCONS = config["PHASTCONS"]
+PHYLOP = config["PHYLOP"]
+GENOME = config["GENOME"]
+INPUT_FOLDER = config["INPUT_FOLDER"]
+OUTPUT_FOLDER = config["OUTPUT_FOLDER"]
+BOWTIE_INDEX = config["BOWTIE_INDEX"]
+SECONDARY_INDEX = config["SECONDARY_INDEX"]
+SECONDARY_ANNOTATION = config["SECONDARY_ANNOTATION"]
+NUM_MISMATCHES = config["NUM_MISMATCHES"]
+PHASTCONS_THRESHOLD = config["PHASTCONS_THRESHOLD"]
+PHYLOP_THRESHOLD = config["PHYLOP_THRESHOLD"]
+CONSERVATION_MODE = config.get("CONSERVATION_MODE", "available")
+GC_MIN = config["GC_MIN"]
+GC_MAX = config["GC_MAX"]
+HOMOPOLYMERS = list(config["AVOID"])
+CHROM_SIZES = config["CHROM_SIZES"]
+UCSC_SPECIES = config["UCSC_SPECIES"]
+CHEMISTRY = config.get("CHEMISTRY", "steric-hindrance")
+TILE_LEN = config["TILE_LEN"]
+
+rule all:
+    input:
+        # tiles = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"), sample=SAMPLES),
+        # mapped_tiles = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.fasta"), sample=SAMPLES),
+        # folded = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.folded"), sample=SAMPLES),
+        # folded_fasta = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.folded.fasta"), sample=SAMPLES),
+        mapped = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam"), sample=SAMPLES),
+        mapped_near = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_near.sam"), sample=SAMPLES),
+        mapped_secondary = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam"), sample=SAMPLES),
+        assignments_secondary = expand(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam.featureCounts"), sample=SAMPLES),
+        bed = expand(os.path.join(OUTPUT_FOLDER, "{sample}.scored.bed"), sample=SAMPLES),
+        idt = expand(os.path.join(OUTPUT_FOLDER, "{sample}.scored.idt.tsv"), sample=SAMPLES),
+        hub_stdout = expand(os.path.join(OUTPUT_FOLDER, "{sample}.trackhub.txt"), sample=SAMPLES),
+        upset = expand(os.path.join(OUTPUT_FOLDER, "{sample}.upset.pdf"), sample=SAMPLES), 
+    run:
+
+        for b, h in zip(input.bed, input.hub_stdout):
+            print(f"### TOP HITS FOR {b} ###")
+            min_coords = 1000000000
+            max_coords = -1
+            chrom = ""
+            with open(b, 'r') as f:
+                for line in f:
+                    line = line.rstrip().split('\t')
+                    seq = line[3].split('|seq=')[1]
+                    line[3] = line[3].split('|seq=')[0]
+                    chrom = line[0]
+                    if int(line[1]) <= min_coords: min_coords = int(line[1])
+                    if int(line[2]) >= max_coords: max_coords = int(line[2])
+                    if line[4] == '1000':
+                        print('\t'.join(line) + "\t" + seq)
+            url = ""
+            with open(h, 'r') as f:
+                for line in f:
+                    if line.startswith("FINAL URL:"):
+                        parts = line.rstrip().split("FINAL URL: ", 1)
+                        url = parts[1] if len(parts) > 1 else ""
+            if url:
+                final_url = f"https://genome.ucsc.edu/cgi-bin/hgTracks?db={UCSC_SPECIES}&hubUrl={url}&ignoreCookie=1&wgEncodeGencodeV42_hideKids=1&wgEncodeGencodeCompV42=full&wgEncodeGencodeCompV42_sel=1&position={chrom}:{min_coords}-{max_coords}"
+                print(f"URL: {final_url}")
+            else:
+                print("URL: trackhub unavailable; maketrackhubs did not provide a final hub URL")
+rule tile:
+    """
+    tiles sequences
+    """
+    input:
+        region=os.path.join(INPUT_FOLDER, "{sample}.bed"),
+        phastcons=[] if CONSERVATION_MODE == "disabled" else PHASTCONS,
+        phylop=[] if CONSERVATION_MODE == "disabled" else PHYLOP,
+        genome=GENOME
+    output:
+        tiles=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"),
+    params:
+        output_folder = os.path.join(OUTPUT_FOLDER, "pipeline_outputs"),
+        run_time = "0:05:00",
+        memory = "1000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.tile.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.tile.out"),
+        tile_len = TILE_LEN,
+        conservation_args = "--no-conservation" if CONSERVATION_MODE == "disabled" else f"-p {PHASTCONS} -y {PHYLOP}",
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        python tile_seqs.py -b {input.region} -f {input.genome} {params.conservation_args} -o {params.output_folder} --length {params.tile_len}
+        """
+
+rule map:
+    """
+    Maps sequences. Tiles that align to more than 3 (-m) positions are filtered out.
+    """
+    input:
+        tiles=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"),
+    output:
+        tempfile=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam.tmp")),
+        mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam"),
+        overflow=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.overflow.fasta")),
+    params:
+        bowtie_index=BOWTIE_INDEX,
+        num_mismatches=0,
+        seed_length=min(TILE_LEN, 18),
+        multi_limit=2000,
+        run_time = "0:10:00",
+        memory = "16000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.map.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.map.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        bowtie -a -f -v {params.num_mismatches} -y -m {params.multi_limit} -l {params.seed_length} --sam --sam-nohead --no-unal --seed 1 --max {output.overflow} {params.bowtie_index} {input.tiles} {output.tempfile};
+        touch {output.overflow};
+        sort {output.tempfile} | uniq > {output.mapped};
+        """
+
+rule map_secondary:
+    """
+    Maps sequences. Tiles that align to more than 3 (-m) positions are filtered out.
+    """
+    input:
+        tiles=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"),
+    output:
+        mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam"),
+        sam=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_near.sam"),
+        overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_overflow.fasta"),
+    params:
+        bowtie_index=SECONDARY_INDEX,
+        num_mismatches=NUM_MISMATCHES,
+        run_time = "0:10:00",
+        memory = "16000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.map_secondary.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.map_secondary.out"),
+        tile_len = TILE_LEN,
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        bowtie -a -f -v {params.num_mismatches} -y -m 2000 -l {params.tile_len} --sam --no-unal --seed 1 --max {output.overflow} {params.bowtie_index} {input.tiles} {output.sam}
+        touch {output.overflow}
+        samtools view -bS {output.sam} -o {output.mapped}
+        """
+
+rule annotate_secondary:
+    """
+    Maps sequences. Tiles that align to more than 3 (-m) positions are filtered out.
+    """
+    input:
+        mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam"),
+        secondary_annotation=SECONDARY_ANNOTATION,
+    output:
+        assignments=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam.featureCounts"),
+        counts=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.secondary_counts.txt"),
+    params:
+        output_directory=os.path.join(OUTPUT_FOLDER, "pipeline_outputs"),
+        bowtie_index=SECONDARY_INDEX,
+        num_mismatches=NUM_MISMATCHES,
+        run_time = "0:10:00",
+        memory = "16000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.assign_secondary.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.assign_secondary.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        featureCounts -a {input.secondary_annotation} -g gene_name -s 1 -R CORE --Rpath {params.output_directory} -o {output.counts} {input.mapped}
+        """
+
+rule convert_to_seq:
+    """
+    maps sequences
+    """
+    input:
+        mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam"),
+        near_mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_near.sam"),
+        near_overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_overflow.fasta"),
+        overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.overflow.fasta"),
+        assignments=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam.featureCounts"),
+    output:
+        fasta=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.fasta")),
+    params:
+        run_time = "0:5:00",
+        memory = "1000",
+        max_mismatches = NUM_MISMATCHES,
+        same_reference = "--same-reference" if os.path.realpath(BOWTIE_INDEX) == os.path.realpath(SECONDARY_INDEX) else "",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.convert.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.convert.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        python filter_mapped.py -s {input.mapped} -f {input.assignments} -o {output.fasta} --overflow {input.overflow} --near-sam {input.near_mapped} --near-overflow {input.near_overflow} --max-mismatches {params.max_mismatches} {params.same_reference}
+        """
+
+rule fold:
+    """
+    folds sequences
+    """
+    input:
+        aligned=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.fasta"),
+    output:
+        folded=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.folded"),
+    params:
+        run_time = "0:10:00",
+        memory = "16000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.fold.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.fold.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        RNAfold --noconv --noPS {input.aligned} > {output.folded}
+        """
+
+rule format:
+    """
+    tiles sequences
+    """
+    input:
+        folded=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.folded"),
+    output:
+        fasta=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.folded.fasta")),
+    params:
+        output_folder = os.path.join(OUTPUT_FOLDER, "pipeline_outputs"),
+        run_time = "0:05:00",
+        memory = "1000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.format.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.format.out"),
+    resources:
+    threads: 1
+    run:
+        records = defaultdict(list)
+        with open(input.folded, 'r') as infile:
+            for line in infile:
+                if line.startswith('>'):
+                    name = line.strip()
+                else:
+                    records[name].append(line.rstrip().split(' ')[0])
+        with open(output.fasta, 'w') as outfile:
+            for header, value in records.items():
+                seq = records[header][0]
+                struct = records[header][1]
+                if struct.count('.') == TILE_LEN:
+                    new_header = header + "|nostruct=YES"
+                else:
+                    new_header = header + "|nostruct=NO"
+                outfile.write(f"{new_header}\n{seq}\n")
+
+rule score:
+    """
+    tiles sequences
+    """
+    input:
+        fasta=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.folded.fasta"),
+    output:
+        bed=os.path.join(OUTPUT_FOLDER, "{sample}.scored.bed"),
+        idt=os.path.join(OUTPUT_FOLDER, "{sample}.scored.idt.tsv"),
+        upset=os.path.join(OUTPUT_FOLDER, "{sample}.upset.pdf"),
+    params:
+        chemistry = CHEMISTRY,
+        phastcons_threshold = PHASTCONS_THRESHOLD,
+        phylop_threshold = PHYLOP_THRESHOLD,
+        gc_min = GC_MIN,
+        gc_max = GC_MAX,
+        homopolymers = HOMOPOLYMERS,
+        output_folder = os.path.join(OUTPUT_FOLDER, "pipeline_outputs"),
+        run_time = "0:05:00",
+        memory = "1000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.scored.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.scored.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        if [ -n "{params.homopolymers}" ]; then
+            python filter_seqs.py -f {input.fasta} -ob {output.bed} -oi {output.idt} -ou {output.upset} -pt {params.phastcons_threshold} -yt {params.phylop_threshold} -g {params.gc_min} -G {params.gc_max} -p {params.homopolymers:q} -m {params.chemistry}
+        else
+            python filter_seqs.py -f {input.fasta} -ob {output.bed} -oi {output.idt} -ou {output.upset} -pt {params.phastcons_threshold} -yt {params.phylop_threshold} -g {params.gc_min} -G {params.gc_max} -m {params.chemistry}
+        fi
+        """
+
+rule bigbed:
+    """
+    bed to bigbed
+    """
+    input:
+        bed=os.path.join(OUTPUT_FOLDER, "{sample}.scored.bed"),
+    output:
+        bigbed=temp(os.path.join(OUTPUT_FOLDER, "{sample}.scored.bb")),
+    params:
+        chrom_sizes = CHROM_SIZES,
+        run_time = "0:05:00",
+        memory = "1000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.bigbed.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.bigbed.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        
+        export LC_COLLATE=C;
+        sort -k1,1 -k2,2n {input.bed} > {input.bed}.sorted;
+        awk -v OFS='\t' '{{ if (length($4) > 250) $4 = substr($4, 1, 250); print }}' {input.bed}.sorted > {input.bed}.sorted.trunc;
+        bedToBigBed -type=bed6 {input.bed}.sorted.trunc {params.chrom_sizes} {output.bigbed};
+        """
+
+rule maketrackhub:
+    """
+    makes trackhub
+    """
+    input:
+        bed=os.path.join(OUTPUT_FOLDER, "{sample}.scored.bb"),
+    output:
+        hub_stdout=os.path.join(OUTPUT_FOLDER, "{sample}.trackhub.txt")
+    params:
+        output_folder = OUTPUT_FOLDER,
+        hub_url = today+"-asodesign-{sample}",
+        ucsc_species = UCSC_SPECIES,
+        run_time = "0:10:00",
+        memory = "1000",
+        error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.trackhub.err"),
+        out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.trackhub.out"),
+    resources:
+    threads: 1
+    shell:
+        """
+        if command -v maketrackhubs >/dev/null 2>&1; then
+            maketrackhubs --hub {params.hub_url} --genome {params.ucsc_species} {input.bed} > {output.hub_stdout}
+        else
+            {{
+                echo "TRACKHUB SKIPPED: maketrackhubs executable not found."
+                echo "Install maketrackhubs to generate UCSC hub upload output."
+            }} > {output.hub_stdout}
+        fi
+        """

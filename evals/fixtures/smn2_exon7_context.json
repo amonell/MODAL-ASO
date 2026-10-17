@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "fixture_id": "smn2_exon7_context",
+  "description": "Frozen SMN2 exon 7 regression coordinates used by the existing workflow tests.",
+  "species": "human",
+  "gene_symbol": "SMN2",
+  "genome_build": "GRCh38",
+  "transcripts": {
+    "excluded": "ENST00000626847",
+    "included": "ENST00000380743"
+  },
+  "sites": {
+    "exon7_acceptor": 70076521,
+    "exon7_donor": 70076574,
+    "excluded_isoform_next_acceptor": 70077019
+  },
+  "materialized_windows": [
+    {"label": "exon7_acceptor_window", "chrom": "chr5", "start": 70076495, "end": 70076545, "strand": "+"},
+    {"label": "exon7_donor_window", "chrom": "chr5", "start": 70076564, "end": 70076634, "strand": "+"},
+    {"label": "exon7_iss_n1_window", "chrom": "chr5", "start": 70076574, "end": 70076634, "strand": "+"}
+  ],
+  "provenance": [
+    "tests/test_task_graph_workflows.py::test_splice_relative_windows_use_route_signal_exon_when_transcript_indices_are_offset",
+    "tests/adversarial_cases/full_run_cases.json#smn2_exon7_paper_request"
+  ],
+  "scope_note": "This is a regression fixture copied from existing contracts, not an independent biological reference assertion."
+}

@@ -1,0 +1,700 @@
+{
+  "schema_version": 1,
+  "description": "API-backed adversarial full-run validation cases for MODAL-ASO production readiness.",
+  "common_clarification_answers": [
+    {
+      "label": "download_missing_static_reference_assets",
+      "contains_any": [
+        "download to default",
+        "download to /absolute/path",
+        "required reference assets",
+        "reference assets"
+      ],
+      "contains_all": [
+        "download"
+      ],
+      "answer": "download to {REFERENCE_DATA_ROOT}"
+    },
+    {
+      "label": "rerun_after_preinstalled_assets",
+      "contains_any": [
+        "assets installed; rerun preflight",
+        "install splice assets",
+        "Should I install them now"
+      ],
+      "answer": "install splice assets"
+    }
+  ],
+  "cases": [
+    {
+      "id": "context_gate_smn2_missing",
+      "category": "clarification_gate",
+      "description": "Missing target context must pause before design, then resume with the user supplied context.",
+      "request": "Design steric splice-switching ASOs for human SMN2 exon 7 inclusion. Return at least 20 candidates per site.",
+      "max_resume_cycles": 6,
+      "timeout_seconds": 5400,
+      "clarification_answers": [
+        {
+          "contains_any": [
+            "biological target context",
+            "target context",
+            "target_context"
+          ],
+          "answer": "Human spinal cord motor neurons in an SMA in vitro model."
+        },
+        {
+          "contains_any": [
+            "distinct target sites",
+            "per site",
+            "target-site definitions",
+            "targeting window",
+            "for each site",
+            "flanking window",
+            "window should be included"
+          ],
+          "answer": "Use biologically distinct exon 7 inclusion-relevant steric target regions: the exon 7 acceptor-proximal junction, the exon 7 donor-proximal junction, and the intron 7 ISS-N1/donor-proximal downstream silencer window. For the acceptor site use 25 nt upstream in intron 6 plus the first 25 nt of exon 7. For the donor site use the last 10 nt of exon 7 plus 60 nt downstream into intron 7. For ISS-N1 use donor +1 to +60 downstream if the exact motif span is unavailable."
+        },
+        {
+          "contains_any": [
+            "intronic pre-mRNA",
+            "exonic sequence only"
+          ],
+          "answer": "ASOs may bind intronic pre-mRNA sequence. Use exon plus adjacent intronic flanks for the donor, acceptor, and ISS-N1/downstream silencer windows."
+        },
+        {
+          "contains_any": [
+            "transcript",
+            "isoform",
+            "ENST"
+          ],
+          "answer": "Use ENST00000626847 as the exon 7 skipped isoform to decrease and ENST00000380743 as the exon 7 included isoform to increase."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "must_ask": [
+          {
+            "contains_any": [
+              "biological target context",
+              "target context",
+              "target_context"
+            ]
+          }
+        ],
+        "structured_goal_contains_all": [
+          "SMN2",
+          "spinal cord motor neurons",
+          "SMA",
+          "exon 7"
+        ],
+        "route_positions_all": [
+          70077019
+        ],
+        "route_positions_forbidden": [
+          70070641
+        ],
+        "route_labels_contain_all": [
+          "acceptor@70076521",
+          "acceptor@70077019"
+        ],
+        "steric_region_labels_contain_all": [
+          "steric_region_steric_exon7_acceptor_window",
+          "steric_region_steric_exon7_donor_window",
+          "steric_region_steric_exon7_iss_n1_window"
+        ],
+        "steric_region_text_contains_all": [
+          "70076495",
+          "70076545",
+          "70076564",
+          "70076634"
+        ],
+        "steric_region_positions_forbidden": [
+          70070615,
+          70070741,
+          70070732
+        ],
+        "candidate_row_count_min": 1,
+        "generated_candidate_selection_scope": "per_site",
+        "generated_group_labels_contain_all": [
+          "exon7_acceptor_window",
+          "exon7_donor_window",
+          "exon7_iss_n1_window"
+        ],
+        "generated_group_counts_min": {
+          "exon7_donor_window": 1,
+          "exon7_iss_n1_window": 1
+        },
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true
+      }
+    },
+    {
+      "id": "smn2_exon7_paper_request",
+      "category": "paper_request",
+      "description": "SMN2 exon 7 inclusion should target exon 7 donor/acceptor/ISS-N1 biology and avoid the older wrong upstream anchor.",
+      "request": "Design steric splice-switching ASOs for human SMN2 in human spinal cord motor neurons in an SMA in vitro model to convert Ensembl transcript ENST00000626847, the exon 7 skipped isoform, toward Ensembl transcript ENST00000380743 by increasing exon 7 inclusion. Return at least 20 ASOs per site. Use biologically distinct exon 7 inclusion-relevant steric target regions: the intron 7 ISS-N1/donor-proximal downstream silencer region, the exon 7 donor-proximal junction region, and the exon 7 acceptor-proximal junction region. For the acceptor site use 25 nt upstream in intron 6 plus the first 25 nt of exon 7. For the donor site use the last 10 nt of exon 7 plus 60 nt downstream into intron 7. If an exact ISS-N1 motif span is available, include the donor +1 to +60 downstream window as the ISS-N1 route.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "clarification_answers": [
+        {
+          "contains_any": [
+            "transcript",
+            "isoform"
+          ],
+          "answer": "Use ENST00000626847 as the exon 7 skipped isoform to decrease and ENST00000380743 as the exon 7 included isoform to increase."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "SMN2",
+          "ENST00000626847",
+          "ENST00000380743",
+          "exon 7",
+          "ISS-N1",
+          "spinal cord motor neurons"
+        ],
+        "route_positions_all": [
+          70077019
+        ],
+        "route_positions_forbidden": [
+          70070641
+        ],
+        "route_labels_contain_all": [
+          "acceptor@70076521",
+          "acceptor@70077019"
+        ],
+        "steric_region_labels_contain_all": [
+          "steric_region_steric_exon7_acceptor_window",
+          "steric_region_steric_exon7_donor_window",
+          "steric_region_steric_exon7_iss_n1_window"
+        ],
+        "steric_region_text_contains_all": [
+          "70076495",
+          "70076545",
+          "70076564",
+          "70076634"
+        ],
+        "steric_region_positions_forbidden": [
+          70070615,
+          70070741,
+          70070732
+        ],
+        "candidate_row_count_min": 1,
+        "generated_candidate_selection_scope": "per_site",
+        "generated_group_labels_contain_all": [
+          "exon7_acceptor_window",
+          "exon7_donor_window",
+          "exon7_iss_n1_window"
+        ],
+        "generated_group_counts_min": {
+          "exon7_donor_window": 1,
+          "exon7_iss_n1_window": 1
+        },
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "Routes should be exon 7 inclusion routes, not a broad list of untargetable SMN2 splice sites."
+      }
+    },
+    {
+      "id": "lmna_progerin_paper_request",
+      "category": "paper_request",
+      "description": "LMNA request should preserve progerin-reduction and Lamin A/C preservation objectives.",
+      "request": "Design steric splice-switching ASOs for human LMNA in HGPS patient dermal fibroblasts to reduce the pathogenic progerin isoform while preserving normal Lamin A and Lamin C isoforms. Use the LMNA exon 11/progerin cryptic splice context and return the ranked candidate set with off-target expression annotation.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "clarification_answers": [
+        {
+          "contains_any": [
+            "transcript",
+            "isoform",
+            "exon"
+          ],
+          "answer": "Accept the suggested isoform transcript IDs: use ENST00000368299 for progerin, ENST00000368300 for Lamin A, and ENST00000368301 for Lamin C."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "LMNA",
+          "progerin",
+          "Lamin A",
+          "Lamin C",
+          "dermal fibroblasts"
+        ],
+        "route_site_kinds_all": [
+          "acceptor",
+          "donor"
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "Routes should be justified by progerin/Lamin A/C isoform balance, not generic LMNA knockdown."
+      }
+    },
+    {
+      "id": "lmna_figure6_paper_request",
+      "category": "paper_request",
+      "description": "Figure 6 LMNA request should produce several isoform-balancing splice routes, not only the progerin cryptic donor.",
+      "request": "Design steric splice-switching ASOs for human LMNA in human fibroblasts. I want to decrease the progerin isoform of LMNA as top priority with SSOs, and increase the isoform represented by SnapGene file ~/lamina.dna and the Lamin C isoform. If ~/lamina.dna is unavailable, ask which isoform it represents rather than assuming. Return ranked candidate sets for each targetable splice route with off-target expression annotation.",
+      "max_resume_cycles": 6,
+      "timeout_seconds": 7200,
+      "clarification_answers": [
+        {
+          "contains_all": [
+            "lamina.dna"
+          ],
+          "answer": "The SnapGene file is unavailable in this validation run; use Lamin A / ENST00000368300 as the isoform represented by ~/lamina.dna."
+        },
+        {
+          "contains_any": [
+            "transcript",
+            "isoform",
+            "exon"
+          ],
+          "answer": "Use ENST00000368299 for progerin, ENST00000368300 for the Lamin A/SnapGene isoform, and ENST00000368301 for Lamin C. Do not use ENST00000368300 for Lamin C. Decrease progerin and increase Lamin A/SnapGene plus Lamin C."
+        },
+        {
+          "contains_any": [
+            "context",
+            "cell type",
+            "tissue"
+          ],
+          "answer": "Use human HGPS patient dermal fibroblasts as the biological target context."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "LMNA",
+          "progerin",
+          "Lamin A",
+          "Lamin C",
+          "fibroblasts"
+        ],
+        "route_positions_all": [
+          156137743,
+          156138488,
+          156138607,
+          156139080
+        ],
+        "route_positions_any": [
+          156138757
+        ],
+        "route_site_kinds_all": [
+          "acceptor",
+          "donor"
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "Routes should resemble the Figure 6 LMNA route set: exon 10 donor, exon 11 acceptor, progerin donor, exon 12 acceptor, and possible Lamin A donor context."
+      }
+    },
+    {
+      "id": "mapt_exon10_paper_request",
+      "category": "paper_request",
+      "description": "MAPT exon 10 modulation should produce separate donor and acceptor route outputs for exon exclusion.",
+      "request": "Design steric splice-switching ASOs for human MAPT in human iPSC-derived cortical neurons to reduce MAPT exon 10 inclusion and favor exon 10 exclusion. Evaluate donor and acceptor splice-site windows as separate target routes, not a shared combined route, and return 20 candidates for each route.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "clarification_answers": [
+        {
+          "contains_all": [
+            "MAPT full-length",
+            "exon 10 included"
+          ],
+          "answer": "Use ENST00000446361 for the exon 10-included 4R MAPT transcript to decrease."
+        },
+        {
+          "contains_all": [
+            "MAPT \u039410",
+            "exon 10 skipped"
+          ],
+          "answer": "Use ENST00000334239 for the exon 10-skipped/3R MAPT transcript to increase."
+        },
+        {
+          "contains_any": [
+            "distinct target sites",
+            "per route",
+            "per site"
+          ],
+          "answer": "Use two separate exon 10 routes: an acceptor-proximal window and a donor-proximal window. Do not merge them into one shared route."
+        },
+        {
+          "contains_any": [
+            "transcript",
+            "isoform",
+            "ENST"
+          ],
+          "answer": "Use ENST00000446361 as the exon 10-included 4R MAPT transcript to decrease and ENST00000334239 as the exon 10-skipped/3R MAPT transcript to increase. Use ENST00000446361 for exon 10 site mapping."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "MAPT",
+          "exon 10",
+          "exclusion",
+          "cortical neurons"
+        ],
+        "route_site_kinds_all": [
+          "acceptor",
+          "donor"
+        ],
+        "route_labels_forbidden": [
+          "shared_context"
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "The generated ASO set should reflect exclusion-focused MAPT exon 10 donor and acceptor route bins."
+      }
+    },
+    {
+      "id": "pcca_poison_exon_paper_request",
+      "category": "paper_request",
+      "description": "PCCA poison exon request should preserve explicit hg38 target span and separate donor/acceptor routes.",
+      "request": "Design steric splice-switching ASOs for human PCCA in human hepatocyte-like cells to promote skipping of the PCCA poison exon at hg38 chr13:100305751-100305834 (+) and recover productive PCCA mRNA. Evaluate the poison-exon acceptor and donor target-site routes separately and return the top 20 ASOs for each route.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "clarification_answers": [
+        {
+          "contains_any": [
+            "coordinate",
+            "poison exon"
+          ],
+          "answer": "Use hg38 chr13:100305751-100305834 on the plus strand as the PCCA poison exon span."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "PCCA",
+          "poison",
+          "hepatocyte",
+          "100305751",
+          "100305834"
+        ],
+        "route_positions_all": [
+          100305751,
+          100305834
+        ],
+        "route_site_kinds_all": [
+          "acceptor",
+          "donor"
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true
+      }
+    },
+    {
+      "id": "cdkn1b_utr_binding_paper_request",
+      "category": "paper_request",
+      "description": "CDKN1B target-site blocker request should use only the four explicit manuscript intervals.",
+      "request": "Design 20-nt steric ASOs for human CDKN1B in HEK293T in vitro cells to block PUM1/eCLIP site 1 chr12:12721313-12721416 (+), PUM1/eCLIP site 2 chr12:12721400-12721460 (+), miR-221/miR-222 seed window 1 chr12:12721208-12721253 (+), and miR-221/miR-222 seed window 2 chr12:12721281-12721326 (+). Use hg38 and accept any overlap with each site.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 3600,
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "CDKN1B",
+          "HEK293T",
+          "PUM1",
+          "miR-221",
+          "miR-222",
+          "12721313",
+          "12721416",
+          "12721400",
+          "12721460",
+          "12721208",
+          "12721253",
+          "12721281",
+          "12721326"
+        ],
+        "materialized_coordinates_all": [
+          12721313,
+          12721416,
+          12721400,
+          12721460,
+          12721208,
+          12721253,
+          12721281,
+          12721326
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "Candidate intervals should be bounded by the four supplied target-site intervals; the model should not substitute old names or unrelated CDKN1B regions."
+      }
+    },
+    {
+      "id": "coordinate_build_conflict",
+      "category": "ambiguity",
+      "description": "Mixed genome-build coordinates should trigger clarification instead of silently merging incompatible spans.",
+      "request": "Design steric ASOs for human CDKN1B in HEK293T cells using hg19 chr12:12721208-12721253 for one regulatory site and hg38 chr12:12721313-12721416 for a second regulatory site. Use any overlap with each site.",
+      "max_resume_cycles": 1,
+      "timeout_seconds": 1800,
+      "expect": {
+        "terminal_status": [
+          "needs_user_input"
+        ],
+        "must_ask": [
+          {
+            "contains_any": [
+              "hg19",
+              "hg38",
+              "genome build",
+              "coordinate"
+            ]
+          }
+        ],
+        "must_not_launch_design": true,
+        "qualitative_focus": "The platform should ask the user to resolve the coordinate build conflict before tiling."
+      }
+    },
+    {
+      "id": "lrrk2_transcript_version_drift",
+      "category": "transcript_resolution",
+      "description": "Versioned transcript requests should lock the base transcript and preserve the version metadata.",
+      "request": "Design steric splice-switching ASOs for human LRRK2 in human iPSC-derived dopaminergic neurons to decrease inclusion of exon 27 in Ensembl transcript ENST00000298910.12. Keep that transcript choice locked and do not silently switch to another isoform.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "clarification_answers": [
+        {
+          "contains_any": [
+            "transcript",
+            "isoform"
+          ],
+          "answer": "Use ENST00000298910.12 exactly as the user-specified transcript lock; normalize the base ID to ENST00000298910 and preserve version 12 metadata."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "LRRK2",
+          "ENST00000298910",
+          "version",
+          "12",
+          "exon 27",
+          "dopaminergic neurons"
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true
+      }
+    },
+    {
+      "id": "impossible_gapmer_constraints",
+      "category": "constraint_edge_case",
+      "description": "Impossible constraints should produce a truthful no-candidates/constraint-exhausted result, not fabricated candidates.",
+      "request": "Design 20-nt gapmer ASOs for human CDKN1B in HEK293T in vitro cells, but constrain candidates to hg38 chr12:12721208-12721217 (+), require GC content exactly 50%, exclude G homopolymer runs of length 1 or greater, and require at most one total binding site. Return 50 candidates if feasible.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 3600,
+      "expect": {
+        "terminal_status": [
+          "run_complete",
+          "needs_user_input"
+        ],
+        "structured_goal_contains_all": [
+          "CDKN1B",
+          "HEK293T",
+          "12721208",
+          "12721217"
+        ],
+        "parameter_constraints": {
+          "gc_content": {
+            "min": 0.5,
+            "max": 0.5
+          },
+          "max_binding_sites": 1,
+          "homopolymers": {
+            "per_base_max": {
+              "G": 0
+            }
+          }
+        },
+        "candidate_row_count_max": 0,
+        "allow_no_candidates": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "The correct behavior is graceful infeasibility or an explicit clarification; it must not invent 20 nt ASOs from a 10 bp required region."
+      }
+    },
+    {
+      "id": "large_multigene_task_graph",
+      "category": "large_task_graph",
+      "description": "Large composite request should remain a structured task graph without collapsing independent contexts.",
+      "request": "Run separate MODAL-ASO design programs and one synthesis for these independent goals: human LMNA steric ASOs in HGPS dermal fibroblasts to reduce progerin while preserving Lamin A/C; human MAPT steric ASOs in iPSC-derived cortical neurons to reduce exon 10 inclusion; human CDKN1B 20-nt steric ASOs in HEK293T cells to block the four hg38 target-site intervals chr12:12721313-12721416, chr12:12721400-12721460, chr12:12721208-12721253, and chr12:12721281-12721326 with any overlap. Compare the generated candidate sets and write one synthesis.",
+      "max_resume_cycles": 7,
+      "timeout_seconds": 7200,
+      "clarification_answers": [
+        {
+          "contains_any": [
+            "LMNA",
+            "progerin"
+          ],
+          "answer": "For the LMNA child design, reduce progerin and preserve Lamin A/C in HGPS dermal fibroblasts."
+        },
+        {
+          "contains_any": [
+            "MAPT",
+            "exon 10"
+          ],
+          "answer": "For the MAPT child design, reduce exon 10 inclusion in human iPSC-derived cortical neurons."
+        },
+        {
+          "contains_any": [
+            "CDKN1B",
+            "12721313"
+          ],
+          "answer": "For the CDKN1B child design, use the four provided hg38 intervals exactly and allow any overlap."
+        }
+      ],
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "request_envelope_design_task_count_min": 3,
+        "structured_goal_contains_all": [
+          "LMNA",
+          "MAPT",
+          "CDKN1B",
+          "dermal fibroblasts",
+          "cortical neurons",
+          "HEK293T"
+        ],
+        "child_run_count_min": 3,
+        "composite_report_required": true,
+        "no_reference_skip": true,
+        "qualitative_focus": "The task graph should keep three independent design programs and compare their actual candidate outputs."
+      }
+    },
+    {
+      "id": "reference_download_isolated_root",
+      "category": "reference_assets",
+      "description": "A missing isolated reference root should ask for download approval and run the download path.",
+      "request": "Design human PCSK9 gapmer ASOs in HepG2 hepatocyte cells to reduce PCSK9 expression.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 7200,
+      "isolated_reference_root": true,
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "must_ask": [
+          {
+            "contains_any": [
+              "download",
+              "reference assets",
+              "reference data"
+            ]
+          }
+        ],
+        "structured_goal_contains_all": [
+          "PCSK9",
+          "HepG2",
+          "hepatocyte"
+        ],
+        "candidate_row_count_min": 1,
+        "download_artifact_required": true,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true
+      }
+    },
+    {
+      "id": "constraint_schema_live_path",
+      "category": "constraint_edge_case",
+      "description": "Live goal intake must use exact executable constraint keys for GC, off-target binding limits, and base-specific homopolymer limits.",
+      "request": "Design human LRRK2 gapmer ASOs in iPSC-derived dopaminergic neurons with GC content greater than 35% and less than 65%, fewer than 3 total off-target mappings, and exclude sequences with G homopolymer runs of length 4 or greater.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "LRRK2",
+          "dopaminergic neurons"
+        ],
+        "parameter_constraints": {
+          "gc_content": {
+            "min": 0.35,
+            "max": 0.65,
+            "min_inclusive": false,
+            "max_inclusive": false
+          },
+          "max_binding_sites": 2,
+          "homopolymers": {
+            "per_base_max": {
+              "G": 3
+            }
+          }
+        },
+        "forbidden_constraint_keys": [
+          "gc_content_constraint",
+          "gc_content_fraction",
+          "gc_content_range",
+          "gc_fraction",
+          "min_exclusive",
+          "max_exclusive",
+          "max_offtarget_mappings",
+          "times_mapped_max",
+          "off_target_constraints",
+          "sequence_constraints",
+          "max_g_run"
+        ],
+        "candidate_row_count_min": 1,
+        "off_target_expression_required": true,
+        "genbank_export_required": true,
+        "no_reference_skip": true
+      }
+    },
+    {
+      "id": "genbank_export_request",
+      "category": "export",
+      "description": "Candidate design run should emit a GenBank export users can open in SnapGene-compatible tooling.",
+      "request": "Design human PCSK9 gapmer ASOs in HepG2 hepatocyte cells to reduce PCSK9 expression and export the ranked ASO candidates as a GenBank file.",
+      "max_resume_cycles": 5,
+      "timeout_seconds": 5400,
+      "expect": {
+        "terminal_status": [
+          "run_complete"
+        ],
+        "structured_goal_contains_all": [
+          "PCSK9",
+          "HepG2",
+          "hepatocyte"
+        ],
+        "candidate_row_count_min": 1,
+        "genbank_export_required": true,
+        "no_reference_skip": true
+      }
+    }
+  ]
+}

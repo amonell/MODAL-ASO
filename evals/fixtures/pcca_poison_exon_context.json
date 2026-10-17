@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixture_id": "pcca_poison_exon_context",
+  "description": "Frozen PCCA poison-exon coordinates and route anchors from existing workflow tests.",
+  "species": "human",
+  "gene_symbol": "PCCA",
+  "genome_build": "GRCh38",
+  "transcript_id": "ENST00000376285",
+  "region": {"chrom": "chr13", "start": 100305751, "end": 100305834, "strand": "+", "label": "poison_exon_14x"},
+  "routes": [
+    {"site_kind": "acceptor", "position": 100305751, "label": "acceptor@100305751"},
+    {"site_kind": "donor", "position": 100305834, "label": "donor@100305834"}
+  ],
+  "provenance": [
+    "tests/test_task_graph_workflows.py::test_controller_extracts_request_coordinates_into_preseed",
+    "tests/adversarial_cases/full_run_cases.json#pcca_poison_exon_paper_request"
+  ],
+  "scope_note": "This is a regression fixture copied from existing contracts, not an independent biological reference assertion."
+}

@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modal-aso"
+version = "0.1.0"
+description = "Multi-mechanism Orchestration and Design by an Agentic LLM for ASO design and evaluation."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "anndata>=0.10.0,<0.12.0",
+    "axial-positional-embedding>=0.3.12",
+    "biopython>=1.83",
+    "cellxgene-census>=1.17.0,<1.18.0",
+    "jsonschema>=4.26.0,<5.0.0",
+    "matplotlib>=3.8.0,<3.11.0",
+    "numba>=0.61.0,<0.62.0",
+    "numpy>=1.24.0,<2.0.0",
+    "openai>=1.0.0",
+    "openpyxl>=3.1.2",
+    "pandas>=2.0.0,<2.3.0",
+    "pybedtools>=0.10.0",
+    "pybigwig>=0.3.22",
+    "pyensembl>=2.3.13",
+    "pulp>=2.3.1,<2.8",
+    "pyfaidx>=0.8.1",
+    "pytz>=2024.1",
+    "pyvcf3>=1.0.4",
+    "requests>=2.31.0",
+    "scipy>=1.10.0,<1.16.0",
+    "seaborn>=0.13.0",
+    "sinkhorn-transformer>=0.11.4",
+    "snakemake>=7.32.4,<8",
+    "snapgene-reader>=0.1.20",
+    "torch>=2.0.0,<2.7.0",
+    "upsetplot>=0.9.0",
+]
+
+[project.optional-dependencies]
+splice = [
+    "openspliceai>=0.0.7,<0.1.0",
+]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.setuptools]
+py-modules = ["agents", "aso_chemistry", "run_goal_intake"]
+script-files = ["scripts/modal-aso"]
+
+[tool.setuptools.packages.find]
+include = ["aso_agents*"]
+
+# Bowtie 1 is not on PyPI. After `uv sync`, run:
+#   uv run python -m aso_agents.runtime_binaries
+# `uv run modal-aso` also installs Bowtie 1 and Snakemake when missing.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "real_bowtie_runtime: exercise the real Bowtie 1 installer helper",
+    "real_runtime: exercise the real Bowtie 1 / Snakemake installer helpers",
+]

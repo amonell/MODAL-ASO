@@ -1,0 +1,5 @@
+[submodule "spliceAI_integration/SpliceTransformer"]
+	path = spliceAI_integration/SpliceTransformer
+	url = https://github.com/ShenLab-Genomics/SpliceTransformer.git
+	shallow = true
+	ignore = dirty

@@ -1,0 +1,54 @@
+# Local auto-installed tiling binaries (bedToBigBed, etc.)
+.runtime/
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Secrets and local environment files
+.env
+.env.*
+*.key
+
+# Runtime outputs
+/runs/
+/final_runs/
+/figures/output/
+/validation/
+/aso-designer-main/aso-designer-main/maketrackhubs.err
+
+# Local reference-data caches
+/cellxgene_cache/
+/work_*/
+spliceAI_integration/SpliceTransformer/data/
+spliceAI_integration/SpliceTransformer/model/weights/
+spliceAI_integration/openSpliceAI/
+
+# Tiling-pipeline generated files
+aso-designer-main/aso-designer-main/config.generated.yaml
+aso-designer-main/aso-designer-main/.snakemake/
+aso-designer-main/aso-designer-main/outputs/
+aso-designer-main/aso-designer-main/inputs/
+aso-designer-main/aso-designer-main/data/
+aso-designer-main/aso-designer-main/examples/
+aso-designer-main/aso-designer-main/yeolab-trackhubs/
+aso-designer-main/aso-designer-main/img/
+
+# Local scratch artifacts
+*.log
+scripts/exons.fa
+scripts/exons_vs_hg38.sam
+scripts/test_files/
+data_lake_matches.json
+ensembl_fetch_result.json
+enst00000302118_cdna.fasta
+enst00000302118_lookup.json
+enst00000302118_query_result.txt
+fetched_data_summary.json
+smn2_exon7_asos_partial.json
