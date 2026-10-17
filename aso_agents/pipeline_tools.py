@@ -22680,6 +22680,9 @@ def _canonical_design_goal_contract_issues(
                   for field in knockdown_preservation_conflicts(structured_goal))
     issues.extend(f"context.structured_goal.{field}"
                   for field in _chemistry_policy_conflicts(structured_goal))
+    from .role_selection import selection_scope_conflicts
+    issues.extend(f"context.structured_goal.{field}"
+                  for field in selection_scope_conflicts(structured_goal))
     if (structured_goal.get('aso_overlap_requirement') is not None
             and structured_goal['aso_overlap_requirement'] not in {'any_overlap', 'full_containment', 'contains_feature'}):
         issues.append('context.structured_goal.aso_overlap_requirement')
@@ -23675,6 +23678,7 @@ def _goal_contract_issue_records(
         else {}
     )
     from .transcript_roles import knockdown_preservation_conflicts
+    from .role_selection import selection_scope_conflicts
     records: List[Dict[str, Any]] = []
     seen: Set[str] = set()
     for task_index, task in enumerate(request_envelope.get("tasks") or []):
@@ -23687,6 +23691,7 @@ def _goal_contract_issue_records(
         context = task.get("context") or {}
         role_conflicts = knockdown_preservation_conflicts(context.get("structured_goal"))
         chemistry_conflicts = _chemistry_policy_conflicts(context.get("structured_goal"))
+        selection_conflicts = selection_scope_conflicts(context.get("structured_goal"))
         if "unsupported_task_type" in {
             str(issue or "").strip() for issue in entry.get("issues") or []
         }:
@@ -23730,9 +23735,9 @@ def _goal_contract_issue_records(
                 [str(token) for token in pointer_tokens],
             )
             role_conflict = role_conflicts.get(issue_text.removeprefix("context.structured_goal."))
-            semantic_conflict = role_conflict or chemistry_conflicts.get(
+            semantic_conflict = (role_conflict or chemistry_conflicts.get(
                 issue_text.removeprefix("context.structured_goal.")
-            )
+            ) or selection_conflicts.get(issue_text.removeprefix("context.structured_goal.")))
             if role_conflict and isinstance(expected_schema, dict):
                 expected_schema = deepcopy(expected_schema)
                 value_schema = expected_schema.get("items") if expected_schema.get("type") == "array" else expected_schema

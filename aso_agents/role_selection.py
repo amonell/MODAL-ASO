@@ -49,6 +49,30 @@ ROLE_SELECTION_SCHEMA = {
 }
 
 
+def selection_scope_conflicts(goal):
+    """Expose incompatible final-selection contracts without inferring intent."""
+    fields = ("candidate_role_selection", "candidate_panel_objectives")
+    if not isinstance(goal, dict) or any(goal.get(field) is None for field in fields):
+        return {}
+    conflict = {
+        "code": "joint_and_sequential_ranking_scope_conflict",
+        "conflicting_fields": list(fields),
+        "reason": (
+            "Sequential role selection commits each role's choice before the next role; "
+            "joint panel optimization compares complete panels. They cannot both govern "
+            "the same final selection."
+        ),
+        "repair_requirement": (
+            "Use explicit request evidence to resolve the final-selection scope. "
+            "Individual ranking for reporting or reference does not establish sequential "
+            "role selection. Preserve requested ranking/export information and all hard "
+            "constraints; do not discard a requested algorithm to satisfy validation. "
+            "If the intended selection scope is ambiguous, request clarification."
+        ),
+    }
+    return {field: deepcopy(conflict) for field in fields}
+
+
 def reconcile_role_obligation(goal, obligation, source):
     """Bind independently quoted role requirements to existing program identities.
 
@@ -146,7 +170,7 @@ def select_ordered_roles(rows, goal, intervals_for_row, *, region_status="comple
         return unresolved("role_program_identity_unresolved")
     if region_status not in {"complete", "not_required"}:
         return unresolved("hard_region_eligibility_unresolved")
-    if goal.get("candidate_panel_objectives") is not None:
+    if selection_scope_conflicts(goal):
         return unresolved("joint_and_sequential_ranking_scope_conflict")
     if any(goal.get(k) is not None for k in ("candidate_limit_per_site", "per_site_candidate_limit", "min_asos_per_site")):
         return unresolved("physical_site_counts_with_ordered_roles_not_supported")
