@@ -24139,7 +24139,8 @@ def _goal_audit_prompt(
     if required_goal_fields:
         requirement_catalog["context.structured_goal"] = sorted(
             set(requirement_catalog["context.structured_goal"]) | set(required_goal_fields))
-    from .region_overlap import constraint_execution_summary
+    from .region_overlap import constraint_execution_summary, effective_program_constraint_summary
+    from .goal_contract import REGION_CONSTRAINT_SCOPE_INSTRUCTIONS
     from .coordinate_contract import coordinate_execution_summary, COORDINATE_ORIGIN_INSTRUCTIONS
     audit_input = {
         "required_goal_fields": required_goal_fields or [],
@@ -24172,6 +24173,12 @@ def _goal_audit_prompt(
             "junction_crossing": "At least U bases before and D after a junction requires contains_feature over the U+D base core: acceptor offsets -U..D-1, donor offsets 1-U..D, both in transcript orientation. Do not place a longer ASO fully inside this core.",
         },
         "reference_scope_semantics": "A transcript supplied only to locate an exon does not imply an isoform-abundance objective. Preserve its identity in transcript_lock and the program; default_exon_context remains valid for the structural splice objective.",
+        "region_scope_semantics": REGION_CONSTRAINT_SCOPE_INSTRUCTIONS,
+        "effective_program_region_constraints": [
+            {"goal_pointer": location["json_pointer"], "programs": effective_program_constraint_summary(
+                request_envelope["tasks"][location["task_index"]].get("context", {}).get("structured_goal") or {})}
+            for location in design_goal_locations
+        ],
         "coordinate_origin_semantics": COORDINATE_ORIGIN_INSTRUCTIONS,
         "coordinate_execution": [
             {"goal_pointer": location["json_pointer"], **summary}

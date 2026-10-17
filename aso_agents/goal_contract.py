@@ -1444,9 +1444,23 @@ def canonical_resolution_capability_catalog() -> List[Dict[str, str]]:
     ]
 
 
+REGION_CONSTRAINT_SCOPE_INSTRUCTIONS = (
+    "Region-constraint scope follows execution: top-level region_constraints are inherited by every design program, "
+    "then that program's local region_constraints are appended and the ordered union/intersect/exclude predicates are evaluated. "
+    "The top-level list is not an inventory of mentioned features, a summary of the primary program, or defaults replaced by local lists. "
+    "Put a branch/role-specific coverage or exclusion rule only in that branch's program; put a shared outer window at top level only "
+    "when the request applies it to every program. Keep annotation-only features as context or evaluation targets. "
+    "Audit the effective inherited-plus-local policy for each program against the request, including whether a global overlap rule "
+    "silently excludes a zero-overlap target that a local maximum-overlap rule permits, or a local union broadens a shared restriction. "
+    "Do not infer scope from repeated coordinates, labels or a plausible biological relationship. Preserve genuinely shared filters "
+    "and legitimate alternatives; correct model-authored scope errors through evidence-bound patches, not user clarification.\n"
+)
+
+
 CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS
     + COORDINATE_ORIGIN_INSTRUCTIONS
+    + REGION_CONSTRAINT_SCOPE_INSTRUCTIONS
     + "Canonical executable design-goal contract:\n"
     "- Explicit ordered role selection belongs in candidate_role_selection: roles in the user's processing order, each with role_id (the user's role name), program_id (its scoped design branch), count, and ordered individual criteria. Preserve the requested reuse_policy (distinct_sequences, distinct_molecules, or allow_shared_molecules). A role's GC distance, homopolymer and coordinate tuple ranks individual eligible candidates; it is not a joint-panel aggregate. Keep eligibility in that role's program and the full library in its analysis/export scope. Do not assign the global panel count to every role, let an enumeration program fill a selection role, or leave the role algorithm only in prose.\n"
     "- When an ASO must cover an annotated start codon or satisfy a coding-sequence boundary, use a region constraint with source_type='transcript_feature', feature_name='start_codon' or 'cds', and reference_transcript_id when supplied. The platform resolves annotation coordinates; do not invent absolute rows or assume the start codon occupies transcript bases 1-3. Preserve the requested overlap relation. Constraints that must all hold use intersect, including features on different explicitly requested transcripts. A shared panel stores every required transcript in its program transcript_ids.\n"

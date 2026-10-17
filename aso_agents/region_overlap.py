@@ -213,3 +213,51 @@ def constraint_execution_summary(goal):
                 "Check an impossible relation against the quoted request; never relax the request merely to obtain candidates.",
         })
     return summaries
+
+
+def effective_program_constraint_summary(goal):
+    """Show inherited predicate order without changing or inferring constraints.
+
+    A program's local list is appended to the global list by native execution.
+    Auditing either list alone hides both unintended global restrictions and
+    local unions that broaden earlier restrictions. These are Boolean diagnostics,
+    not proof that a sequence or a biological site exists.
+    """
+    global_filters = goal.get('region_constraints') or []
+    if not isinstance(global_filters, list) or not all(isinstance(c, dict) for c in global_filters):
+        return []
+    result = []
+    for index, program in enumerate(goal.get('design_programs') or []):
+        if not isinstance(program, dict):
+            continue
+        local = program.get('region_constraints') or []
+        if not isinstance(local, list) or not all(isinstance(c, dict) for c in local):
+            continue
+        filters = global_filters + local
+        if not filters:
+            continue
+        scope = f'/design_programs/{index}'
+        inherited = [f'/region_constraints/{i}' for i in range(len(global_filters))]
+        own = [f'{scope}/region_constraints/{i}' for i in range(len(local))]
+        pointers = inherited + own
+        result.append({
+            'program_scope': scope, 'program_id': program.get('program_id'),
+            'inherited_constraint_pointers': inherited,
+            'local_constraint_pointers': own,
+            'ordered_predicates': [
+                {'constraint_pointer': pointer, 'operator': rule.get('operator') or 'union',
+                 'aso_overlap_requirement': rule.get('aso_overlap_requirement') or 'any_overlap',
+                 'minimum_overlap_bp': rule.get('minimum_overlap_bp') or 1}
+                for pointer, rule in zip(pointers, filters)],
+            'allows_candidate_matching_no_constraints': combine_constraint_matches([False]*len(filters), filters),
+            'constraints_allowed_to_fail_when_all_others_match': [pointer
+                for i, pointer in enumerate(pointers)
+                if combine_constraint_matches([j != i for j in range(len(filters))], filters)],
+            'constraints_sufficient_alone_for_admission': [pointer
+                for i, pointer in enumerate(pointers)
+                if combine_constraint_matches([j == i for j in range(len(filters))], filters)],
+            'explicit_interval_geometry': [item
+                for pointer, rule in zip(pointers, filters)
+                for item in _explicit_interval_geometry(rule, pointer, program.get('length', goal.get('length')))],
+        })
+    return result

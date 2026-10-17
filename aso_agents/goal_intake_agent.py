@@ -6,6 +6,7 @@ from aso_agents.task_capabilities import ANNOTATION_SCOPE_CONTRACT
 from aso_agents.goal_contract import (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS,
     CANONICAL_DESIGN_GOAL_INSTRUCTIONS,
+    REGION_CONSTRAINT_SCOPE_INSTRUCTIONS,
 )
 
 # Reuse environment and settings from parent app via os.environ
@@ -229,7 +230,7 @@ goal_intake_agent = Agent(
         "If inherited clarification specifies how many candidates to return, encode that answer as candidate_limit for a global count or candidate_limit_per_site for a per-site/per-window/per-route count so execution applies it; suppressing the repeated question without preserving the answer is not sufficient.\n"
         "Do not ask for exact gapmer wing/gap chemistry when the user accepted the platform default; preserve a default-chemistry policy and let downstream chemistry selection apply it. Do not ask for candidate count, mature-mRNA versus pre-mRNA scope, or narrower tissue subtype when pipeline defaults make the knockdown request executable.\n"
         "Never ask to reconfirm an exact cross-species match, oligo length, modality, transcript policy, or other requirement already stated in the scoped structured goal or inherited clarification history.\n"
-        "When design_programs is present, top-level fields should describe the primary anchor program and the design_programs array should capture the additional requested sets.\n"
+        "When design_programs is present, top-level identity fields describe the shared or primary reference context. Executable top-level restrictions apply across programs; keep branch-specific restrictions on their own design_programs items.\n"
         "Structured_goal schema (omit optional keys when unavailable):\n"
         "{\n"
         "  \"gene_symbol\": string,\n"
@@ -306,7 +307,7 @@ goal_schema_repair_agent = Agent(
 
 binding_site_constraint_repair_agent = Agent(
     name="ASO Binding Constraint Repair",
-    instructions=(ANNOTATION_SCOPE_CONTRACT +
+    instructions=(ANNOTATION_SCOPE_CONTRACT + REGION_CONSTRAINT_SCOPE_INSTRUCTIONS +
         "You validate and repair executable binding-site constraints in an already parsed ASO structured goal.\n"
         "Inputs contain the original user request and the current structured goal. Do not answer the user and do not ask questions.\n"
         "Only recover constraints that are explicitly requested in the user's language but missing or malformed in the structured goal. Do not infer binding targets from gene names, pathways, diseases, or general biology.\n"
