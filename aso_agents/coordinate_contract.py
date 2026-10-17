@@ -22,8 +22,36 @@ COORDINATE_ORIGIN_INSTRUCTIONS = (
     "is independently supported. Keep mature endpoints in the executable region rows. "
     "A small coordinate, a transcript lock, or a UTR label alone does not establish "
     "coordinate origin; explicit genomic intervals must remain genomic. In a mixed "
-    "request, verify each interval against its own evidence, not a request-wide default.\n"
+    "request, verify each interval against its own evidence, not a request-wide default. "
+    "For typed intervals_bed0_half_open, typed_interval_meaning gives host-computed "
+    "equivalent one_based_inclusive bounds and length_nt. Compare these actual covered "
+    "bases with the original evidence before accepting or changing an endpoint. The "
+    "BED0 end equals the one-based inclusive end; do not add one to that endpoint. "
+    "Reindexing must preserve interval length. recorded_coordinate_convention is "
+    "source metadata and cannot reinterpret an explicitly typed BED0 field. Do not "
+    "change correct interval bases merely to synchronize that metadata. A repair "
+    "reason is not proof of correct conversion; check the recomputed interval meaning "
+    "after every proposed change.\n"
 )
+
+
+def _typed_interval_meaning(rows):
+    """Describe typed BED intervals without modifying them or inferring user intent."""
+    result = []
+    for index, row in enumerate(rows if isinstance(rows, list) else []):
+        meaning = {"row_index": index, "status": "invalid_typed_interval"}
+        if isinstance(row, dict):
+            start, end, reference = row.get("start"), row.get("end"), row.get("chrom")
+            if (type(start) is int and type(end) is int and 0 <= start < end
+                    and isinstance(reference, str) and reference.strip()):
+                meaning.update(
+                    status="interpreted", reference=reference, strand=row.get("strand"),
+                    bed0_half_open={"start": start, "end": end},
+                    one_based_inclusive={"start": start + 1, "end": end},
+                    length_nt=end - start,
+                )
+        result.append(meaning)
+    return result
 
 
 def coordinate_execution_summary(goal):
@@ -52,6 +80,7 @@ def coordinate_execution_summary(goal):
                 "transcript_id": constraint.get("transcript_id") or container.get("transcript_id"),
                 "recorded_coordinate_convention": constraint.get("coordinate_convention"),
                 "intervals_bed0_half_open": deepcopy(constraint.get("intervals_bed0_half_open")),
+                "typed_interval_meaning": _typed_interval_meaning(constraint.get("intervals_bed0_half_open")),
                 "rows": deepcopy(constraint.get("rows")),
                 "genome_build": constraint.get("genome_build"),
             })
