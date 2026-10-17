@@ -56,6 +56,31 @@ def test_required_criteria_need_a_mapping():
         summarize_required_criteria([False, True])
 
 
+def test_required_schema_keeps_omitted_conditions_unknown_even_after_an_observed_failure():
+    names = ["coverage", "composition", "cross_comparison"]
+    for first in [True, False, None]:
+        observations = {"coverage": first, "composition": True}
+        result = summarize_required_criteria(observations, required_names=names)
+        assert result["criteria"] == {**observations, "cross_comparison": None}
+        assert "cross_comparison" in result["unverified_criteria"]
+        assert result["status"] == ("failed" if first is False else "indeterminate")
+        assert "cross_comparison" not in observations
+    assert summarize_required_criteria(dict.fromkeys(names, True), required_names=names)["status"] == "passed"
+
+
+@pytest.mark.parametrize("names", ["coverage", [""], [1], ["coverage", "coverage"], {"coverage"}, frozenset()])
+def test_required_schema_rejects_ambiguous_names(names):
+    with pytest.raises((ValueError, TypeError)):
+        summarize_required_criteria({}, required_names=names)
+
+
+def test_required_schema_catches_extra_or_misspelled_conditions_and_preserves_schema_order():
+    with pytest.raises(ValueError, match="not in required_names"):
+        summarize_required_criteria({"covergae": True}, required_names=["coverage"])
+    result = summarize_required_criteria({"last": False, "first": False}, required_names=["first", "last"])
+    assert result["failed_criteria"] == ["first", "last"]
+
+
 def test_actual_analysis_runtime_exports_independent_failure_and_unknown_sets(tmp_path):
     observations = [
         {"first": False, "second": True},

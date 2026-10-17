@@ -229,11 +229,13 @@ def execute_analysis_program(
     request = dict(payload)
     request['requested_output_paths'] = [str(p) for p in required_outputs]
     request['readonly_output_paths'] = [str(p) for p in readonly_outputs]
+    from .analysis_helpers import shared_analysis_helpers, validate_shared_helper_bindings
     execution_contract = {'working_directory': str(directory),
         'result_json': str(result_path), 'summary_markdown': str(summary_path),
         'required_output_files': [str(p) for p in [result_path, summary_path, *required_outputs]],
         'relative_path_base': str(directory), 'readonly_output_files': [str(p) for p in readonly_outputs],
-        'report_source_tables': [str(p) for p in source_tables]}
+        'report_source_tables': [str(p) for p in source_tables],
+        'shared_analysis_helpers': shared_analysis_helpers()}
     request['execution_contract'] = execution_contract
     previous = [int(p.name) for p in (directory / "execution_attempts").glob("*") if p.is_dir() and p.name.isdigit()]
     offset = max(previous, default=0)
@@ -270,7 +272,8 @@ def execute_analysis_program(
             from .analysis_dependencies import validate_program_dependencies
             from .analysis_control_flow import validate_program_control_flow
             preflight_errors = []
-            for validator in (validate_program_dependencies, validate_program_control_flow):
+            for validator in (validate_program_dependencies, validate_program_control_flow,
+                              validate_shared_helper_bindings):
                 try:
                     validator(code)
                 except ValueError as exc:
