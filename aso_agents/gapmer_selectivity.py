@@ -235,7 +235,7 @@ def explicit_junction_region(goal, program, resolved, primary):
             'junction_boundary_cdna': boundary, 'junction_mapping': provenance}
 
 
-def _closest_matches(target, transcript, architecture):
+def _ungapped_match_profile(target, transcript, architecture):
     if len(transcript) < len(target) or set(transcript) - set('ACGT'):
         raise ValueError('protected_transcript_sequence_incomplete')
     bases = np.frombuffer(transcript.encode('ascii'), dtype=np.uint8)
@@ -252,7 +252,17 @@ def _closest_matches(target, transcript, architecture):
                       'mismatch_positions_aso_1based': positions,
                       'dna_gap_mismatch_positions_aso_1based': [p for p in positions if architecture.in_gap(p)],
                       'mismatch_count': minimum})
-    return minimum, sites
+    histogram = np.bincount(counts, minlength=len(target) + 1)
+    return {'minimum_ungapped_mismatches': minimum, 'closest_sites': sites,
+            'ungapped_mismatch_site_counts': {str(n): int(count) for n, count in enumerate(histogram)},
+            'ungapped_windows_searched': int(counts.size),
+            'target_length_nt': len(target), 'transcript_length_nt': len(transcript)}
+
+
+def _closest_matches(target, transcript, architecture):
+    """Retain the closest-site interface for callers that do not need counts."""
+    profile = _ungapped_match_profile(target, transcript, architecture)
+    return profile['minimum_ungapped_mismatches'], profile['closest_sites']
 
 
 def annotate_preservation(path, goal, context, cdna_map, chemistry, *, catalog=None, resolved=None):
@@ -288,10 +298,10 @@ def annotate_preservation(path, goal, context, cdna_map, chemistry, *, catalog=N
         references = []
         for label in protected:
             transcript = str(cdna_map.get(label) or '').upper()
-            minimum, sites = _closest_matches(target, transcript, architecture)
+            profile = _ungapped_match_profile(target, transcript, architecture)
             references.append({'transcript_label': label,
                 'transcript_sequence_sha256': hashlib.sha256(transcript.encode()).hexdigest(),
-                'minimum_ungapped_mismatches': minimum, 'closest_sites': sites})
+                **profile})
         exact = any(ref['minimum_ungapped_mismatches'] == 0 for ref in references)
         intact_gap = any(not site['dna_gap_mismatch_positions_aso_1based']
                          for ref in references for site in ref['closest_sites'])
@@ -302,7 +312,7 @@ def annotate_preservation(path, goal, context, cdna_map, chemistry, *, catalog=N
             'chemistry': chemistry, 'dna_gap_positions_aso_1based':
                 [architecture.wing_5prime + 1, architecture.wing_5prime + architecture.dna_gap],
             'protected_references': references,
-            'method': 'Exhaustive ungapped full-length comparison of the target-oriented complement to each protected mature transcript; all equally closest sites retained. Mismatch positions use the actual synthesized ASO 5prime-to-3prime orientation.',
+            'method': 'Exhaustive ungapped full-length comparison of the target-oriented complement to each protected mature transcript; all equally closest sites retained. The mismatch histogram counts every full-length window at a distinct transcript start position, including overlapping sites, separately for each exact substitution count from zero through the oligo length. These are transcript-site counts, not gene counts or cumulative mismatch thresholds. Mismatch positions use the actual synthesized ASO 5prime-to-3prime orientation.',
             'interpretation': 'Conservative computational shortlist: exclude perfect protected-transcript complements and candidates whose closest protected alignment leaves the entire DNA gap paired. Gap mismatches support sequence discrimination but do not establish RNase H discrimination, cellular selectivity, efficacy or safety. Bulged alignments, kinetics and experimental activity are not evaluated.'}
     payload.setdefault('schema', {}).setdefault('columns', {})['gapmer_preservation_assessment'] = 'object'
     Path(path).write_text(json.dumps(payload, indent=2) + '\n')

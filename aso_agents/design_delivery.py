@@ -556,6 +556,13 @@ def design_delivery(goal, candidate_set, branches, *, binding_sets=None, interva
             "errors": list(dict.fromkeys(errors)), "warnings": list(dict.fromkeys(warnings))}
 
 
+def _protected_site_count(reference, mismatches):
+    """Missing legacy count evidence is unknown, even when closest sites exist."""
+    counts = reference.get("ungapped_mismatch_site_counts")
+    value = counts.get(str(mismatches)) if isinstance(counts, dict) else None
+    return value if type(value) is int and value >= 0 else None
+
+
 def write_design_panel(candidate_set, goal, output_directory):
     """A concise export generated directly from selected candidate evidence."""
     directory = Path(output_directory)
@@ -591,6 +598,9 @@ def write_design_panel(candidate_set, goal, output_directory):
         if type(genomic_start) is not int or type(genomic_end) is not int:
             genomic_start = genomic_end = None
         chemistry = _candidate_chemistry_description(row, goal)
+        preservation = (row.get("gapmer_preservation_assessment") or
+                        annotations.get("gapmer_preservation_assessment") or {})
+        protected_references = preservation.get("protected_references") or []
         record = {"candidate": index, "antisense_5to3": row.get("synthesized_antisense_sequence"),
                   "program_id": row.get("program_id"), "source_modality": row.get("source_modality"),
                   "target_5to3": row.get("target_binding_sequence"), "length": row.get("length"),
@@ -600,7 +610,13 @@ def write_design_panel(candidate_set, goal, output_directory):
                   "chemistry_export_status": row.get("chemistry_export_status"),
                   "molecule_specification": json.dumps(row.get("molecule_specification") or {}, sort_keys=True),
                   "oligoai_evaluation": json.dumps(row.get("oligoai_evaluation") or {}, sort_keys=True),
-                  "gapmer_preservation_assessment": json.dumps(row.get("gapmer_preservation_assessment") or annotations.get("gapmer_preservation_assessment") or {}, sort_keys=True),
+                  "gapmer_preservation_assessment": json.dumps(preservation, sort_keys=True),
+                  "protected_transcript_exact_site_counts": json.dumps({
+                      ref["transcript_label"]: _protected_site_count(ref, 0)
+                      for ref in protected_references}, sort_keys=True),
+                  "protected_transcript_one_mismatch_site_counts": json.dumps({
+                      ref["transcript_label"]: _protected_site_count(ref, 1)
+                      for ref in protected_references}, sort_keys=True),
                   "transcript_accession": transcript_site["transcript_accession"],
                   "transcript_cdna_start": transcript_site["cdna_start"],
                   "transcript_cdna_end": transcript_site["cdna_end"],
@@ -692,7 +708,21 @@ def write_design_panel(candidate_set, goal, output_directory):
     if any(assessment for _, assessment in protected_rows):
         lines.extend(["", "## Protected-transcript sequence discrimination", "",
                       "Each selected molecule was compared against the complete resolved protected transcripts. "
-                      "The table gives all equally closest ungapped alignments, with mismatch positions counted "
+                      "Exact and one-mismatch counts cover distinct transcript start positions, including "
+                      "overlapping full-length windows. They are per-transcript site counts, not gene counts "
+                      "or cumulative mismatch thresholds. Unknown counts have no recorded complete histogram "
+                      "and must not be read as zero. The full histogram is retained in the CSV/JSON evidence.", "",
+                      "| Candidate | Protected transcript | Exact sites | One-mismatch sites | Windows searched |",
+                      "|---|---|---|---|---|"])
+        for index, assessment in protected_rows:
+            for reference in (assessment or {}).get("protected_references") or []:
+                counts = [_protected_site_count(reference, n) for n in (0, 1)]
+                windows = reference.get("ungapped_windows_searched")
+                values = [value if type(value) is int and value >= 0 else "unknown"
+                          for value in [*counts, windows]]
+                lines.append(f"| {index} | {reference['transcript_label']} | "
+                             f"{values[0]} | {values[1]} | {values[2]} |")
+        lines.extend(["", "The following table gives all equally closest ungapped alignments, with mismatch positions counted "
                       "in the synthesized ASO's 5′→3′ direction. The conservative shortlist excludes perfect "
                       "protected-transcript complements and closest alignments with an entirely matched DNA gap. "
                       "A mismatch in the gap supports sequence discrimination, not demonstrated RNase H or cellular "
