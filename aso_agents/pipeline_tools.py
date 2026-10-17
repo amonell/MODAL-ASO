@@ -44219,21 +44219,34 @@ def tool_parse_goal_request(
                         obligation_request, obligation_history,
                     )
                 )
-                if isinstance(audited, dict) and audited.get("status") == "ready":
+                if not isinstance(audited, dict) or audited.get("status") not in {"ready", "need_clarification"}:
+                    return _tool_failure(
+                        state=state, state_path=state_path,
+                        tool_name="tool_parse_goal_request", stage_name="intake",
+                        phase="tool_parse_goal_failed", error_kind="request_obligation_audit_failed",
+                        error_message="request_obligation_audit_invalid_status",
+                        details={"request_obligation_audit_result": deepcopy(audited)},
+                    )
+                if isinstance(audited.get("request_obligation_audit"), dict):
+                    final_payload["request_obligation_audit"] = deepcopy(
+                        audited["request_obligation_audit"]
+                    )
+                if audited.get("status") == "ready":
                     audited_goal = audited.get("structured_goal")
                     audited_envelope = audited.get("request_envelope")
                     if isinstance(audited_goal, dict) and audited_goal:
                         structured_goal = audited_goal
                     if isinstance(audited_envelope, dict) and audited_envelope:
                         request_envelope = audited_envelope
-                    if isinstance(audited.get("request_obligation_audit"), dict):
-                        final_payload["request_obligation_audit"] = deepcopy(
-                            audited["request_obligation_audit"]
-                        )
                     # Child preseeds read this canonical copy, not the runtime
                     # envelope. Keep the independently audited constraints.
                     canonical_request_envelope = deepcopy(request_envelope)
-            final_payload["status"] = "ready"
+                else:
+                    final_payload["status"] = "need_clarification"
+                    final_payload["questions"] = _normalize_questions_input(audited.get("questions"))
+                    for key in ("reason", "clarification_requirements"):
+                        if key in audited:
+                            final_payload[key] = deepcopy(audited[key])
             final_payload["structured_goal"] = structured_goal
         elif request_envelope and design_task_count == 1:
             runtime = _goal_runtime_module()

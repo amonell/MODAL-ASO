@@ -94,3 +94,86 @@ def test_native_audit_repairs_only_quotes_then_applies_original_typed_requiremen
     assert [p['candidate_limit'] for p in result['structured_goal']['design_programs']] == [2, 4]
     assert result['request_obligation_audit']['quote_repair']['status'] == 'repaired'
     assert len(seen) == 2
+
+
+def test_retracts_only_unrequested_object_and_keeps_supported_siblings():
+    audit = {'candidate_count': {'count': 3, 'scope': 'global', 'kind': 'exact',
+                                'quote': 'Select three candidates'},
+             'target_accessibility': {'required': True, 'quote': None}}
+    result, receipt, calls = invoke(
+        {'repairs': [], 'retractions': [{'path': '/target_accessibility', 'reason': 'not_requested'}]},
+        audit, 'Select three candidates from the supplied interval.')
+    assert result == {**audit, 'target_accessibility': None}
+    assert receipt['status'] == 'repaired' and len(calls) == 1
+    assert json.loads(calls[0][1]['input'])['eligible_retractions'] == ['/target_accessibility']
+    assert audit['target_accessibility'] == {'required': True, 'quote': None}
+
+
+def test_quote_correction_and_independent_retraction_share_one_existing_call():
+    audit = {**deepcopy(AUDIT), 'target_feature': {'feature': 'utr3', 'quote': None}}
+    result, receipt, calls = invoke({'repairs': [{'path': POINTER, 'quote': 'four 24-nt ASOs'}],
+        'retractions': [{'path': '/target_feature', 'reason': 'not_requested'}]}, audit)
+    assert result['target_feature'] is None
+    assert result['program_candidate_counts'][1]['quote'] == 'four 24-nt ASOs'
+    assert receipt['status'] == 'repaired' and len(calls) == 1
+
+
+@pytest.mark.parametrize('audit,reply', [
+    ({'target_accessibility': {'required': True, 'quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/candidate_count', 'reason': 'not_requested'}]}),
+    ({'target_accessibility': {'required': True, 'quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/target_accessibility', 'reason': 'underspecified'}]}),
+    ({'target_accessibility': {'required': True, 'quote': None}},
+     {'repairs': [{'path': '/target_accessibility/quote', 'quote': 'Design exactly two 18-nt ASOs'}],
+      'retractions': [{'path': '/target_accessibility', 'reason': 'not_requested'}]}),
+    ({'target_accessibility': {'required': True, 'quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/target_accessibility', 'reason': 'not_requested'}] * 2}),
+    ({'target_accessibility': {'required': True, 'quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/target_accessibility', 'reason': 'not_requested', 'value': False}]}),
+    ({'shared_binding_cohort': {'quote': 'Design exactly two 18-nt ASOs', 'references_quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/shared_binding_cohort', 'reason': 'not_requested'}]}),
+    ({'program_candidate_counts': deepcopy(AUDIT['program_candidate_counts'])},
+     {'repairs': [], 'retractions': [{'path': '/program_candidate_counts/1', 'reason': 'not_requested'}]}),
+    ({'unknown_obligation': {'quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/unknown_obligation', 'reason': 'not_requested'}]}),
+    ({'target_accessibility': {'required': True, 'quote': None}, 'target_feature': {'quote': None}},
+     {'repairs': [], 'retractions': [{'path': '/target_accessibility', 'reason': 'not_requested'}]}),
+])
+def test_retraction_cannot_discard_verified_evidence_or_escape_offered_scope(audit, reply):
+    result, receipt, calls = invoke(reply, audit)
+    assert result == audit
+    assert receipt['status'] == 'unresolved' and len(calls) == 1
+
+
+def test_real_but_underspecified_requirement_remains_unresolved():
+    source = 'Select three candidates near the translation start.'
+    audit = {'target_window': {'feature': 'translation_start', 'upstream_nt': 30,
+                              'downstream_nt': 20, 'quote': 'within a 50 nt window'}}
+    result, receipt, calls = invoke({'repairs': [], 'retractions': [],
+                                    'unresolved_paths': ['/target_window/quote']}, audit, source)
+    assert result == audit and receipt['status'] == 'unresolved'
+    assert len(calls) == 1
+
+
+def test_native_audit_applies_supported_count_after_retracting_unrequested_object(monkeypatch):
+    import run_goal_intake as intake
+    source = 'Select exactly three new candidates from the complete tiling library.'
+    audit = {'candidate_count': {'count': 3, 'scope': 'global', 'kind': 'exact',
+                                'quote': 'Select exactly three new candidates'},
+             'target_accessibility': {'required': True, 'quote': None}}
+    goal = {'candidate_minimum': 19, 'candidate_limit': 19,
+            'design_programs': [{'program_id': 'neutral', 'modality': 'gapmer', 'intent': 'knockdown'}]}
+    replies = [audit, {'repairs': [], 'retractions': [
+        {'path': '/target_accessibility', 'reason': 'not_requested'}]}]
+    calls = []
+    async def run(agent, **kwargs):
+        calls.append(agent.name)
+        return SimpleNamespace(final_output=json.dumps(replies[len(calls) - 1]))
+    monkeypatch.setattr(intake.Runner, 'run', run)
+    result = asyncio.run(intake._audit_request_obligations(
+        {'status': 'ready', 'structured_goal': deepcopy(goal)}, source, []))
+    assert result['status'] == 'ready'
+    assert result['structured_goal']['candidate_minimum'] == 3
+    assert result['structured_goal']['candidate_limit'] == 3
+    assert result['request_obligation_audit']['quote_repair']['status'] == 'repaired'
+    assert len(calls) == 2

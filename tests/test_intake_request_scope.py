@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from aso_agents import agentic_runner
 from aso_agents import pipeline_tools
 
@@ -378,6 +380,57 @@ def test_native_preseeded_design_task_reconciles_quoted_obligations(
     saved = json.loads((run_dir / "artifacts/intake/structured_goal.json").read_text())
     assert saved["target_region"] == "cds"
     assert saved["design_programs"][0]["target_region"] == "cds"
+
+
+@pytest.mark.parametrize('audit_status', ['need_clarification', 'model_failure', 'invalid_payload'])
+def test_preseeded_intake_does_not_execute_after_unresolved_obligation_audit(
+    tmp_path: Path, monkeypatch: Any, audit_status: str,
+) -> None:
+    import run_goal_intake
+
+    request = 'Design three gapmers near the translation start.'
+    goal = {'gene_symbol': 'GENE1', 'species': 'human', 'target_context': 'cells',
+            'intent': 'knockdown', 'candidate_limit': 17,
+            'design_programs': [{'program_id': 'neutral', 'modality': 'gapmer',
+                                 'intent': 'knockdown', 'objective': request}]}
+    envelope = pipeline_tools._build_request_envelope(
+        request_text=request, request_id='unresolved-preseed', structured_goal=goal)
+    monkeypatch.setattr(pipeline_tools, '_request_parse_output_from_envelope_preseed',
+        lambda *_args, **_kwargs: {'status': 'ready', 'questions': [], 'request_envelope': envelope})
+    monkeypatch.setattr(pipeline_tools, '_repair_request_envelope_if_needed',
+        lambda **kwargs: {'status': 'ready', 'request_envelope': kwargs['request_envelope']})
+    question = 'Which upstream and downstream boundaries should define the target window?'
+    receipt = {'status': 'unresolved', 'quote_repair': {'status': 'unresolved', 'model_calls': 1}}
+    async def reconcile(payload, source, history):
+        assert source == request
+        if audit_status == 'invalid_payload':
+            return None
+        return {**payload, 'status': audit_status, 'questions': [question],
+                'reason': 'Requested target-window boundaries are underspecified.',
+                'request_obligation_audit': receipt}
+    monkeypatch.setattr(run_goal_intake, '_audit_request_obligations', reconcile)
+    persisted = []
+    monkeypatch.setattr(run_goal_intake, '_persist_outputs',
+                        lambda _dir, _request, payload, _history: persisted.append(payload))
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    state_path = tmp_path / 'run_state.json'
+    state_path.write_text(json.dumps({'version': '2', 'status': 'initialized', 'phase': 'initialized',
+        'request': request, 'run_dir': str(run_dir), 'flags': {'skip_ensembl_check': True},
+        'last_error': None, 'pending_questions': [], 'clarification': {'isoform_scope_confirmed': False},
+        'clarification_qa_history': [], 'force_rerun_stages': [], 'events': [], 'artifacts': {}}))
+    result = pipeline_tools.tool_parse_goal_request(str(state_path))
+    saved = pipeline_tools._load_state(result.get('state_path', str(state_path)))
+    assert saved['status'] != 'goal_parsed_ready'
+    if audit_status == 'need_clarification':
+        assert result['intake_partial'] is True
+        assert saved['pending_questions'] == [question]
+        assert persisted[-1]['status'] == 'need_clarification'
+        assert persisted[-1]['request_obligation_audit'] == receipt
+        assert persisted[-1]['reason'] == 'Requested target-window boundaries are underspecified.'
+        assert 'canonical_request_envelope' not in saved
+    else:
+        assert saved['last_error']['kind'] == 'request_obligation_audit_failed'
 
 
 def test_option_choice_does_not_become_effective_request() -> None:
