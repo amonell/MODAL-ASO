@@ -334,14 +334,14 @@ def render_design_workbook_plans(payload, result, required_outputs):
              for entry in declared.get("requested_design_workbooks") or []}
     seen, tables, sources = set(), [], []
     try:
-        for plan in plans:
+        for workbook_index, plan in enumerate(plans):
             path = Path(plan["path"]).resolve()
             if path not in required or path in seen or path.suffix.lower() != ".xlsx":
                 raise ValueError("Workbook plan path is duplicate or outside its requested design scope")
             seen.add(path)
             writer = DesignWorkbook(declared)
             catalog = {row["binding_id"]: row for row in writer.rows()}
-            for table in plan["tables"]:
+            for table_index, table in enumerate(plan["tables"]):
                 task_id = table.get("task_id", scope.get(path))
                 if not task_id or scope.get(path) != task_id:
                     raise ValueError("Workbook table must use its requested producer task")
@@ -349,12 +349,25 @@ def render_design_workbook_plans(payload, result, required_outputs):
                 if not isinstance(columns, list) or not all(isinstance(name, str) for name in columns):
                     raise ValueError("Workbook extra_columns must be an array of column names")
                 rows, values = [], []
-                for entry in table["rows"]:
+                for row_index, entry in enumerate(table["rows"]):
                     if not isinstance(entry, dict) or set(entry) - {"binding_id", "values"}:
                         raise ValueError("Workbook rows contain only binding_id and derived values; source facts are supplied by the renderer")
                     key, extra = entry["binding_id"], entry.get("values", {})
                     if key not in catalog:
-                        raise ValueError("Workbook row binding_id is absent from the canonical design catalog")
+                        location = (f"design_workbooks[{workbook_index}].tables[{table_index}]"
+                                    f".rows[{row_index}].binding_id")
+                        raise ValueError(
+                            "Workbook row binding_id is absent from the canonical design catalog "
+                            f"at {location}: {repr(key)[:160]}. "
+                            f"Table {repr(table.get('title'))[:120]}, producer {repr(task_id)[:120]}. "
+                            "Read the catalog file at declared_inputs.json['completed_run']"
+                            "['design_catalog']['path'] and copy the exact binding_id of each "
+                            "native candidate from the requested producer and stage. Put display "
+                            "IDs in values. Methods, reference checks and aggregate rows belong "
+                            "in notes entries of {title, rows}, with rows as arrays of cells; "
+                            "they do not have candidate bindings. Do not invent a binding or "
+                            "borrow a representative candidate ID for a non-candidate row."
+                        )
                     if not isinstance(extra, dict) or set(extra) - set(columns):
                         raise ValueError("Workbook values must use declared extra_columns")
                     rows.append(catalog[key])
