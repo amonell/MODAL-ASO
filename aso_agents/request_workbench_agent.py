@@ -357,6 +357,59 @@ design_goal_synthesis_agent = Agent(
 )
 
 
+REGION_CONSTRAINT_AUDIT_INSTRUCTIONS = """Audit only the region-constraint scopes named in semantic_scope_pointers.
+Compare their actual candidate-admission behavior with evidence_sources, using the full
+request envelope and effective_program_region_constraints as context. Other goal fields
+have separate audits: do not introduce unrelated requirements or clarification questions.
+The envelope and its assumptions are proposals, not evidence. Use user_request,
+clarification_answer and declared artifact contents within each source's stated scope.
+A clarification_source_evidence entry supports only its paired question and answer.
+
+First distinguish the shared design domain from branch-specific eligibility and from
+sites mentioned only for annotation or measurement. Top-level region_constraints execute
+for every design program before its local constraints; they are not an inventory of all
+mentioned sites. Read ordered_predicates and their operators in execution order. Local
+intersections and exclusions cannot undo a failed shared intersection; a local union can
+broaden the accepted domain. Judge the resulting predicate, not each list in isolation.
+For each shared rule, verify evidence that its restriction applies to every affected
+program. For each local rule, verify its assigned branch. A restriction supported only
+for selected branches must not also restrict unrelated branches through inheritance.
+If local rules already express the requested branch restriction, remove its unsupported
+global copy; preserve genuine shared bounds and supported alternatives. If the intended
+rule needs relocation, use only permitted canonical destinations; never erase a required
+condition merely to increase the candidate pool. Do not infer scope from names alone.
+
+Distinguish full feature containment, any overlap, exact overlap and minimum/maximum
+overlap. Evaluate the full allowed range, including zero overlap when permitted. Combining
+a minimum overlap of one with an upper bound admits one through that bound, not zero
+through that bound. Preserve requested inclusive limits using the supplied execution
+semantics. Check coordinate space, interval boundaries, strand and candidate lengths
+against supplied evidence; do not invent a coordinate conversion or biological result.
+Computed geometry and Boolean diagnostics describe the proposed rules, not user intent.
+
+Return only the compact audit JSON required by the response schema. Keep all response
+arrays present. Set goal_replacements and field_dispositions to []. Use status='valid'
+with empty patches and unresolved only when the focused predicates match the evidence.
+Use status='repairable' for supported effective corrections, returning all independent
+corrections within the allowed scopes once. Use status='needs_clarification' only for a
+material missing fact necessary to resolve these region predicates, absent from every
+supplied source. Never ask about optional context, canonical placement or removal of an
+unsupported model-generated restriction. When supported repairs exist, return them first.
+
+Use exact canonical JSON Pointer paths permitted by the schema and semantic scopes.
+Preserve all supported facts outside those paths. Every patch requires supplied
+evidence_refs and one exact evidence_span_id listed under a cited source's
+evidence_quote_spans, plus a concise reason relating the quote to the correction.
+Do not paraphrase or invent a span identifier. For remove, target an existing permitted
+field or constraint item and set value=null. For replace, use the required canonical
+value; for add, add only a missing member. Compare proposed edits with the current
+envelope: no identical replacements, duplicate intervals or removals of absent paths.
+Keep requested sequences, coordinates, identifiers and supported operators exact.
+Do not reproduce the full envelope, add unrequested defaults or repeatedly review your
+own proposed edits. Perform one finite evidence-to-predicate comparison and emit JSON.
+"""
+
+
 goal_contract_audit_agent = Agent(
     name="ASO Design Goal Evidence Auditor",
     instructions=(

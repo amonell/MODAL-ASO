@@ -1,7 +1,7 @@
 from aso_agents.paths import runs_root as managed_runs_root
 import csv
 import asyncio
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import replace as dataclass_replace
 import errno
 import hashlib
@@ -59,6 +59,7 @@ from aso_agents.llm_provider import (
 )
 from aso_agents.off_target_expression_agent import annotate_off_target_expression
 from aso_agents.request_workbench_agent import (
+    REGION_CONSTRAINT_AUDIT_INSTRUCTIONS,
     design_goal_synthesis_agent,
     goal_contract_audit_agent,
     goal_contract_repair_agent,
@@ -18538,6 +18539,30 @@ async def _run_verified_request_workbench_agent_once(
     }
 
 
+def _goal_audit_agent_for_protocol(protocol: Dict[str, Any]) -> Any:
+    """Use focused instructions only for an existing region-only semantic pass."""
+    scopes = protocol.get("semantic_scope_pointers")
+    region_only = (
+        protocol.get("audit_mode") in {
+            "semantic_completeness_and_contract_repair",
+            "post_repair_semantic_verification",
+        }
+        and not protocol.get("canonical_contract_issues")
+        and not protocol.get("noncanonical_field_findings")
+        and isinstance(scopes, list)
+        and bool(scopes)
+        and all(isinstance(scope, str) and re.fullmatch(
+            r"/tasks/\d+/context/structured_goal(?:/design_programs/\d+)?/region_constraints",
+            scope,
+        ) for scope in scopes)
+    )
+    if region_only:
+        agent = copy(goal_contract_audit_agent)
+        agent.instructions = REGION_CONSTRAINT_AUDIT_INSTRUCTIONS
+        return agent
+    return goal_contract_audit_agent
+
+
 async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
     evidence_sources = _declared_evidence_sources_from_prompt(prompt)
     span_map = _evidence_span_map(evidence_sources)
@@ -18588,7 +18613,7 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
 
     allowed_channels = sorted(_goal_audit_allowed_nonempty_channels(prompt))
     agent = _agent_with_strict_output_schema(
-        goal_contract_audit_agent,
+        _goal_audit_agent_for_protocol(protocol),
         schema_name="aso_goal_contract_audit_evidence_bound",
         schema=schema,
         instruction_suffix=(
