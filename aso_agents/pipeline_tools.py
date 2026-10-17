@@ -18555,7 +18555,7 @@ def _goal_audit_agent_for_protocol(protocol: Dict[str, Any]) -> Any:
         return agent
     if program_length_audit_obligations(protocol):
         agent = copy(goal_contract_audit_agent)
-        agent.instructions = str(agent.instructions or '') + PROGRAM_LENGTH_AUDIT_INSTRUCTIONS
+        agent.instructions = PROGRAM_LENGTH_AUDIT_INSTRUCTIONS + "\n" + str(agent.instructions or '')
         return agent
     return goal_contract_audit_agent
 

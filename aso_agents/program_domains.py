@@ -3,6 +3,17 @@ from copy import deepcopy
 
 
 PROGRAM_LENGTH_AUDIT_INSTRUCTIONS = """
+Execution contract: one design_program executes one scalar oligo length. A program
+named a series, library or comparison does not execute multiple lengths: labels,
+objectives and output-table requests cannot expand its length at execution time.
+An absent program.length permits a single resolved/default length, never an
+implicit length series. Every explicitly requested finite length set or inclusive
+range therefore needs one otherwise-equivalent program per value for each
+applicable intervention branch. A domain shared across several branches is still
+explicitly requested for each branch; it does not qualify as not_requested.
+Determine requested_lengths from the user evidence before choosing the verdict.
+Do not exclude a length domain because it was phrased as a series or a full-library
+requirement instead of as a branch-specific scalar. Those are execution variants.
 For each program_length_checks_required entry, fill its check_id under
 program_length_checks. Determine the complete explicitly requested oligo-length
 domain for that intervention branch from evidence_sources: enumerate a finite set
