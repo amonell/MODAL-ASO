@@ -15641,12 +15641,12 @@ def _parse_llm_json_object(payload: Any, error_prefix: str) -> Dict[str, Any]:
     raise RuntimeError(f"{error_prefix} did not return a JSON object")
 
 
-def _json_schema_validation_errors(
+def _json_schema_validation_error_details(
     payload: Any,
     schema: Dict[str, Any],
-) -> List[str]:
+) -> List[Dict[str, Any]]:
     if not isinstance(payload, dict):
-        return ["$: expected a JSON object"]
+        return [{"path": "$", "message": "$: expected a JSON object", "schema": schema}]
     validator = Draft202012Validator(schema)
     root_errors = list(validator.iter_errors(payload))
 
@@ -15719,14 +15719,27 @@ def _json_schema_validation_errors(
         detailed_errors or root_errors,
         key=lambda error: tuple(str(item) for item in error.absolute_path),
     )
-    messages: List[str] = []
+    details: List[Dict[str, Any]] = []
     for error in errors:
         path = "$"
         for item in error.absolute_path:
             path += f"[{item}]" if isinstance(item, int) else f".{item}"
         message = f"{path}: {error.message}"
-        if message not in messages:
-            messages.append(message)
+        # Distinct union schemas can emit the same message. Retain their
+        # contracts here so deduplicating diagnostics cannot invent certainty.
+        details.append({"path": path, "message": message,
+                        "schema": error.schema if isinstance(error.schema, dict) else {}})
+    return details
+
+
+def _json_schema_validation_errors(
+    payload: Any,
+    schema: Dict[str, Any],
+) -> List[str]:
+    messages: List[str] = []
+    for item in _json_schema_validation_error_details(payload, schema):
+        if item["message"] not in messages:
+            messages.append(item["message"])
         if len(messages) >= 12:
             break
     return messages
@@ -16248,8 +16261,9 @@ def _structured_output_retry_prompt(
             choices = node.get("anyOf") or node.get("oneOf")
             if isinstance(choices, list):
                 expected = "array" if isinstance(token, int) else "object"
-                node = next((choice for choice in choices
-                             if isinstance(choice, dict) and choice.get("type") == expected), {})
+                compatible = [choice for choice in choices
+                              if isinstance(choice, dict) and choice.get("type") == expected]
+                node = compatible[0] if len(compatible) == 1 else {}
             if isinstance(token, int):
                 node = node.get("items") if isinstance(node, dict) else None
             else:
@@ -16257,14 +16271,30 @@ def _structured_output_retry_prompt(
         if isinstance(node, dict):
             choices = node.get("anyOf") or node.get("oneOf")
             if isinstance(choices, list):
-                node = next((choice for choice in choices
-                             if isinstance(choice, dict) and choice.get("type") == "object"), node)
+                compatible = [choice for choice in choices
+                              if isinstance(choice, dict) and choice.get("type") == "object"]
+                node = compatible[0] if len(compatible) == 1 else {}
         return node if isinstance(node, dict) else {}
 
+    # A union can contain many object schemas distinguished by op/path or
+    # other literals. The validator already narrows those branches against
+    # the rejected instance. Reuse its actual leaf contract rather than the
+    # first object branch, which may describe an entirely unrelated field.
+    rejected_value = _decode_json_like(rejected_response) if isinstance(rejected_response, str) else rejected_response
+    error_details = _json_schema_validation_error_details(rejected_value, schema)
     nested_contracts = []
     for error in validation_errors[:4]:
         path = error.split(":", 1)[0]
-        node = schema_node(path)
+        matching = [item for item in error_details if item["path"] == path]
+        if matching:
+            schemas = {json.dumps(item["schema"], sort_keys=True) for item in matching}
+            # Unmatched discriminators can leave multiple possible schemas.
+            # Keep the validation errors/full schema, without an invented hint.
+            if len(schemas) != 1:
+                continue
+            node = matching[0]["schema"]
+        else:
+            node = schema_node(path)
         if not node:
             continue
         fields = node.get("properties")
@@ -16272,9 +16302,14 @@ def _structured_output_retry_prompt(
         if isinstance(fields, dict):
             contract["allowed_keys"] = sorted(fields)
             contract["required_keys"] = list(node.get("required") or [])
-        for name in ("type", "enum", "const"):
+        for name in ("type", "enum", "const", "minItems", "maxItems"):
             if name in node:
                 contract[name] = node[name]
+        items = node.get("items")
+        if isinstance(items, dict) and isinstance(items.get("properties"), dict):
+            contract["items"] = {"type": items.get("type"),
+                                 "allowed_keys": sorted(items["properties"]),
+                                 "required_keys": list(items.get("required") or [])}
         nested_contracts.append(contract)
     return (
         "The prior response was rejected because it did not satisfy the required "
