@@ -405,7 +405,9 @@ class Runner:
         response_history: List[Dict[str, Any]] = []
         data = Runner._responses(payload, config=config)
 
-        for _ in range(max_steps):
+        # Each permitted continuation is already paid for. Inspect its response
+        # even at the limit, without executing another tool batch or nudge.
+        for step in range(max_steps + 1):
             if config.continuation_mode == "stateless":
                 conversation_input.extend(copy.deepcopy(_response_output_items(data)))
             parsed = Runner._parse_response_output(data)
@@ -414,6 +416,11 @@ class Runner:
             response_history.append(_compact_history_entry(data, parsed, attribution))
 
             if tool_calls:
+                if step == max_steps:
+                    return _RunResult(
+                        final_output={"error": "Max tool-calling steps exceeded"},
+                        responses=response_history[:],
+                    )
                 tool_outputs: List[Dict[str, Any]] = []
                 for tc in tool_calls:
                     call_id = tc.get("call_id")
@@ -547,6 +554,8 @@ class Runner:
                 return _RunResult(final_output=msg_content, responses=response_history[:])
 
             # Some model turns can be empty (no text, no tool calls). Nudge once and continue.
+            if step == max_steps:
+                break
             response_id = data.get("id")
             nudge_items = Runner._messages_to_responses_input(
                 [

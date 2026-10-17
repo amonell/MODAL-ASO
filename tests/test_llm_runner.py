@@ -95,6 +95,78 @@ def _runner_settings() -> ModelSettings:
     )
 
 
+@pytest.mark.parametrize("provider", ["openai", "openrouter"])
+@pytest.mark.parametrize("terminal", ["message", "tool", "empty", "incomplete"])
+def test_final_paid_response_is_processed_without_an_extra_tool_batch(
+    monkeypatch: pytest.MonkeyPatch, provider: str, terminal: str,
+) -> None:
+    executed = []
+
+    @function_tool
+    def count(value: int) -> int:
+        executed.append(value)
+        return value
+
+    tool = {"id": "first", "status": "completed", "output": [{
+        "type": "function_call", "name": "count", "call_id": "count-1",
+        "arguments": '{"value":7}',
+    }]}
+    last = _message_response("Preserved final answer", response_id="last")
+    expected = "Preserved final answer"
+    if terminal == "tool":
+        last = copy.deepcopy(tool)
+        last["id"] = "last"
+        last["output"][0]["call_id"] = "count-2"
+        expected = {"error": "Max tool-calling steps exceeded"}
+    elif terminal == "empty":
+        last = {"id": "last", "status": "completed", "output": []}
+        expected = {"error": "Max tool-calling steps exceeded"}
+    elif terminal == "incomplete":
+        last = {"id": "last", "status": "incomplete", "output": [],
+                "incomplete_details": {"reason": "max_output_tokens"}}
+        expected = {"error": "incomplete_response", "status": "incomplete",
+                    "reason": "max_output_tokens"}
+    fake = _install_fake_client(monkeypatch, provider, [tool, last])
+    events = []
+    result = Runner._run_sync(
+        Agent("counter", "Count once.", tools=[count]), input="Count seven.",
+        max_steps=1, event_callback=events.append,
+    )
+    assert result.final_output == expected
+    assert executed == [7]
+    assert len(fake.instances[0].calls) == 2 and not fake.queued_responses
+    assert len(result.responses) == 2
+    assert [event["content"] for event in events if event["type"] == "final_output"] == (
+        ["Preserved final answer"] if terminal == "message" else []
+    )
+
+
+@pytest.mark.parametrize("provider", ["openai", "openrouter"])
+@pytest.mark.parametrize("tool_requested", [False, True])
+def test_zero_step_budget_inspects_initial_response_without_tool_execution(
+    monkeypatch: pytest.MonkeyPatch, provider: str, tool_requested: bool,
+) -> None:
+    executed = []
+
+    @function_tool
+    def count(value: int) -> int:
+        executed.append(value)
+        return value
+
+    response = _message_response("Direct answer")
+    if tool_requested:
+        response["output"] = [{"type": "function_call", "name": "count",
+                               "call_id": "count-1", "arguments": '{"value":7}'}]
+    fake = _install_fake_client(monkeypatch, provider, [response])
+    result = Runner._run_sync(Agent("counter", "Answer.", tools=[count]),
+                              input="Answer directly.", max_steps=0)
+    assert result.final_output == (
+        {"error": "Max tool-calling steps exceeded"} if tool_requested else "Direct answer"
+    )
+    assert executed == [] and len(fake.instances[0].calls) == 1
+    assert len(result.responses) == 1
+
+
 @function_tool
 def double(value: int) -> dict[str, int]:
     """Double one integer."""
