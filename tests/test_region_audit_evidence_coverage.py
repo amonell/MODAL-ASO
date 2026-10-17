@@ -101,8 +101,15 @@ def test_old_compact_contract_remains_unchanged_for_broad_audit(monkeypatch):
 
     async def run(agent, *, input, max_steps):
         calls.append(input)
+        protocol = tools._goal_audit_protocol_payload(prompt)
+        spans = tools._evidence_span_map(protocol['evidence_sources'])
+        length_checks = {o['check_id']: {'verdict':'not_requested',
+            'requested_lengths':[], 'represented_program_ids':[], 'evidence_refs':['request'],
+            'evidence_span_id':next(iter(spans)), 'reason':'This request supplies no length domain.'}
+            for o in protocol.get('program_length_checks_required') or []}
         return SimpleNamespace(final_output=json.dumps({'status':'valid','patches':[],
-            'goal_replacements':[],'field_dispositions':[],'unresolved':[]}))
+            'goal_replacements':[],'field_dispositions':[],'unresolved':[],
+            **({'program_length_checks':length_checks} if length_checks else {})}))
 
     monkeypatch.setattr(tools.Runner, 'run', run)
     assert asyncio.run(tools._run_goal_contract_audit_agent_once(prompt))['status'] == 'valid'

@@ -71,6 +71,10 @@ from aso_agents.region_audit import (
     is_focused_region_audit, region_audit_obligations,
     region_audit_coverage_errors, with_region_audit_coverage,
 )
+from aso_agents.program_domains import (
+    PROGRAM_LENGTH_AUDIT_INSTRUCTIONS, program_length_audit_obligations,
+    program_length_coverage_errors, with_program_length_coverage,
+)
 from aso_agents.structured_outputs import (
     DESIGN_GOAL_SYNTHESIS_OUTPUT_SCHEMA,
     _synthesized_design_goal_schema,
@@ -18549,6 +18553,10 @@ def _goal_audit_agent_for_protocol(protocol: Dict[str, Any]) -> Any:
         agent = copy(goal_contract_audit_agent)
         agent.instructions = REGION_CONSTRAINT_AUDIT_INSTRUCTIONS
         return agent
+    if program_length_audit_obligations(protocol):
+        agent = copy(goal_contract_audit_agent)
+        agent.instructions = str(agent.instructions or '') + PROGRAM_LENGTH_AUDIT_INSTRUCTIONS
+        return agent
     return goal_contract_audit_agent
 
 
@@ -18559,6 +18567,7 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
     envelope = protocol.get("current_request_envelope")
     region_focused = is_focused_region_audit(protocol)
     region_obligations = region_audit_obligations(protocol)
+    length_obligations = program_length_audit_obligations(protocol)
 
     def normalized_audit(payload: Dict[str, Any]) -> Dict[str, Any]:
         audited = _canonicalize_existing_member_additions(
@@ -18577,6 +18586,8 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
     phase_schema = _goal_contract_audit_schema_for_prompt(prompt)
     if region_focused:
         phase_schema = with_region_audit_coverage(phase_schema, region_obligations)
+    if length_obligations:
+        phase_schema = with_program_length_coverage(phase_schema, length_obligations)
     schema = _schema_with_allowed_evidence_refs(
         phase_schema,
         [str(item.get("evidence_id") or "") for item in evidence_sources],
@@ -18587,6 +18598,8 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
         errors = _goal_contract_audit_contract_errors(normalized, schema)
         if region_focused and not errors:
             errors.extend(region_audit_coverage_errors(normalized, region_obligations, span_map))
+        if length_obligations and not errors:
+            errors.extend(program_length_coverage_errors(normalized, length_obligations, span_map))
         if not errors or not isinstance(envelope, dict):
             return errors
         canonical = _canonicalize_existing_member_additions(payload, protocol)
@@ -18648,6 +18661,7 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
     # Coverage findings remain in the original model response/telemetry. Keep
     # the existing public audit-result contract for downstream repair execution.
     materialized.pop("region_scope_checks", None)
+    materialized.pop("program_length_checks", None)
     return materialized
 
 
@@ -24248,6 +24262,9 @@ def _goal_audit_prompt(
         ]
         if is_focused_region_audit(audit_input):
             audit_input["region_scope_checks_required"] = region_audit_obligations(audit_input)
+    length_obligations = program_length_audit_obligations(audit_input)
+    if length_obligations:
+        audit_input["program_length_checks_required"] = length_obligations
     return (
         "Audit the supplied request envelope. Return only the compact audit object "
         "defined by your response schema. Use canonical_contract_issues.json_pointer "
