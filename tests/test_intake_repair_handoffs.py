@@ -272,6 +272,13 @@ def audit_prompt(current, required):
         semantic_audit=True, required_goal_fields=required)
 
 
+def no_requested_length_checks():
+    return {"program_0": {"verdict": "not_requested", "requested_lengths": [],
+        "represented_program_ids": [], "evidence_refs": ["request"],
+        "evidence_span_id": "request.span.0",
+        "reason": "The fixture request asks for an empty-result statement, not an oligo length."}}
+
+
 @pytest.mark.parametrize("anchors,expected", [
     (["acceptor"], "acceptor"),
     (["donor"], "donor"),
@@ -366,7 +373,8 @@ def test_absent_field_removal_is_normalized_before_phase_path_validation(monkeyp
     raw = {"status": "repairable", "patches": [{"op": "remove",
         "path": "/tasks/0/context/structured_goal/design_programs/0/notes", "value": None,
         "evidence_refs": ["request"], "evidence_span_id": "request.span.0", "reason": "Remove unsupported notes"}],
-        "goal_replacements": [], "field_dispositions": [], "unresolved": []}
+        "goal_replacements": [], "field_dispositions": [], "unresolved": [],
+        "program_length_checks": no_requested_length_checks()}
     async def run(agent, *, input, max_steps):
         calls.append(input)
         return SimpleNamespace(final_output=json.dumps(raw))
@@ -382,20 +390,24 @@ def test_effective_illegal_patch_is_still_rejected_at_the_same_boundary(monkeypa
         return SimpleNamespace(final_output=json.dumps({"status": "repairable", "patches": [{"op": "remove",
             "path": "/tasks/0/context/structured_goal/design_programs", "value": None,
             "evidence_refs": ["request"], "evidence_span_id": "request.span.0", "reason": "Delete required programs"}],
-            "goal_replacements": [], "field_dispositions": [], "unresolved": []}))
+            "goal_replacements": [], "field_dispositions": [], "unresolved": [],
+            "program_length_checks": no_requested_length_checks()}))
     monkeypatch.setattr(pipeline.Runner, "run", run)
     result = asyncio.run(pipeline._run_goal_contract_audit_agent_once(audit_prompt(current, [])))
     assert result["error"] == "invalid_structured_output"
+    assert "program_length_checks" not in result["reason"]
     assert current["tasks"][0]["context"]["structured_goal"]["design_programs"]
 
 
 def test_malformed_patch_entries_cannot_be_discarded_as_noops(monkeypatch):
     async def run(agent, *, input, max_steps):
         return SimpleNamespace(final_output=json.dumps({"status": "repairable", "patches": ["remove some field"],
-            "goal_replacements": [], "field_dispositions": [], "unresolved": []}))
+            "goal_replacements": [], "field_dispositions": [], "unresolved": [],
+            "program_length_checks": no_requested_length_checks()}))
     monkeypatch.setattr(pipeline.Runner, "run", run)
     result = asyncio.run(pipeline._run_goal_contract_audit_agent_once(audit_prompt(envelope(design_goal()), [])))
     assert result["error"] == "invalid_structured_output"
+    assert "program_length_checks" not in result["reason"]
 
 
 def clarification_candidate():
