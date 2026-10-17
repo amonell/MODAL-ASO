@@ -108,8 +108,8 @@ def _repeated_export_table_columns(text, source_columns, source_rows, alternativ
     return []
 
 
-def _has_manual_markdown_table(text):
-    """Detect a populated pipe table written without a bound source marker."""
+def _manual_markdown_table_locations(text):
+    """Locate populated pipe tables using the existing validation boundary."""
     lines = text.splitlines()
     for index in range(len(lines) - 2):
         header, separator, first_row = lines[index:index + 3]
@@ -118,8 +118,34 @@ def _has_manual_markdown_table(text):
             continue
         cells = [cell.strip() for cell in separator.strip().strip("|").split("|")]
         if len(cells) >= 2 and all(cell and set(cell) <= {"-", ":"} and "-" in cell for cell in cells):
-            return True
-    return False
+            end = index + 2
+            while end < len(lines) and lines[end].lstrip().startswith("|"):
+                end += 1
+            yield {"header_line_1based": index + 1, "header_preview": header[:280],
+                   "row_count": end - index - 2}
+
+
+def _has_manual_markdown_table(text):
+    """Detect a populated pipe table written without a bound source marker."""
+    return next(_manual_markdown_table_locations(text), None) is not None
+
+
+def _unbound_markdown_table_error(texts):
+    locations = [{"path": str(path), **location}
+                 for path, text in texts.items()
+                 for location in _manual_markdown_table_locations(text)]
+    # Keep feedback bounded for large reports while locating multiple files
+    # in the same repair attempt. No scientific values or source are inferred.
+    diagnostic = {"tables": locations[:20], "total_unbound_tables": len(locations),
+                  "unlisted_tables": max(0, len(locations) - 20)}
+    return ValueError(
+        "A Markdown result table remains unbound to a declared source table. "
+        "Locations in the render input: " + json.dumps(diagnostic, ensure_ascii=False) + ". "
+        "Repair every listed destination, including requested Markdown files as well as the summary. "
+        "Replace each manual table with a {{table:id}} marker and declare its report_tables view "
+        "using an available source_path and its exact columns. Keep the requested scientific "
+        "content and outputs; changing only the summary does not repair another report."
+    )
 
 
 def _replace_candidate_tables_with_marker(text, marker, source_row_count):
@@ -462,10 +488,10 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
         replaced_total = 0
         for destination, body in list(texts.items()):
             revised, replaced = _replace_candidate_tables_with_marker(body, marker, source_row_count)
-            if _has_manual_markdown_table(revised):
-                raise ValueError("A Markdown result table remains unbound to a declared source table.")
             texts[destination] = revised
             replaced_total += replaced
+        if any(_has_manual_markdown_table(text) for text in texts.values()):
+            raise _unbound_markdown_table_error(texts)
         views = [{"id": view_id, "source_path": str(source),
                   "columns": columns,
                   "rank_column": "native_rank" if "native_rank" in fields else "rank" if "rank" in fields else None,
@@ -476,7 +502,7 @@ def render_report_tables(result, required_outputs, summary_path, *, required=Fal
             "replaced_manual_tables": replaced_total,
             "discarded_model_declarations": deepcopy(direct_views or nested_views or [])}
     elif source_tables and any(_has_manual_markdown_table(text) for text in texts.values()):
-        raise ValueError("A Markdown result table remains unbound to a declared source table.")
+        raise _unbound_markdown_table_error(texts)
     originals = dict(texts)
     if required:
         # Rendering an actual exported table does not require another model to
