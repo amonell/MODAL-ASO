@@ -47,6 +47,22 @@ ANALYSIS_REQUEST_SCOPE_RULES = (
 )
 
 
+ANALYSIS_RESULT_DELIVERY_RULES = (
+    "\nCalculation and delivery are separate obligations. When the user asks to report "
+    "a quantity, status or rank, write that result explicitly in the assigned deliverable "
+    "at the requested row, group, reference or other scope. An internal variable, an "
+    "enumeration from which a reader could recompute the result, or a total at a different "
+    "scope does not fulfill an explicit reporting requirement. Trace each requested result "
+    "through serialization to its actual output field, cell or labeled narrative value. "
+    "For a delivery check, cite that exported location and its scope; computation code alone "
+    "establishes only computation. Preserve a known zero as a numeric zero when the user "
+    "requests a count. Keep unavailable totals unknown and any observed lower bounds "
+    "separately labeled; blank detail fields do not establish zero. Do not add unrequested "
+    "analyses or require a particular column name when equivalent labeled output satisfies "
+    "the user's requested structure.\n"
+)
+
+
 ANALYSIS_EVIDENCE_RULES = (
     "\nEvidence and interpretation: Compute and report each requested scientific dimension "
     "from its own observations before combining dimensions into an overall decision. "
@@ -118,7 +134,7 @@ sandbox_analysis_agent = Agent(
         "paths. If code violates a user requirement, fix the code rather than rewriting that requirement.\n"
         "- If a requested calculation cannot be completed from the declared inputs, write a result explaining that limitation instead of failing.\n"
         "Return JSON only."
-        + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES
+        + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
     ),
     tools=[],
     model=SANDBOX_ANALYSIS_MODEL,
@@ -204,7 +220,7 @@ analysis_contract_review_agent = Agent(
         "For satisfied or unverified checks, problem and suggested_fix may be null. "
         "A concrete violated check requires both fields. Do not replace the requested "
         "coverage audit with a general approval."
-        + ANALYSIS_REQUEST_SCOPE_RULES
+        + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
@@ -228,7 +244,7 @@ design_workbook_analysis_agent = Agent(
         "Excel creation, source copying, formatting basics and prediction sheets are the platform's responsibility. Your Python must produce the table plan and summary rather than construct or save a workbook. Do not import openpyxl or instantiate DesignWorkbook. Keep candidate facts in their source catalog and put only derived additions in values; do not rebuild sequences, rediscover source rows or transcribe a parallel candidate table.\n"
         "Notes are arrays of {title, rows}, with rows as arrays of cells, for Methods and other requested narrative sheets. Document unavailable analyses and limitations honestly. Other requested non-Excel files are written directly by your program. If you write requested CSV/TSV files, declare report_tables with id, source_path, columns, rank_column and preview_limit, and use {{table:ID}} in the summary.\n"
         "Read only declared input files, keep source bytes unchanged, perform no network calls, and use the exact requested output paths. Reconcile analysis_plan, assumptions, limitations and expected_outputs with the actual program. Return JSON only."
-        + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES
+        + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
@@ -261,7 +277,7 @@ analysis_program_repair_agent = Agent(
         "return an empty plan_updates array when none needs correction. These descriptions do not "
         "override the execution_contract or user requirements: fix code that violates those requirements, "
         "rather than changing text to excuse it. Return the bound structured edits, not an entire new plan."
-        + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES
+        + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
     ),
     tools=[], model=SANDBOX_ANALYSIS_MODEL, model_settings=SANDBOX_ANALYSIS_SETTINGS,
 )
