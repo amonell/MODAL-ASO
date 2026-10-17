@@ -25,8 +25,12 @@ _HELPERS = (
      "transcript-oriented DNA; all endpoints one-based inclusive; no origin/strand inference or clipping"),
     ("SequenceCoordinates", "aso_agents.sequence_coordinates",
      "SequenceCoordinates(*, first_coordinate, length, direction=1)",
-     "to_index(coordinate), to_coordinate(index), inclusive_slice(lower,upper), "
-     "extract(sequence,lower,upper); bounds are ascending inclusive; no implicit origin or clipping"),
+     "from_inclusive_bounds(*,lower,upper,direction) constructs a frame from independent "
+     "ascending source bounds, with expected length upper-lower+1; direction is the "
+     "supplied string's coordinate order (+1 or -1). to_index(coordinate), "
+     "to_coordinate(index), inclusive_slice(lower,upper), extract(sequence,lower,upper); "
+     "extract rejects sequence/frame length disagreement. Bounds are ascending inclusive; "
+     "no implicit origin, sequence identity verification or clipping"),
     ("compare_antisense_target", "aso_agents.mapping_evidence",
      "compare_antisense_target(antisense_5to3, target_5to3)",
      "dict: mismatch_count, match_count, mismatch_positions_in_supplied_sequence_1based, "

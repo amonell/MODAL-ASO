@@ -28,6 +28,23 @@ class SequenceCoordinates:
         if self.direction not in (-1, 1):
             raise ValueError("Coordinate direction must be +1 or -1")
 
+    @classmethod
+    def from_inclusive_bounds(cls, *, lower: int, upper: int, direction: int):
+        """Build a frame from independently declared ascending source bounds.
+
+        ``direction`` describes the supplied string's coordinate order, not an
+        inferred biological strand. The expected length comes from the bounds;
+        ``extract`` then checks the actual sequence against that independent
+        length. Matching lengths do not establish sequence identity or provenance.
+        """
+        lower = _integer(lower, "lower")
+        upper = _integer(upper, "upper")
+        direction = _integer(direction, "direction")
+        if lower > upper:
+            raise ValueError("Inclusive bounds must be in ascending coordinate order")
+        return cls(first_coordinate=lower if direction == 1 else upper,
+                   length=upper - lower + 1, direction=direction)
+
     def to_index(self, coordinate: int) -> int:
         """Convert a base coordinate to its bounded zero-based string index."""
         coordinate = _integer(coordinate, "coordinate")
