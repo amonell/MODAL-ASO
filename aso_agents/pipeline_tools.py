@@ -53925,15 +53925,30 @@ _SPECIES_OFFTARGET_FIELDS: Tuple[str, ...] = (
     "Times_mapped_off_target_genes",
     "off_target_mapping_capped",
     "off_target_mapping_count_lower_bound",
+    "off_target_unclassified_alignments",
     "off_target_count_status",
     "off_target_observed_gene_count",
+    "off_target_observed_gene_ids_by_mismatch",
+    "off_target_observed_genes_by_mismatch",
     "off_target_exact_count_unit",
+    "off_target_count_scope",
+    "off_target_query_sequence",
+    "off_target_query_role",
     "Off_target_exact_count",
     "Off_target_total_upto_mismatch_count",
     "Off_target_mismatch_budget",
     "Off_target_weighted_risk_score",
     "Off_target_0mm_gene_ids",
     "Off_target_0mm_genes",
+    "Off_target_1mm_count",
+    "Off_target_2mm_count",
+    "Off_target_3mm_count",
+    "Off_target_1mm_gene_ids",
+    "Off_target_2mm_gene_ids",
+    "Off_target_3mm_gene_ids",
+    "Off_target_1mm_genes",
+    "Off_target_2mm_genes",
+    "Off_target_3mm_genes",
     "Off_target_gene_ids_by_mismatch",
     "Off_target_genes_by_mismatch",
 )
@@ -54212,8 +54227,10 @@ def _annotate_gapmer_offtargets_by_species(
             expression_by_species[species_key] = {"status": "not_run"}
             continue
         search_provenance_by_species[species_key] = deepcopy(mapping.get("search_provenance") or {})
+        count_scope = exact_gene_count_scope(
+            get_species_config(species_key), species_goal.get("gene_id"), mapping)
         count_annotation = _enrich_exact_off_target_bins_for_tiles(
-            str(species_path), {"junction_search_summary": mapping.get("junction_mapping") or {}})
+            str(species_path), count_scope)
         if count_annotation.get("error"):
             status_by_species[species_key] = "mapping_failed"
             expression_by_species[species_key] = {"status": "not_run", "error": count_annotation["error"]}
