@@ -44,11 +44,28 @@ def unbound_global_names(code):
 
 
 def validate_program_dependencies(code):
+    from .analysis_local_bindings import premature_local_helper_reads
+
+    errors = []
     missing = unbound_global_names(code)
     if missing:
-        raise ValueError(
+        errors.append(
             "Generated program references global names with no import or definition: "
             + ", ".join(missing)
             + ". Make the program self-contained using the intended imports or definitions; "
               "preserve the requested calculations and evidence."
         )
+    premature = premature_local_helper_reads(code)
+    if premature:
+        details = '; '.join(
+            f"{row['name']} in {row['function']}: read line {row['read_line']}, "
+            f"local definition line {row['definition_line']}" for row in premature)
+        errors.append(
+            'Generated program reads local helpers before their only definition: '
+            + details + '. A local def statement must execute before the helper is '
+            'read or called. Place the intended definition before its uses in the '
+            'correct scope; preserve calculations, inputs and outputs. Do not remove '
+            'required work, substitute empty results, or suppress the exception.'
+        )
+    if errors:
+        raise ValueError('\n'.join(errors))
