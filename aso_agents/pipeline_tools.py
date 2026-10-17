@@ -24692,7 +24692,7 @@ def _canonical_optional_remove_paths(
     request_envelope: Dict[str, Any],
     *, required_goal_fields: Optional[List[str]] = None,
 ) -> List[str]:
-    """List existing task-context fields whose generated schema permits removal."""
+    """List existing fields and list members that the canonical schema can remove."""
 
     paths: List[str] = []
 
@@ -24714,7 +24714,17 @@ def _canonical_optional_remove_paths(
                 _visit(nested, child_tokens)
         elif isinstance(value, list):
             for index, nested in enumerate(value):
-                _visit(nested, [*tokens, str(index)])
+                child_tokens = [*tokens, str(index)]
+                # The executor already supports indexed removals and enforces
+                # minItems. Expose those same destinations to the audit model,
+                # including scalar members with no child fields to visit.
+                if _goal_audit_remove_path_is_canonical_optional(
+                    child_tokens, request_envelope,
+                ):
+                    paths.append("/" + "/".join(
+                        _json_pointer_escape(token) for token in child_tokens
+                    ))
+                _visit(nested, child_tokens)
 
     tasks = request_envelope.get("tasks")
     if isinstance(tasks, list):

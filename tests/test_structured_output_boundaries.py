@@ -1775,7 +1775,7 @@ def test_canonical_contract_issue_binds_path_operation_and_status() -> None:
     assert removal_branch["value"] == {"type": "null"}
 
 
-def test_contract_issue_remove_schema_is_limited_to_existing_optional_fields() -> None:
+def test_contract_issue_remove_schema_is_limited_to_existing_optional_destinations() -> None:
     prompt = "Audit.\n\n" + json.dumps(
         {
             "allowed_nonempty_channels": ["patches", "unresolved"],
@@ -1812,6 +1812,7 @@ def test_contract_issue_remove_schema_is_limited_to_existing_optional_fields() -
     assert removal["path"]["enum"] == [
         "/tasks/0/context/gene_symbol",
         "/tasks/0/context/provided_asos",
+        "/tasks/0/context/provided_asos/0",
     ]
 
 
