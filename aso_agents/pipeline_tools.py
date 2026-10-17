@@ -18640,7 +18640,31 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
         if region_focused and not errors:
             errors.extend(region_audit_coverage_errors(normalized, region_obligations, span_map))
         if length_obligations and not errors:
-            errors.extend(program_length_coverage_errors(normalized, length_obligations, span_map))
+            # Coverage may describe the result of this response's repairs. Preview
+            # with the real executor so fabricated IDs, invalid paths and unbound
+            # evidence cannot turn a proposed variant into an executed one.
+            materialized = _materialize_evidence_span_ids(deepcopy(normalized), span_map)
+            preview = _apply_goal_audit_patches(
+                envelope, materialized.get("patches"), issue_records=[],
+                evidence_sources=evidence_sources,
+            )
+            if preview["rejected"]:
+                errors.extend(
+                    "$.program_length_checks: canonical repair preview rejected "
+                    + str(item.get("path") or "") + ": " + str(item.get("reason") or "")
+                    for item in preview["rejected"]
+                )
+            else:
+                projected = {}
+                for obligation in length_obligations:
+                    pointer = obligation["programs_pointer"]
+                    exists, programs = _json_pointer_value(
+                        preview["request_envelope"], _json_pointer_tokens(pointer),
+                    )
+                    projected[pointer] = programs if exists and isinstance(programs, list) else []
+                errors.extend(program_length_coverage_errors(
+                    normalized, length_obligations, span_map, projected_programs=projected,
+                ))
         if not errors or not isinstance(envelope, dict):
             return errors
         canonical = _canonicalize_existing_member_additions(payload, protocol)

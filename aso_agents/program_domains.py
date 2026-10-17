@@ -21,7 +21,13 @@ or every integer of a bounded inclusive range. Preserve branch-specific differen
 Do not silently pick a default length or accept lengths mentioned only in labels,
 objectives, chemistry or notes. List the actual same-branch represented_program_ids
 and compare their typed design_programs[*].length values with the requested domain.
-Use complete only for exactly one program per requested length. Use incomplete for
+For complete, assess the proposed envelope AFTER applying your canonical patches:
+list every actual same-branch program ID, including any newly added variants.
+Those IDs must exist after successful patch application; naming them is not a repair.
+Complete requires exactly one program per requested length and preservation of the
+branch's executable facts (only IDs, labels, objectives and lengths may differ).
+For incomplete, describe the CURRENT envelope: list only its existing same-branch
+IDs. Use incomplete for
 omitted, duplicated or out-of-domain variants and supply effective canonical patches
 in the same response: set missing length scalars and add otherwise-equivalent
 program variants with unique IDs, preserving supported branch facts and graph
@@ -73,7 +79,10 @@ def with_program_length_coverage(schema, obligations):
             'requested_lengths': {'type':'array','uniqueItems':True,
                                   'items':{'type':'integer','minimum':1}},
             'represented_program_ids': {'type':'array','uniqueItems':True,
-                'items':{'type':'string','enum':list(obligation['available_program_lengths'])}},
+                'description': 'Complete refers to actual IDs after canonical patches; '
+                               'incomplete refers to existing IDs before patches. '
+                               'Invented or unapplied IDs never establish coverage.',
+                'items':{'type':'string','minLength':1}},
             'evidence_refs': {'type':'array','minItems':1,'uniqueItems':True,'items':{'type':'string'}},
             'evidence_quote': {'type':'string','minLength':1},
             'reason': {'type':'string','minLength':1},
@@ -86,8 +95,13 @@ def with_program_length_coverage(schema, obligations):
     return result
 
 
-def program_length_coverage_errors(payload, obligations, span_map):
-    """Call after schema validation; compare findings to actual typed variants."""
+def program_length_coverage_errors(payload, obligations, span_map, *, projected_programs=None):
+    """Compare coverage to actual variants, including successfully previewed repairs.
+
+    The caller must apply canonical patches with the ordinary evidence/path/value
+    checks before supplying projected programs. This function never interprets or
+    executes model-authored patch dictionaries itself.
+    """
     checks = payload['program_length_checks']
     errors = []
     for obligation in obligations:
@@ -104,16 +118,41 @@ def program_length_coverage_errors(payload, obligations, span_map):
             continue
         if verdict != 'unclear' and not domain:
             errors.append(path + ': an explicit finite requested domain must be nonempty')
+        available = obligation['available_program_lengths']
+        projected = None
+        if verdict == 'complete' and projected_programs is not None:
+            projected = projected_programs.get(obligation['programs_pointer'], [])
+            available = {p.get('program_id'): p.get('length') for p in projected
+                         if isinstance(p, dict)}
+            identifiers = [p.get('program_id') for p in projected if isinstance(p, dict)]
+            if len(identifiers) != len(set(identifiers)):
+                errors.append(path + ': proposed program IDs must be unique')
+        if any(identifier not in available for identifier in ids):
+            errors.append(path + ': represented program IDs must exist in the assessed '
+                          'envelope; names alone or rejected patches do not create variants')
+            continue
         if verdict == 'complete':
-            observed = [obligation['available_program_lengths'][identifier] for identifier in ids]
+            observed = [available[identifier] for identifier in ids]
             if (obligation['program_id'] not in ids or len(observed) != len(domain)
                 or any(type(value) is not int for value in observed)
                 or sorted(observed) != sorted(domain)):
                 errors.append(path + ': complete requires the current program and exactly one '
                               'typed program.length for every requested value; notes and defaults do not count')
+            if projected is not None and obligation['program_id'] in available:
+                members = {p['program_id']: p for p in projected if isinstance(p, dict)
+                           and isinstance(p.get('program_id'), str)}
+                def branch_facts(program):
+                    return {key: value for key, value in program.items()
+                            if key not in {'program_id', 'label', 'objective', 'length'}}
+                expected = branch_facts(members[obligation['program_id']])
+                if any(branch_facts(members[identifier]) != expected for identifier in ids):
+                    errors.append(path + ': complete length variants must preserve the '
+                                  'same executable branch facts; unrelated or altered '
+                                  'branches cannot supply missing lengths')
         root = obligation['programs_pointer']
         group_pointers = {obligation['program_pointer']} | {
-            obligation['available_program_pointers'][identifier] for identifier in ids}
+            obligation['available_program_pointers'][identifier] for identifier in ids
+            if identifier in obligation['available_program_pointers']}
         if verdict == 'incomplete' and not any(
             (patch['op'] == 'add' and patch['path'] == root + '/-')
             or (patch['path'] in {p + '/length' for p in group_pointers}
