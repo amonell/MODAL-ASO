@@ -1,6 +1,13 @@
 """Ungapped substitution evidence shared by native gene screening and exports."""
 from collections import defaultdict
 
+GENOMIC_TRANSCRIPT_STRAND_POLICY = (
+    "Bowtie searches both genomic strands; the SAM alignment strand must match "
+    "the GTF transcript strand because the query is transcript-oriented target RNA "
+    "in the DNA alphabet. Opposite-strand exon overlaps are not counted; unresolved "
+    "strand assignments make the count incomplete."
+)
+
 
 class MismatchQueryIndex:
     """Pigeonhole seeds prune candidates; full Hamming distance verifies each hit."""

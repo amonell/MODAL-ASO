@@ -8,6 +8,7 @@ from .input_rows import assessment_row_lookup
 from .alignment_reporting import alignment_geometry
 from .alignment_identity import annotate_window_groups
 from .chemical_position_evidence import chemical_position_evidence
+from .mismatch_screening import GENOMIC_TRANSCRIPT_STRAND_POLICY
 
 
 def alternative_transcripts_without_exact_binding(catalog, binding_hits):
@@ -99,7 +100,7 @@ def exact_gene_count_scope(config, target_gene_id, mapping_summary):
         "bowtie_index_prefix": str(config.bowtie_prefix),
         "genomic_search": f"Bowtie 1: -a -f -v {budget} -y -m 2000 --max <overmapped.fasta> --sam --sam-nohead --no-unal --seed 1; seed length equals shortest query length",
         "counted_genomic_rna_universe": "Only ungapped genomic hits wholly contained within an annotated GTF exon contribute genes. Intronic-only and intergenic hits do not contribute to this count.",
-        "genomic_strand_policy": "Bowtie searches both genomic strands; exon-to-gene assignment does not require the SAM alignment strand to match the GTF transcript strand. This is a screening proxy, not a strand-specific antisense binding count.",
+        "genomic_strand_policy": GENOMIC_TRANSCRIPT_STRAND_POLICY,
         "junction_search": "Enumerate windows spanning each pair of adjacent annotated exons in transcript order, using reference genome bases and GTF strand; require at least one query base on each side. Windows spanning more than one junction are not enumerated.",
         "junction_strand_policy": f"Transcript-oriented junction sequence must match the recorded query with at most {budget} substitutions; the junction search does not additionally reverse-complement the query.",
         "mismatch_policy": f"Ungapped substitutions from 0 through {budget}, classified by exact Hamming distance. Higher mismatch bins are unsearched.",
@@ -113,7 +114,7 @@ def exact_gene_count_scope(config, target_gene_id, mapping_summary):
         "genomic_alignment_cap_per_query": mapping_summary.get("mapper_alignment_cap", 2000),
         "overmapped_query_count": mapping_summary.get("overmapped_queries"),
         "junction_search_summary": deepcopy(mapping_summary.get("junction_mapping") or {}),
-        "limitations": "Does not establish binding outside the recorded substitution budget, intronic/pre-mRNA, strand-specific or experimental selectivity. Same-gene isoform selectivity is outside this count. Inspect the per-row query sequence/role and completeness status before interpreting a zero.",
+        "limitations": "Does not establish binding outside the recorded substitution budget, intronic/pre-mRNA or experimental selectivity. Exon and adjacent-junction screening is not an exhaustive full-transcriptome search. Same-gene isoform selectivity is outside this count. Inspect the per-row query sequence/role and completeness status before interpreting a zero.",
     }
 
 

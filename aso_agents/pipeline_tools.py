@@ -37566,7 +37566,7 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
         junction = (count_scope or {}).get("junction_search_summary") or {}
         incomplete = bool(row.get("off_target_mapping_capped") or row.get("off_target_unclassified_alignments")
                           or junction.get("error") or junction.get("skipped_chrom")
-                          or junction.get("skipped_ambiguous_windows"))
+                          or junction.get("skipped_ambiguous_windows") or junction.get("skipped_unresolved_strand"))
         budget = (count_scope or {}).get("mismatch_budget", 0)
         if budget:
             annotate_mismatch_bins(row, budget, incomplete)
@@ -37574,7 +37574,8 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
             row["off_target_count_scope"] = deepcopy(count_scope)
             updated += 1
             continue
-        row["off_target_observed_gene_count"] = gene_count
+        if gene_count is not None or "off_target_observed_gene_count" not in row:
+            row["off_target_observed_gene_count"] = gene_count
         row["off_target_count_status"] = "incomplete" if incomplete else "complete_within_declared_scope" if gene_count is not None else "unavailable"
         if incomplete:
             gene_count = None
