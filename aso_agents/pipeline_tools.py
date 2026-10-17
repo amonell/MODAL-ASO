@@ -994,12 +994,53 @@ def _requested_oligo_length(goal: Optional[Dict[str, Any]]) -> Optional[int]:
     return None
 
 
+def _has_chemistry_policy_conflict(goal: Any) -> bool:
+    return (
+        isinstance(goal, dict)
+        and goal.get("chemistry_policy") == "leave_unspecified"
+        and bool(goal.get("chemistry"))
+        and _normalized_chemistry_label(goal["chemistry"]) != "unspecified"
+    )
+
+
+def _chemistry_policy_conflicts(structured_goal: Any) -> Dict[str, Dict[str, Any]]:
+    """Identify contradictory declarations without choosing the user's intent.
+
+    Check each declaration scope independently. A program's explicit chemistry
+    overrides an inherited deferral, and a program's deferral clears inherited
+    chemistry; those supported overrides are not contradictions.
+    """
+    if not isinstance(structured_goal, dict):
+        return {}
+    scopes = [("", structured_goal)]
+    programs = structured_goal.get("design_programs")
+    if isinstance(programs, list):
+        scopes.extend((f"design_programs[{index}].", program)
+                      for index, program in enumerate(programs)
+                      if isinstance(program, dict))
+    conflicts = {}
+    for prefix, scope in scopes:
+        if _has_chemistry_policy_conflict(scope):
+            policy_path = prefix + "chemistry_policy"
+            conflicts[policy_path] = {
+                "reason": (
+                    "Explicit chemistry conflicts with leave_unspecified in the same scope. "
+                    "Resolve from user evidence: preserve requested chemistry when selection "
+                    "is allowed, or remove unsupported chemistry when the user explicitly "
+                    "defers it. Do not silently choose between these instructions."
+                ),
+                "chemistry_path": prefix + "chemistry",
+                "policy_path": policy_path,
+                "explicit_chemistry": deepcopy(scope["chemistry"]),
+            }
+    return conflicts
+
+
 def _unselected_chemistry_payload(goal: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Honor a typed nonselection instruction, separately from missing input."""
     if not isinstance(goal, dict) or goal.get("chemistry_policy") != "leave_unspecified":
         return {}
-    explicit = goal.get("chemistry")
-    if explicit and _normalized_chemistry_label(explicit) != "unspecified":
+    if _has_chemistry_policy_conflict(goal):
         raise ValueError("Explicit chemistry conflicts with chemistry_policy=leave_unspecified; resolve the goal before design.")
     return {"recommendation": {
         "CHEMISTRY": "unspecified", "platform": "",
@@ -22613,6 +22654,8 @@ def _canonical_design_goal_contract_issues(
     from .transcript_roles import knockdown_preservation_conflicts
     issues.extend(f"context.structured_goal.{field}"
                   for field in knockdown_preservation_conflicts(structured_goal))
+    issues.extend(f"context.structured_goal.{field}"
+                  for field in _chemistry_policy_conflicts(structured_goal))
     if (structured_goal.get('aso_overlap_requirement') is not None
             and structured_goal['aso_overlap_requirement'] not in {'any_overlap', 'full_containment', 'contains_feature'}):
         issues.append('context.structured_goal.aso_overlap_requirement')
@@ -23619,6 +23662,7 @@ def _goal_contract_issue_records(
             continue
         context = task.get("context") or {}
         role_conflicts = knockdown_preservation_conflicts(context.get("structured_goal"))
+        chemistry_conflicts = _chemistry_policy_conflicts(context.get("structured_goal"))
         if "unsupported_task_type" in {
             str(issue or "").strip() for issue in entry.get("issues") or []
         }:
@@ -23662,6 +23706,9 @@ def _goal_contract_issue_records(
                 [str(token) for token in pointer_tokens],
             )
             role_conflict = role_conflicts.get(issue_text.removeprefix("context.structured_goal."))
+            semantic_conflict = role_conflict or chemistry_conflicts.get(
+                issue_text.removeprefix("context.structured_goal.")
+            )
             if role_conflict and isinstance(expected_schema, dict):
                 expected_schema = deepcopy(expected_schema)
                 value_schema = expected_schema.get("items") if expected_schema.get("type") == "array" else expected_schema
@@ -23675,7 +23722,7 @@ def _goal_contract_issue_records(
                     "json_pointer": pointer,
                     "required_operation": "replace" if exists else "add",
                     "expected_schema": expected_schema,
-                    **({"semantic_conflict": deepcopy(role_conflict)} if role_conflict else {}),
+                    **({"semantic_conflict": deepcopy(semantic_conflict)} if semantic_conflict else {}),
                 }
             )
     return records
