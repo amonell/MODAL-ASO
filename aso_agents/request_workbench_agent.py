@@ -387,6 +387,15 @@ semantics. Check coordinate space, interval boundaries, strand and candidate len
 against supplied evidence; do not invent a coordinate conversion or biological result.
 Computed geometry and Boolean diagnostics describe the proposed rules, not user intent.
 
+For every entry in region_scope_checks_required, fill its exact check_id under
+region_scope_checks. State the effective restriction on that specific program, cite
+one exact supplied evidence span, and give a short supported/unsupported/unclear finding.
+Check each pair independently: evidence for a restriction in one program does not
+support imposing it on another. Naming a feature does not request an eligibility filter.
+An unsupported finding requires an effective patch to the corresponding constraint;
+an unclear necessary meaning requires a scoped unresolved item if no repairs come first.
+Do not return valid with missing checks or an unsupported inherited restriction.
+
 Return only the compact audit JSON required by the response schema. Keep all response
 arrays present. Set goal_replacements and field_dispositions to []. Use status='valid'
 with empty patches and unresolved only when the focused predicates match the evidence.

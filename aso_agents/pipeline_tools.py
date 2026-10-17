@@ -67,6 +67,10 @@ from aso_agents.request_workbench_agent import (
     request_workbench_agent,
 )
 from aso_agents.resource_limits import resource_limited
+from aso_agents.region_audit import (
+    is_focused_region_audit, region_audit_obligations,
+    region_audit_coverage_errors, with_region_audit_coverage,
+)
 from aso_agents.structured_outputs import (
     DESIGN_GOAL_SYNTHESIS_OUTPUT_SCHEMA,
     _synthesized_design_goal_schema,
@@ -18541,22 +18545,7 @@ async def _run_verified_request_workbench_agent_once(
 
 def _goal_audit_agent_for_protocol(protocol: Dict[str, Any]) -> Any:
     """Use focused instructions only for an existing region-only semantic pass."""
-    scopes = protocol.get("semantic_scope_pointers")
-    region_only = (
-        protocol.get("audit_mode") in {
-            "semantic_completeness_and_contract_repair",
-            "post_repair_semantic_verification",
-        }
-        and not protocol.get("canonical_contract_issues")
-        and not protocol.get("noncanonical_field_findings")
-        and isinstance(scopes, list)
-        and bool(scopes)
-        and all(isinstance(scope, str) and re.fullmatch(
-            r"/tasks/\d+/context/structured_goal(?:/design_programs/\d+)?/region_constraints",
-            scope,
-        ) for scope in scopes)
-    )
-    if region_only:
+    if is_focused_region_audit(protocol):
         agent = copy(goal_contract_audit_agent)
         agent.instructions = REGION_CONSTRAINT_AUDIT_INSTRUCTIONS
         return agent
@@ -18568,6 +18557,8 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
     span_map = _evidence_span_map(evidence_sources)
     protocol = _goal_audit_protocol_payload(prompt)
     envelope = protocol.get("current_request_envelope")
+    region_focused = is_focused_region_audit(protocol)
+    region_obligations = region_audit_obligations(protocol)
 
     def normalized_audit(payload: Dict[str, Any]) -> Dict[str, Any]:
         audited = _canonicalize_existing_member_additions(
@@ -18584,13 +18575,18 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
         return audited
 
     phase_schema = _goal_contract_audit_schema_for_prompt(prompt)
+    if region_focused:
+        phase_schema = with_region_audit_coverage(phase_schema, region_obligations)
     schema = _schema_with_allowed_evidence_refs(
         phase_schema,
         [str(item.get("evidence_id") or "") for item in evidence_sources],
         list(span_map),
     )
     def audit_contract_errors(payload: Dict[str, Any]) -> List[str]:
-        errors = _goal_contract_audit_contract_errors(normalized_audit(payload), schema)
+        normalized = normalized_audit(payload)
+        errors = _goal_contract_audit_contract_errors(normalized, schema)
+        if region_focused and not errors:
+            errors.extend(region_audit_coverage_errors(normalized, region_obligations, span_map))
         if not errors or not isinstance(envelope, dict):
             return errors
         canonical = _canonicalize_existing_member_additions(payload, protocol)
@@ -18649,6 +18645,9 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
             "error": "invalid_structured_output",
             "reason": "; ".join(errors),
         }
+    # Coverage findings remain in the original model response/telemetry. Keep
+    # the existing public audit-result contract for downstream repair execution.
+    materialized.pop("region_scope_checks", None)
     return materialized
 
 
@@ -24247,6 +24246,8 @@ def _goal_audit_prompt(
                 in semantic_scope_pointers]}
             for entry in audit_input["region_constraint_execution"]
         ]
+        if is_focused_region_audit(audit_input):
+            audit_input["region_scope_checks_required"] = region_audit_obligations(audit_input)
     return (
         "Audit the supplied request envelope. Return only the compact audit object "
         "defined by your response schema. Use canonical_contract_issues.json_pointer "

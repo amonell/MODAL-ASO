@@ -69,6 +69,14 @@ def fixture():
         'evidence_refs': ['request'], 'evidence_span_id': next(iter(spans)),
         'reason': 'The inner-feature requirement belongs only to the first branch.'}],
         'goal_replacements': [], 'field_dispositions': [], 'unresolved': []}
+    answer['region_scope_checks'] = {
+        f'check_{index}': {
+            'verdict': 'unsupported' if index == 3 else 'supported',
+            'effective_restriction': 'Shared window or inner-feature intersection on this branch.',
+            'evidence_refs': ['request'], 'evidence_span_id': next(iter(spans)),
+            'reason': 'The shared window applies to both branches; the inner feature only to the first.',
+        } for index in range(4)
+    }
     return current, prompt, answer, evidence
 
 
@@ -88,6 +96,7 @@ def test_real_focused_runner_keeps_one_call_evidence_binding_and_application(mon
     result = asyncio.run(tools._run_goal_contract_audit_agent_once(prompt))
     assert len(calls) == 1
     assert result['status'] == 'repairable'
+    assert 'region_scope_checks' not in result  # Existing downstream API remains stable.
     assert result['patches'][0]['evidence_quote'] in evidence[0]['text']
     applied = tools._apply_goal_audit_patches(current, result['patches'],
         issue_records=[], evidence_sources=evidence)
@@ -121,6 +130,7 @@ def test_focused_runner_still_rejects_bad_paths_and_evidence(monkeypatch, defect
 def test_focused_runner_drops_noop_without_fabricating_a_repair(monkeypatch):
     _, prompt, answer, _ = fixture()
     answer['patches'][0].update(op='replace', path=GLOBAL + '/0/operator', value='intersect')
+    answer['region_scope_checks']['check_3']['verdict'] = 'supported'
     calls = []
 
     async def run(agent, *, input, max_steps):
