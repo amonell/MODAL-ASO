@@ -7,6 +7,12 @@ import ast
 
 
 _HELPERS = (
+    ("RegisteredVersions", "aso_agents.registered_versions",
+     "RegisteredVersions(registrations)",
+     "registrations are (complete_scope_tuple, integer_version) pairs; latest(scope) "
+     "returns greatest registered version or None; classify(scope,version) returns "
+     "current/superseded/unregistered after exact membership checking; metadata and "
+     "observation presence do not change latest selection; no coverage/count inference"),
     ("SplicedSequenceCoordinates", "aso_agents.spliced_coordinates",
      "SplicedSequenceCoordinates(*, chromosome, strand, exons)",
      "exons are complete genomic (start1,end1) pairs; project_interval(start1,end1) "

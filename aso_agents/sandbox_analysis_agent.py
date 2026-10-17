@@ -82,6 +82,14 @@ ANALYSIS_SPLICED_COORDINATE_RULES = (
 
 
 ANALYSIS_EVIDENCE_RULES = (
+    "\nWhen the requested rule selects the greatest registered integer revision "
+    "within each scope, use aso_agents.registered_versions.RegisteredVersions with "
+    "the complete registry and all requested scope fields in each tuple. Its "
+    "classify(scope,version) checks exact membership before marking an older "
+    "revision superseded; an unregistered smaller revision is still unregistered. "
+    "Its latest(scope) includes registered revisions with zero observations. "
+    "Do not let observed rows, completion status or a preferred result silently "
+    "replace the requested revision rule. Keep completeness and hit counts separate.\n"
     "\nEvidence and interpretation: Compute and report each requested scientific dimension "
     "from its own observations before combining dimensions into an overall decision. "
     "A combined eligibility predicate must not become the reported status of one component; "
@@ -177,6 +185,10 @@ analysis_contract_review_agent = Agent(
         "criterion statuses from overall eligibility. Check that every requested failed or "
         "unknown criterion survives the export even when an earlier criterion excludes a row. "
         "Check consistency across exported tables and explanatory text. "
+        "For registered-version audits, verify membership of the complete observation "
+        "scope/version key before classifying its relation to the selected version. "
+        "An older version is not necessarily registered; the selected version must "
+        "come from the registry rather than only revisions having observations. "
         "For sequence comparisons, verify the declared orientation of both operands: physical "
         "5prime-to-3prime antisense must be reverse-complemented against a forward target before "
         "counting substitutions; target-relative and ASO-relative positions reverse once. "
