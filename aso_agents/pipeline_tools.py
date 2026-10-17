@@ -22733,7 +22733,7 @@ def _canonical_design_goal_contract_issues(
                 issues.append(f"{prefix}.desired_delta")
             if program.get("run_splice_router") is not True:
                 issues.append(f"{prefix}.run_splice_router")
-            if program.get("run_splice_eval") is not True:
+            if type(program.get("run_splice_eval")) is not bool:
                 issues.append(f"{prefix}.run_splice_eval")
             site_kind = str(program.get("site_kind") or "").strip().lower()
             if site_kind not in {"acceptor", "donor", "both"}:

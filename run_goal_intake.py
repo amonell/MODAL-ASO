@@ -16265,7 +16265,11 @@ def _summarize_steric_program_modes(structured_goal: Dict[str, Any]) -> Dict[str
         }
     return {
         "has_steric_programs": True,
-        "run_splice_eval": has_splice_objective or any(_design_program_requires_splice_eval(program) for program in programs),
+        "run_splice_eval": any(
+            _design_program_requires_splice_eval(program)
+            or (has_splice_objective and _coerce_bool(program.get("run_splice_eval")) is None)
+            for program in programs
+        ),
         "run_splice_router": has_splice_objective or any(_design_program_requires_splice_router(program) for program in programs),
     }
 
