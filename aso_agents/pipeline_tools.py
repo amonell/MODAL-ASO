@@ -18077,20 +18077,34 @@ def _design_goal_synthesis_prompt(
             str(item.get("downstream_task_id") or "").strip(),
         }
     ]
+    def declared_outputs(owner: Dict[str, Any]) -> List[Any]:
+        # Scope evidence without normalizing it into default native exports.
+        # Delivery owned by another task is not a design-goal obligation.
+        owner_ids = set(_merged_task_id_aliases([owner]))
+        return [
+            deepcopy(output)
+            for output in request_envelope.get("final_outputs") or []
+            if not isinstance(output, dict)
+            or not str(output.get("task_id") or "").strip()
+            or str(output.get("task_id") or "").strip() in owner_ids
+        ]
+
     sibling_scopes = []
     for index, sibling in enumerate(tasks):
-        if index == task_index or _normalize_task_type_value(sibling.get("task_type")) != "design_new_asos":
+        if index == task_index:
             continue
         context = sibling.get("context") if isinstance(sibling.get("context"), dict) else {}
         sibling_scopes.append(
             {
                 "task_id": str(sibling.get("task_id") or "").strip(),
+                "task_type": _normalize_task_type_value(sibling.get("task_type")),
                 "label": str(sibling.get("label") or "").strip(),
                 "context": {
                     key: deepcopy(value)
                     for key, value in context.items()
                     if key != "structured_goal"
                 },
+                "requested_final_outputs": declared_outputs(sibling),
             }
         )
     return (
@@ -18101,11 +18115,9 @@ def _design_goal_synthesis_prompt(
                 "request_evidence": str(request_evidence),
                 "selected_task": task,
                 "declared_artifact_evidence": artifact_evidence,
-                "other_design_task_scopes": sibling_scopes,
+                "other_task_scopes": sibling_scopes,
                 "related_dependencies": related_dependencies,
-                "requested_final_outputs": deepcopy(
-                    request_envelope.get("final_outputs") or []
-                ),
+                "requested_final_outputs": declared_outputs(task),
                 "canonical_destination_catalog": (
                     canonical_goal_destination_catalog()
                 ),
