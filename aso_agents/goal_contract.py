@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any, Dict, List
 
 from .coordinate_contract import COORDINATE_ORIGIN_INSTRUCTIONS
+from .role_selection import ROLE_SELECTION_SCHEMA
 
 
 def canonical_gapmer_programs_exclude_splicing(goal: Any) -> bool:
@@ -169,6 +170,7 @@ CANONICAL_STRUCTURED_GOAL_FIELDS = frozenset(
         "candidate_minimum",
         "candidate_minimum_genomic_gap_nt",
         "candidate_panel_objectives",
+        "candidate_role_selection",
         "candidate_selection_policy",
         "conditional_exon_skip_events",
         "target_accessibility",
@@ -823,6 +825,7 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     "candidate_minimum": {"type": "integer", "minimum": 0,
         "description": "Minimum distinct eligible molecules in the selected panel. A complete library may also contain failed windows and does not set this minimum."},
     "candidate_selection_policy": {"type": "string", "enum": ["ranked", "diverse_target_sites", "nonoverlapping_target_sites"]},
+    "candidate_role_selection": deepcopy(ROLE_SELECTION_SCHEMA),
     "candidate_minimum_genomic_gap_nt": {"type": "integer", "minimum": 0,
         "description": "Explicit hard minimum number of untargeted genomic bases between distinct selected molecules' target blocks on the same chromosome, for the complete design panel. Requires verified physical coordinates and implies nonoverlap, including when zero. Not start-to-start distance, mature-RNA distance, or a branch-local constraint."},
     "candidate_panel_objectives": {"type": "array", "minItems": 1, "items": {
@@ -1037,6 +1040,7 @@ CANONICAL_TASK_CONTEXT_FIELD_SCHEMAS = {
 # supported fact to an existing canonical destination without teaching the
 # runtime every malformed key a model might invent.
 CANONICAL_GOAL_FIELD_SEMANTICS = {
+    "candidate_role_selection": ROLE_SELECTION_SCHEMA["description"],
     "num_mismatches": "Explicit off-target substitution search budget; separate from maximum allowed binding-site count, and from mismatches permitted at an intended target.",
     "action": "Canonical preservation action requested for a protected biological entity.",
     "artifact_refs": "User-supplied local or external artifacts that are inputs to the design.",
@@ -1444,6 +1448,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS
     + COORDINATE_ORIGIN_INSTRUCTIONS
     + "Canonical executable design-goal contract:\n"
+    "- Explicit ordered role selection belongs in candidate_role_selection: roles in the user's processing order, each with role_id (the user's role name), program_id (its scoped design branch), count, and ordered individual criteria. Preserve the requested reuse_policy (distinct_sequences, distinct_molecules, or allow_shared_molecules). A role's GC distance, homopolymer and coordinate tuple ranks individual eligible candidates; it is not a joint-panel aggregate. Keep eligibility in that role's program and the full library in its analysis/export scope. Do not assign the global panel count to every role, let an enumeration program fill a selection role, or leave the role algorithm only in prose.\n"
     "- When an ASO must cover an annotated start codon or satisfy a coding-sequence boundary, use a region constraint with source_type='transcript_feature', feature_name='start_codon' or 'cds', and reference_transcript_id when supplied. The platform resolves annotation coordinates; do not invent absolute rows or assume the start codon occupies transcript bases 1-3. Preserve the requested overlap relation. Constraints that must all hold use intersect, including features on different explicitly requested transcripts. A shared panel stores every required transcript in its program transcript_ids.\n"
     "- chemistry_policy is a permission decision, not a record of whether the user named a chemical formula. select authorizes platform selection and is the meaning of delegated/default chemistry. leave_unspecified prohibits selecting modifications, backbone and synthesis platform and is used only when the user deliberately defers that choice. If the user simply omits chemistry, omit the policy so ordinary platform selection remains available. Preserve an explicit chemical formula separately in chemistry. Scope different policies to their own programs.\n"
     "- Treat the user request and recorded clarification answers as evidence. Preserve every explicitly supplied design fact. Do not use biological background knowledge to invent a gene, species, transcript, isoform, exon, coordinate, route, direction, length, chemistry, or target context. The species field contains only an organism supported by request or clarification evidence, or an organism established from an explicit identifier by an authoritative source; never store a lookup instruction, uncertainty note, or resolution plan in species. Omit unresolved species during intake and let authoritative resolution supply it instead of encoding how to find it as though it were an organism.\n"

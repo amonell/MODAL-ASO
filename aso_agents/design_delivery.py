@@ -504,10 +504,23 @@ def design_delivery(goal, candidate_set, branches, *, binding_sets=None, interva
         if branch.get("status") == "evidence_unavailable":
             errors.append("requested_evidence_source_unavailable")
     selected_rows = list(candidate_set.get("rows") or [])
+    role_contract = goal.get("candidate_role_selection")
+    if role_contract is not None:
+        selection = candidate_set.get("candidate_selection") or {}
+        if (selection.get("method") != "ordered_role_local_lexicographic_selection"
+                or selection.get("status") != "complete" or selection.get("contract") != role_contract):
+            errors.append("requested_ordered_role_selection_not_established")
+        else:
+            # Supporting pool rows cannot fill an undelivered selected role.
+            for role in role_contract["roles"]:
+                members = {molecule_key(row) for row in selected_rows
+                    if any(a.get("role_id") == role["role_id"] and a.get("program_id") == role["program_id"]
+                           for a in row.get("role_assignments") or [])}
+                if len(members) != role["count"]:
+                    errors.append("requested_role_count_not_delivered:" + role["role_id"])
     rows = list(selected_rows)
     for group in (binding_sets or {}).get("sets") or []:
         rows.extend(group.get("rows") or [])
-    from .candidate_presentation import molecule_key
     selected_molecules = {molecule_key(row) for row in selected_rows
                           if molecule_key(row)[0] and not set(molecule_key(row)[0]) - set("ACGT")}
     pool_molecules = {molecule_key(row) for row in rows
@@ -569,11 +582,22 @@ def write_design_panel(candidate_set, goal, output_directory):
     directory.mkdir(parents=True, exist_ok=True)
     csv_path = directory / "design_panel.csv"
     markdown_path = directory / "design_panel.md"
-    rows = ordered_rows(candidate_set.get("rows") or [])
-    distinct = distinct_ranked_rows(rows)
+    role_selection = candidate_set.get("candidate_selection") or {}
+    ordered_roles = role_selection.get("method") == "ordered_role_local_lexicographic_selection"
+    rows = list(candidate_set.get("rows") or []) if ordered_roles else ordered_rows(candidate_set.get("rows") or [])
+    if ordered_roles:
+        seen, distinct = set(), []
+        for row in rows:
+            key = molecule_key(row)
+            if key not in seen:
+                distinct.append(row)
+                seen.add(key)
+    else:
+        distinct = distinct_ranked_rows(rows)
     preview = distinct if len(distinct) <= 20 else distinct[:10]
     exported = []
-    lines = ["# Candidate panel", "", f"Selected candidate rows: {len(rows)}. Distinct molecules (antisense sequence plus chemistry): {len(distinct)}. Preview: {len(preview)} molecules in recorded rank order.", "",
+    order_description = "requested role order" if ordered_roles else "recorded rank order"
+    lines = ["# Candidate panel", "", f"Selected candidate rows: {len(rows)}. Distinct molecules (antisense sequence plus chemistry): {len(distinct)}. Preview: {len(preview)} molecules in {order_description}.", "",
              "Sequences are written 5′→3′. These are computational design candidates; experimental activity and in-cell accessibility have not been established.", "",
              "| Candidate | Native rank / scope | Antisense oligo (5′→3′) | Physical binding interval(s), BED0 | Target genomic strand | Physical splice element | Predicted response site | Genomic screening |",
              "|---|---|---|---|---|---|---|---|"]
@@ -664,6 +688,8 @@ def write_design_panel(candidate_set, goal, output_directory):
                   "off_target_position_convention": row.get("off_target_position_convention") or annotations.get("off_target_position_convention"),
                   "requested_exon_overlap_bp": row.get("requested_exon_overlap_bp"),
                   "requested_anchor_distance_bp": row.get("requested_anchor_distance_bp")}
+        if ordered_roles:
+            record["role_assignments"] = json.dumps(row.get("role_assignments") or [], sort_keys=True)
         exported.append(record)
         if any(row is item for item in preview):
             scope = row.get("ranking_scope") or row.get("job_id") or "source ordering"
@@ -698,6 +724,20 @@ def write_design_panel(candidate_set, goal, output_directory):
     if chemistry_summaries:
         lines.extend(["", "## Physical chemistry", "", *sorted(chemistry_summaries), "",
                       "Exact per-position sugars, base modifications and linkages are preserved with each molecule in the CSV and JSON. An attested ordering string verifies chemical identity, not biological activity."])
+    if ordered_roles:
+        lines.extend(["", "## Requested role selection", "",
+            "Selection status: " + str(role_selection.get("status") or "unresolved") + ". "
+            "Roles are processed in the requested order; each uses its own individual ranking criteria. "
+            "Native ranks remain separately recorded.", "",
+            "| Role | Requested | Selected | Shortfall |", "|---|---:|---:|---:|"])
+        for role in role_selection.get("roles") or []:
+            label = str(role["role_id"]).replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {label} | {role['requested_count']} | {role['selected_count']} | {role['shortfall_count']} |")
+        if role_selection.get("reason"):
+            lines.extend(["", "Unresolved selection: " + str(role_selection["reason"]) + "."])
+        lines.extend(["", "Exact ranking values, skipped reused molecules and role assignments are recorded in "
+            "[generated_aso_set.json](generated_aso_set.json). The complete pool after hard eligibility is retained in "
+            "[role_selection_eligible_pool.json](role_selection_eligible_pool.json); it is not the unfiltered tiling library."])
     lines.extend(["", "## Selection and evidence", "",
                   "Selection policy: " + str((candidate_set.get("candidate_selection") or {}).get("method") or "recorded native ranking") + ".",
                   "", "The preview contains one row per physical molecule; the full CSV retains every binding/route observation. Native ranks apply within their recorded scope and do not establish experimental potency. Physical splice-element labels describe annotated exon/intron geometry crossed by the ASO, not motif occupancy or measured activity. Predicted response coordinates identify the site whose perturbation was scored; physical binding coordinates identify where the ASO binds.",

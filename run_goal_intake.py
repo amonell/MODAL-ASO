@@ -3683,6 +3683,23 @@ async def _audit_request_obligations(
         goal["candidate_selection_policy"] = "nonoverlapping_target_sites"
 
     panel_ranking = audit.get("candidate_panel_ranking")
+    from aso_agents.role_selection import reconcile_role_obligation
+    role_ranking = reconcile_role_obligation(goal, audit.get("candidate_role_ranking"), source_text)
+    if role_ranking["status"] == "applied":
+        synchronized_fields.add("candidate_role_selection")
+        if not per_site_valid:
+            synchronized_fields.update({"candidate_limit_per_site", "min_asos_per_site"})
+            goal.pop("candidate_limit_per_site", None)
+            goal.pop("min_asos_per_site", None)
+        if panel_ranking is None:
+            # An independently quoted individual-role algorithm corrects an
+            # invented global aggregate without changing any role eligibility.
+            synchronized_fields.add("candidate_panel_objectives")
+            goal.pop("candidate_panel_objectives", None)
+    elif role_ranking["status"] == "unresolved":
+        intake_out["status"] = "need_clarification"
+        intake_out.setdefault("questions", []).append(
+            "Please clarify the ordered selection roles and the candidate pool, ranking and reuse rule for each role.")
     panel_ranking_unresolved = False
     if (_quoted_request_obligation(panel_ranking, source_text)
             and panel_ranking.get("applies_to_all_candidates") is True
@@ -3753,12 +3770,14 @@ async def _audit_request_obligations(
                         program["target_region"] = goal["target_region"]
             _normalize_design_programs_in_goal(container)
     intake_out["request_obligation_audit"] = {
-        "status": "unresolved" if program_obligations['status'] == 'unresolved' or panel_ranking_unresolved else "accepted",
+        "status": "unresolved" if (program_obligations['status'] == 'unresolved' or panel_ranking_unresolved
+                                   or role_ranking['status'] == 'unresolved') else "accepted",
         "candidate_count": count if _quoted_request_obligation(count, source_text) else None,
         "per_site_count": per_site if per_site_valid else None,
         "candidate_site_diversity": diversity if _quoted_request_obligation(diversity, source_text) else None,
         "candidate_genomic_spacing": spacing if _quoted_request_obligation(spacing, source_text) else None,
         "candidate_panel_ranking": panel_ranking if _quoted_request_obligation(panel_ranking, source_text) else None,
+        "candidate_role_ranking": role_ranking,
         "target_feature": feature if _quoted_request_obligation(feature, source_text) else None,
         "target_window": window,
         "target_accessibility": accessibility if _quoted_request_obligation(accessibility, source_text) else None,

@@ -27312,6 +27312,7 @@ def _collect_generated_candidate_rows(
     root = Path(run_dir)
     canonical_gapmer_path = _canonical_gapmer_candidate_path(run_dir)
     route_candidate_paths = _strategy_route_candidate_paths(root)
+    ordered_roles = isinstance(structured_goal, dict) and structured_goal.get("candidate_role_selection") is not None
     job_source_meta: Dict[str, Dict[str, str]] = {}
     steric_job_paths: List[Path] = []
     if isinstance(structured_goal, dict):
@@ -27345,7 +27346,7 @@ def _collect_generated_candidate_rows(
             if len(steric_job_paths) != len(jobs):
                 steric_job_paths = []
                 job_source_meta = {}
-    if route_candidate_paths:
+    if route_candidate_paths and not ordered_roles:
         candidate_paths = [*route_candidate_paths,
             *([canonical_gapmer_path] if canonical_gapmer_path is not None else [])]
     elif steric_job_paths:
@@ -27394,6 +27395,13 @@ def _collect_generated_candidate_rows(
             group_key = str(row.get("program_id") or row.get("job_id")
                             or source_meta.get("job_id") or source_meta.get("job_label") or "").strip()
             key = (sequence, chrom, start, end, group_key)
+            if ordered_roles:
+                from .candidate_presentation import molecule_key
+                # A route preview may have discarded a later role's winner.
+                # Keep the full per-program pool and distinct chemical or
+                # stranded placements until the explicit role selector runs.
+                key = (*key, molecule_key(row), str(row.get("Strand") or row.get("strand") or ""),
+                       json.dumps(_candidate_binding_intervals_for_exon_annotation(row), sort_keys=True))
             if key in seen:
                 continue
             seen.add(key)
@@ -28845,6 +28853,7 @@ def _compact_candidate_row_for_ranking(row: Dict[str, Any]) -> Dict[str, Any]:
     }
     kept.update(report_recommendation_fields(row))
     kept["recorded_scientific_fields"] = {key: deepcopy(row[key]) for key in (
+        "role_assignments",
         "isoform_uniqueness_score", "isoform_uniqueness_class", "isoform_coverage_fraction",
         "isoform_hit_count", "isoform_total", "isoform_uniqueness_target_hits", "isoform_uniqueness_beneficial_hits",
         "off_target_gene_count", "off_target_exact_count_unit", "off_target_count_scope", "off_target_count_status",
@@ -29261,6 +29270,7 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "source_modality": _candidate_row_source_modality(row),
     }
     passthrough_keys = [
+        "role_assignments",
         "gapmer_preservation_assessment",
         "target_accessibility",
         "target_accessibility_min_probability",
@@ -29454,7 +29464,21 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     if (hard_nonoverlap or panel_objectives is not None) and candidate_limit_per_site and not physical_site_groups:
         from .candidate_minimums import requested_region_minimums
         physical_site_groups = requested_region_minimums(structured_goal)
-    if physical_site_groups or hard_nonoverlap or panel_objectives is not None:
+    if structured_goal.get("candidate_role_selection") is not None:
+        from .role_selection import select_ordered_roles
+        role_pool = list(eligible_rows)
+        eligible_rows, candidate_selection = select_ordered_roles(
+            role_pool, structured_goal, _candidate_binding_intervals_for_exon_annotation,
+            region_status=global_region_filter["status"])
+        # Preserve all hard-eligible candidates independently of the selected
+        # inventory. This is not the complete, possibly failed tiling library.
+        pool_path = generated_set_path.with_name("role_selection_eligible_pool.json")
+        ensure_run_parent(pool_path)
+        pool_path.write_text(json.dumps({"artifact_type": "role_selection_eligible_pool",
+            "scope": "after_hard_eligibility_before_ordered_role_selection",
+            "row_count": len(role_pool), "rows": role_pool}, ensure_ascii=False, indent=2), encoding="utf-8")
+        candidate_selection["eligible_pool_path"] = str(pool_path)
+    elif physical_site_groups or hard_nonoverlap or panel_objectives is not None:
         from .region_panel_selection import select_region_minimum_panel
         ranked_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
         per_site_limit = _coerce_positive_int(structured_goal.get("candidate_limit_per_site")
@@ -29692,6 +29716,8 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     return {
         "generated_aso_set_json": str(generated_set_path),
         "generated_filter_trace_json": str(generated_trace_path),
+        **({"role_selection_eligible_pool_json": candidate_selection["eligible_pool_path"]}
+           if candidate_selection.get("eligible_pool_path") else {}),
         **panel_artifacts,
         **chemistry_artifacts,
         **({"oligoai_evaluation": oligoai_evaluation,
@@ -33268,6 +33294,7 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
             "candidate_selection_policy": resolved_goal.get("candidate_selection_policy"),
             "candidate_minimum_genomic_gap_nt": resolved_goal.get("candidate_minimum_genomic_gap_nt"),
             "candidate_panel_objectives": resolved_goal.get("candidate_panel_objectives"),
+            "candidate_role_selection": resolved_goal.get("candidate_role_selection"),
         }
     bound_design_tasks = {entry["task_id"] for entry in design_evidence if entry.get("observations")}
     source_bound_workbooks = [str(path) for path in pending if path.suffix.lower() == ".xlsx"
@@ -41138,6 +41165,11 @@ def _apply_candidate_count_from_request_text_to_goal(
     final_payload: Dict[str, Any],
 ) -> bool:
     if not isinstance(structured_goal, dict):
+        return False
+    if structured_goal.get("candidate_role_selection") is not None:
+        # Ordered role quotas have already been compiled with their scope.
+        # A legacy prose count matcher cannot reinterpret them as per-site or
+        # global bounds; retain the independently audited typed count fields.
         return False
     request_text = _request_text_with_clarification_history(
         state,
@@ -54788,7 +54820,8 @@ def _apply_gapmer_constraints_to_result(
 
     candidate_limit = (
         _structured_candidate_limit(structured_goal)
-        if apply_candidate_limit and not _structured_candidate_limit_is_per_site(structured_goal)
+        if (apply_candidate_limit and not _structured_candidate_limit_is_per_site(structured_goal)
+            and structured_goal.get("candidate_role_selection") is None)
         else None
     )
     if candidate_limit is not None:
@@ -54884,6 +54917,11 @@ def _apply_gapmer_constraints_to_result(
         updated_results["candidate_selection"] = candidate_selection
         updated_results["row_count"] = len(selected_rows)
 
+    if structured_goal.get("candidate_role_selection") is not None:
+        updated_results["candidate_selection"] = {
+            "status": "deferred", "method": "ordered_roles_after_merged_hard_eligible_pool",
+            "contract": deepcopy(structured_goal["candidate_role_selection"]),
+            "reason": "Retain every eligible row until final selection across all role programs."}
     updated_results["required_evidence_filtering"] = required_filter
     updated_results["scored_tiles_path"] = final_path
     updated_results["constraint_output_path"] = final_path
@@ -55777,6 +55815,9 @@ def tool_apply_gapmer_constraints(
     )
     candidate_selection_ready = (
         candidate_limit is None
+        or (structured_goal.get("candidate_role_selection") is not None
+            and existing_candidate_selection.get("status") == "deferred"
+            and existing_candidate_selection.get("contract") == structured_goal["candidate_role_selection"])
         or (
             str(existing_candidate_selection.get("status") or "").strip().lower() == "complete"
             and _optional_int(existing_candidate_selection.get("candidate_limit")) == candidate_limit

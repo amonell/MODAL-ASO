@@ -71,7 +71,6 @@ def _mature_start(blocks, reference, length):
 def compile_objectives(keys, entries, objectives, reference_catalog, verified_blocks):
     if not isinstance(objectives, list) or not objectives:
         raise ValueError("requested_panel_objectives_empty_or_invalid")
-    columns = []
     for objective in objectives:
         if (not isinstance(objective, dict)
                 or set(objective) - {"metric", "aggregate", "direction", "absolute_distance_from", "reference_transcript_id"}
@@ -79,6 +78,25 @@ def compile_objectives(keys, entries, objectives, reference_catalog, verified_bl
                 or objective.get("aggregate") not in AGGREGATES
                 or objective.get("direction") not in {"minimize", "maximize"}):
             raise ValueError("requested_panel_objective_invalid")
+    return _compile_metrics(keys, entries, objectives, reference_catalog, verified_blocks)
+
+
+def compile_individual_criteria(keys, entries, criteria, reference_catalog, verified_blocks):
+    """Compile the same measured quantities without any panel aggregation."""
+    if not isinstance(criteria, list) or not criteria:
+        raise ValueError("requested_individual_criteria_empty_or_invalid")
+    for criterion in criteria:
+        if (not isinstance(criterion, dict)
+                or set(criterion) - {"metric", "direction", "absolute_distance_from", "reference_transcript_id"}
+                or criterion.get("metric") not in METRICS
+                or criterion.get("direction") not in {"minimize", "maximize"}):
+            raise ValueError("requested_individual_criterion_invalid")
+    return _compile_metrics(keys, entries, criteria, reference_catalog, verified_blocks)
+
+
+def _compile_metrics(keys, entries, objectives, reference_catalog, verified_blocks):
+    columns = []
+    for objective in objectives:
         metric = objective["metric"]
         reference = None
         if metric == "mature_start_1based":
