@@ -36388,6 +36388,34 @@ def _generated_trace_contexts(candidate_run_dirs):
     return contexts
 
 
+async def _run_evaluation_screening_scope_agent_once(payload):
+    from .evaluation_execution_scope import scope_schema, scope_errors
+    from .request_workbench_agent import evaluation_execution_scope_agent
+    schema = scope_schema(payload)
+    agent = _agent_with_strict_output_schema(
+        evaluation_execution_scope_agent, schema_name="aso_evaluation_execution_scope", schema=schema)
+    return await _run_schema_validated_agent_once(
+        agent=agent, prompt=json.dumps(payload, ensure_ascii=False), schema=schema,
+        error_prefix="evaluation_execution_scope",
+        contract_validator=lambda value: scope_errors(value, payload))
+
+
+def _run_evaluation_screening_scope_sync(payload):
+    return run_async_from_sync(lambda: _run_evaluation_screening_scope_agent_once(payload))
+
+
+def _complete_task_evaluation_scope(state, request_envelope, run_dir, task_id):
+    from .evaluation_execution_scope import complete_evaluation_scope
+    tasks = (state.get("request_envelope") or {}).get("tasks") or []
+    selected = next((task for task in tasks if task.get("task_id") == task_id), {})
+    task = {"task_id": task_id, "task_type": selected.get("task_type") or "evaluate_existing_aso_set",
+            "label": selected.get("label") or request_envelope.get("request_summary") or ""}
+    return complete_evaluation_scope(
+        request=str(state.get("request") or ""), task=task, context=request_envelope,
+        clarifications=_clarification_qa_history(state),
+        directory=_task_output_dir(run_dir, task_id) / "execution_scope", classify=_run_evaluation_screening_scope_sync)
+
+
 def _overlay_request_context_on_goal(
     base_goal: Dict[str, Any],
     request_envelope: Dict[str, Any],
@@ -38010,6 +38038,10 @@ def _evaluate_existing_asos_payload(
     if not provided_asos:
         return {"error": "provided_asos_missing"}
 
+    execution_scope = _complete_task_evaluation_scope(state, request_envelope, run_dir, task_id)
+    if execution_scope.get("error"):
+        return execution_scope
+    request_envelope = execution_scope["context"]
     candidate_run_dirs = _candidate_run_dirs_for_task(state, request_envelope)
     reference_context = _reference_goal_context_for_request(candidate_run_dirs)
     base_goal = reference_context.get("structured_goal") if isinstance(reference_context.get("structured_goal"), dict) else {}
@@ -38572,6 +38604,7 @@ def _evaluate_existing_asos_payload(
 
     payload = {
         "task_type": "evaluate_existing_aso_set",
+        "execution_scope": {key: execution_scope[key] for key in ("status", "receipt_path")},
         "reference_catalog": reference_catalog,
         "request_summary": request_envelope.get("request_summary"),
         "provided_aso_count": len(rows),

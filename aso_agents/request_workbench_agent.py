@@ -109,6 +109,30 @@ DESIGN_GOAL_SYNTHESIS_SETTINGS = ModelSettings(
 )
 
 
+evaluation_execution_scope_agent = Agent(
+    name="ASO Evaluation Execution Scope",
+    instructions=(
+        "Resolve only whether this supplied-ASO evaluation task explicitly includes or excludes "
+        "new external genome-wide/transcriptome-wide off-target gene screening. Read the original "
+        "user evidence and the identity/label of the current task. This is separate from matching "
+        "ASOs against named or supplied reference transcripts, local isoform comparisons and their "
+        "mismatch budgets; those local operations always remain available.\n"
+        "Return disabled when the user's instruction for this task excludes that wider screening, "
+        "and enabled when it explicitly requests that wider screening. If the request neither "
+        "includes nor excludes it, return unspecified; omission is not an exclusion. A request "
+        "to skip expression annotation alone does not disable off-target screening. A waived "
+        "off-target threshold or an instruction not to claim safety does not prohibit computing "
+        "off-target evidence. A scoped exclusion for a sibling design/analysis task does not "
+        "apply here. Use later external-user clarification to resolve earlier conflicting intent.\n"
+        "For enabled/disabled, give the evidence_ref and an exact nonempty quotation from that "
+        "user evidence's text, with a short reason explaining its scope. For unspecified set "
+        "both evidence fields null. Do not infer user permission from planner assumptions, "
+        "file contents, previous pipeline defaults, biological facts or computed results. "
+        "Preserve the supplied input_sha256 and return only the schema-defined JSON object."
+    ), tools=[], model=REQUEST_WORKBENCH_MODEL, model_settings=REQUEST_WORKBENCH_SETTINGS,
+)
+
+
 request_workbench_agent = Agent(
     name="ASO Request Task Graph Planner",
     instructions=(ANALYSIS_TASK_CAPABILITIES + EVALUATION_TARGET_CONTRACT +

@@ -74,6 +74,10 @@ def _stub_runtime_binaries(request: pytest.FixtureRequest, monkeypatch: pytest.M
     monkeypatch.setattr("aso_agents.runtime_binaries.ensure_run_runtime", _ensure_runtime)
     pipeline_tools = sys.modules.get("aso_agents.pipeline_tools")
     if pipeline_tools is not None:
+        monkeypatch.setattr(pipeline_tools, "_run_evaluation_screening_scope_sync", lambda payload: {
+            "input_sha256": payload["input_sha256"], "decision": "unspecified",
+            "evidence_ref": None, "evidence_quote": None,
+            "reason": "External intent classification is stubbed in unit tests."})
         monkeypatch.setattr(pipeline_tools, "bowtie_1_ready", _ready)
         monkeypatch.setattr(pipeline_tools, "ensure_bowtie_1", _ensure_bowtie)
         monkeypatch.setattr(pipeline_tools, "snakemake_ready", _ready)
