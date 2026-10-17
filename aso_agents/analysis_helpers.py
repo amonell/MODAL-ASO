@@ -31,6 +31,16 @@ _HELPERS = (
      "to_coordinate(index), inclusive_slice(lower,upper), extract(sequence,lower,upper); "
      "extract rejects sequence/frame length disagreement. Bounds are ascending inclusive; "
      "no implicit origin, sequence identity verification or clipping"),
+    ("scan_antisense_sites", "aso_agents.mapping_evidence",
+     "scan_antisense_sites(*, antisense_5to3, reference_5to3, max_mismatches)",
+     "list of every overlapping full-length site within the explicit ungapped Hamming budget, "
+     "in reference order with no best-hit limit; pass the original physical ASO and full "
+     "forward reference, never pre-reverse-complement either input; each dict includes "
+     "target_start_1based, target_end_1based, target_5to3, aligned_query_5to3, mismatch_count, "
+     "match_count and the complete compare_antisense_target mismatch annotations; coordinates "
+     "are one-based inclusive in the supplied reference, mismatch positions local to each "
+     "window; canonical A/C/G/T/U only, invalid or empty input raises, short reference has "
+     "no full-length sites; no indels, genomic projection or binding/efficacy inference"),
     ("compare_antisense_target", "aso_agents.mapping_evidence",
      "compare_antisense_target(antisense_5to3, target_5to3)",
      "dict: mismatch_count, match_count, mismatch_positions_in_supplied_sequence_1based, "

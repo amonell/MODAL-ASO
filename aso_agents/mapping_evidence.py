@@ -5,6 +5,15 @@ from copy import deepcopy
 import numpy as np
 
 
+def _canonical_sequence(sequence: str, name: str) -> str:
+    if not isinstance(sequence, str):
+        raise TypeError(f'{name} must be a sequence string')
+    value = sequence.upper().replace('U', 'T')
+    if not value or set(value) - set('ACGT'):
+        raise ValueError(f'{name} requires nonempty canonical A/C/G/T/U bases')
+    return value
+
+
 def compare_antisense_target(antisense_5to3: str, target_5to3: str) -> dict:
     """Compare a physical ASO with an equal-length, forward RNA target window.
 
@@ -14,16 +23,8 @@ def compare_antisense_target(antisense_5to3: str, target_5to3: str) -> dict:
     This is a local ungapped substitution count, not an affinity, efficacy,
     transcriptome search, or genomic-strand interpretation.
     """
-    def normalized(sequence, name):
-        if not isinstance(sequence, str):
-            raise TypeError(f'{name} must be a sequence string')
-        value = sequence.upper().replace('U', 'T')
-        if not value or set(value) - set('ACGT'):
-            raise ValueError(f'{name} requires nonempty canonical A/C/G/T/U bases')
-        return value
-
-    antisense = normalized(antisense_5to3, 'antisense_5to3')
-    target = normalized(target_5to3, 'target_5to3')
+    antisense = _canonical_sequence(antisense_5to3, 'antisense_5to3')
+    target = _canonical_sequence(target_5to3, 'target_5to3')
     complement = str.maketrans('ACGT', 'TGCA')
     aligned_query = antisense.translate(complement)[::-1]
     result = mismatch_annotations(target, aligned_query, 'reverse_complement')
@@ -39,6 +40,43 @@ def compare_antisense_target(antisense_5to3: str, target_5to3: str) -> dict:
         'sequence_alphabet': 'DNA; U normalized to T',
         'scope': 'Local ungapped canonical-base comparison; not binding affinity or efficacy.',
     }
+
+
+def scan_antisense_sites(*, antisense_5to3: str, reference_5to3: str,
+                        max_mismatches: int) -> list[dict]:
+    """Return every full-length antisense site within an explicit Hamming budget.
+
+    Supply the original physical ASO and the complete forward reference, both
+    5′ to 3′. Do not reverse-complement either argument: this function performs
+    that conversion once. All overlapping sites are returned in reference
+    order, without a best-hit limit or deduplication. Coordinates are one-based
+    inclusive in the supplied reference; mismatch positions remain local to
+    each aligned window, as in compare_antisense_target. No genomic projection,
+    indels, ambiguous bases, affinity or efficacy assumptions are introduced.
+    Canonical RNA is normalized to DNA. An invalid or empty input raises rather
+    than being reported as a completed zero-hit search. A shorter nonempty
+    reference has no full-length windows and returns an empty list.
+    """
+    antisense = _canonical_sequence(antisense_5to3, 'antisense_5to3')
+    reference = _canonical_sequence(reference_5to3, 'reference_5to3')
+    if type(max_mismatches) is not int or max_mismatches < 0:
+        raise ValueError('max_mismatches must be an explicit nonnegative integer')
+    query = antisense.translate(str.maketrans('ACGT', 'TGCA'))[::-1]
+    window_count = len(reference) - len(query) + 1
+    if window_count <= 0:
+        return []
+    source = np.frombuffer(reference.encode('ascii'), dtype=np.uint8)
+    distances = np.zeros(window_count, dtype=np.int64)
+    for offset, base in enumerate(query.encode('ascii')):
+        distances += source[offset:offset + window_count] != base
+    return [
+        {**compare_antisense_target(antisense, reference[int(pos):int(pos) + len(query)]),
+         'target_start_1based': int(pos) + 1,
+         'target_end_1based': int(pos) + len(query),
+         'coordinate_system': '1based_inclusive',
+         'search_mismatch_budget': max_mismatches}
+        for pos in np.flatnonzero(distances <= max_mismatches)
+    ]
 
 
 def mismatch_annotations(reference_window: str, aligned_query: str, orientation: str) -> dict:
