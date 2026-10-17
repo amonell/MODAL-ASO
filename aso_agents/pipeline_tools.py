@@ -14621,13 +14621,19 @@ def _save_goal_payload(
         payload_to_write["request_envelope"] = request_envelope_to_write
     # The independent, quoted request audit is authoritative for count scope.
     # A stale task-envelope copy can otherwise restore an inferred per-site
-    # minimum after a global panel count was reconciled during intake.
+    # minimum after a global panel count or ordered roles were reconciled.
     audit = final_payload_to_write.get("request_obligation_audit")
     audited_count = audit.get("candidate_count") if isinstance(audit, dict) else None
+    audited_roles = audit.get("candidate_role_ranking") if isinstance(audit, dict) else None
+    global_count_audited = (isinstance(audited_count, dict) and audited_count.get("scope") == "global"
+                            and audited_count.get("kind") in {"exact", "minimum", "maximum"})
+    role_counts_audited = (isinstance(audited_roles, dict) and audited_roles.get("status") == "applied"
+                          and isinstance(audited_roles.get("contract"), dict)
+                          and audited_roles["contract"] == structured_goal_to_write.get("candidate_role_selection")
+                          and not (isinstance(audited_count, dict) and audited_count.get("scope") == "per_site"))
     if (isinstance(audit, dict) and audit.get("status") == "accepted"
-            and isinstance(audited_count, dict) and audited_count.get("scope") == "global"
             and not audit.get('per_site_count')
-            and audited_count.get("kind") in {"exact", "minimum", "maximum"}):
+            and (global_count_audited or role_counts_audited)):
         containers = [structured_goal_to_write, final_payload_to_write]
         if isinstance(request_envelope_to_write, dict):
             containers.extend((request_envelope_to_write,
@@ -14635,12 +14641,14 @@ def _save_goal_payload(
             for task in request_envelope_to_write.get("tasks") or []:
                 if isinstance(task, dict):
                     context = task.get("context")
-                    containers.extend((task, context,
-                                       context.get("structured_goal") if isinstance(context, dict) else None))
+                    containers.extend((task, context))
+        containers += [container.get("structured_goal") for container in containers
+                       if isinstance(container, dict)]
         for container in containers:
             if isinstance(container, dict):
                 container.pop("candidate_limit_per_site", None)
                 container.pop("min_asos_per_site", None)
+                container.pop("per_site_candidate_limit", None)
     _suppress_superseded_per_site_constraints(structured_goal_to_write, final_payload_to_write)
     final_payload_to_write["structured_goal"] = structured_goal_to_write
     payload_to_write["final_payload"] = final_payload_to_write

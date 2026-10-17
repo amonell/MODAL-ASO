@@ -3609,6 +3609,10 @@ async def _audit_request_obligations(
     per_site_valid = (isinstance(per_site, dict) and _quoted_request_obligation(per_site, source_text)
                       and _coerce_positive_int(per_site.get('count'))
                       and per_site.get('kind') in {'exact', 'minimum', 'maximum'})
+    per_site_count_valid = (_quoted_request_obligation(count, source_text)
+                            and count.get("scope") == "per_site"
+                            and _coerce_positive_int(count.get("count"))
+                            and count.get("kind") in {"exact", "minimum", "maximum"})
     if _quoted_request_obligation(count, source_text):
         number = _coerce_positive_int(count.get("count"))
         scope = count.get("scope")
@@ -3693,10 +3697,10 @@ async def _audit_request_obligations(
     role_ranking = reconcile_role_obligation(goal, audit.get("candidate_role_ranking"), source_text)
     if role_ranking["status"] == "applied":
         synchronized_fields.add("candidate_role_selection")
-        if not per_site_valid:
-            synchronized_fields.update({"candidate_limit_per_site", "min_asos_per_site"})
-            goal.pop("candidate_limit_per_site", None)
-            goal.pop("min_asos_per_site", None)
+        if not per_site_valid and not per_site_count_valid:
+            for field in ("candidate_limit_per_site", "min_asos_per_site", "per_site_candidate_limit"):
+                synchronized_fields.add(field)
+                goal.pop(field, None)
         if panel_ranking is None:
             # An independently quoted individual-role algorithm corrects an
             # invented global aggregate without changing any role eligibility.
@@ -3760,8 +3764,11 @@ async def _audit_request_obligations(
     if len(design_tasks) == 1:
         task = design_tasks[0]
         context = task.get("context") if isinstance(task.get("context"), dict) else None
-        containers = [envelope, envelope.get("default_context"), task, context,
-                      context.get("structured_goal") if isinstance(context, dict) else None]
+        containers = [envelope, envelope.get("default_context"), task, context]
+        # Every same-task embedded goal can later supply missing fields. Apply
+        # audited removals there too so a stale copy cannot restore a constraint.
+        containers += [container.get("structured_goal") for container in containers
+                       if isinstance(container, dict)]
         for container in containers:
             if not isinstance(container, dict):
                 continue
