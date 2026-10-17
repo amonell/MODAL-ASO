@@ -125,6 +125,72 @@ def test_requested_files_materialize_even_with_separate_scientific_blocker(tmp_p
     assert not any(error.startswith("requested_output_missing:") for error in result["integrity"]["blocking_errors"])
 
 
+@pytest.mark.parametrize("contents,physical_error", [
+    ('{"observations": []}', None),
+    ("", "requested_output_empty"),
+    ("invalid JSON", "requested_output_invalid_json"),
+    (None, "requested_output_missing"),
+])
+@pytest.mark.parametrize("raises", [False, True])
+def test_failed_delivery_reports_current_files_and_retains_content_blocker(
+    tmp_path, monkeypatch, contents, physical_error, raises,
+):
+    run, state = setup_completed_analysis(tmp_path)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state))
+    destination = run / "requested.json"
+
+    def failed_delivery(_state, _run):
+        if contents is not None:
+            destination.write_text(contents)
+        receipt = {"ok": False, "error": "Required observation provenance unavailable"}
+        receipt_path = pipeline._write_run_path(run, "requested_artifacts") / "delivery.json"
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(json.dumps(receipt))
+        if raises:
+            raise ValueError(receipt["error"])
+        return receipt
+
+    monkeypatch.setattr(pipeline, "_materialize_requested_final_outputs", failed_delivery)
+    result = pipeline.finalize_run_state(str(state_path))
+    assert result["terminal_status"] == "fatal"
+    errors = result["integrity"]["blocking_errors"]
+    physical = [error for error in errors if error.startswith((
+        "requested_output_missing:", "requested_output_empty:", "requested_output_invalid_json:",
+    ))]
+    assert physical == ([f"{physical_error}:{destination}"] if physical_error else [])
+    assert "requested_output_delivery_failed" in errors
+    assert "requested_output_delivery_incomplete" in errors
+    saved = pipeline._load_state(str(state_path))
+    assert saved["requested_output_delivery"]["ok"] is False
+    assert saved["integrity"] == result["integrity"]
+
+
+def test_failed_delivery_keeps_independent_scientific_blockers(tmp_path, monkeypatch):
+    run, state = setup_completed_analysis(tmp_path)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state))
+    original = pipeline._extract_pipeline_integrity
+
+    def with_scientific_blocker(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result["blocking_errors"].append("required_reference_binding_unresolved")
+        result["ok"] = False
+        return result
+
+    def failed_delivery(_state, _run):
+        (run / "requested.json").write_text('{"unknown": null}')
+        return {"ok": False, "error": "Content validation failed"}
+
+    monkeypatch.setattr(pipeline, "_extract_pipeline_integrity", with_scientific_blocker)
+    monkeypatch.setattr(pipeline, "_materialize_requested_final_outputs", failed_delivery)
+    result = pipeline.finalize_run_state(str(state_path))
+    assert result["terminal_status"] == "fatal"
+    assert set(result["integrity"]["blocking_errors"]) == {
+        "required_reference_binding_unresolved", "requested_output_delivery_failed",
+    }
+
+
 @pytest.mark.parametrize("writer_succeeds", [True, False])
 def test_finalizer_checks_custom_content_when_all_requested_paths_already_exist(tmp_path, monkeypatch, writer_succeeds):
     run, state = setup_completed_analysis(tmp_path)

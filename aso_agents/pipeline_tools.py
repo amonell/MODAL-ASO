@@ -56479,9 +56479,11 @@ def finalize_run_state(state_path: str) -> Dict[str, Any]:
         except Exception as exc:
             delivery = {"ok": False, "error": str(exc)}
         state["requested_output_delivery"] = delivery
-        if delivery.get("ok"):
-            integrity = _extract_pipeline_integrity(run_dir, artifacts, skip_router=skip_router)
-        else:
+        # A writer can create files before execution or content validation
+        # fails. Report their current physical state while retaining the
+        # delivery failure and all independent scientific blockers.
+        integrity = _extract_pipeline_integrity(run_dir, artifacts, skip_router=skip_router)
+        if not delivery.get("ok"):
             integrity["blocking_errors"].append("requested_output_delivery_failed")
             integrity["ok"] = False
     state["artifacts"] = artifacts
