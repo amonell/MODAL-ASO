@@ -37,3 +37,22 @@ def test_identical_value_prefers_a_verifiable_evidence_citation():
     result, rejected = _coalesce_goal_audit_patches(
         [unverified, verified], evidence_sources=[{"evidence_id": "request", "text": "Use full PS chemistry"}])
     assert result == [verified] and not rejected
+
+
+def test_distinct_appended_values_are_not_competing_writes_to_one_array_slot():
+    patches = [{"op": "add", "path": "/tasks/0/context/structured_goal/design_programs/-",
+                "value": {"program_id": f"variant_{length}", "length": length}}
+               for length in [11, 15, 19]]
+    result, rejected = _coalesce_goal_audit_patches(patches)
+    assert result == patches and not rejected
+
+
+def test_appends_still_deduplicate_equal_values_and_prefer_verified_evidence():
+    first = {"op": "add", "path": "/tasks/0/context/structured_goal/region_constraints/-",
+             "value": {"constraint_id": "first"}, "evidence_refs": ["request"],
+             "evidence_quote": "unverified"}
+    verified = {**first, "evidence_quote": "first constraint"}
+    other = {**verified, "value": {"constraint_id": "other"}}
+    result, rejected = _coalesce_goal_audit_patches([first, other, verified],
+        evidence_sources=[{"evidence_id": "request", "text": "Use the first constraint."}])
+    assert result == [verified, other] and not rejected

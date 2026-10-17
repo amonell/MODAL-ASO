@@ -18,6 +18,15 @@ For each program_length_checks_required entry, fill its check_id under
 program_length_checks. Determine the complete explicitly requested oligo-length
 domain for that intervention branch from evidence_sources: enumerate a finite set
 or every integer of a bounded inclusive range. Preserve branch-specific differences.
+When one existing program is a template for a finite length domain, prefer verdict
+expand: supply requested_lengths and represented_program_ids=[that program_id].
+Do not write length/ID/array-structure patches for that expansion. The executor
+keeps the original ID, sets its scalar length and creates exact copies for the
+remaining values with unique IDs. Other supported leaf repairs are applied first
+and copied to every variant. This avoids retyping or omitting branch constraints.
+Expansion is explicit, evidence-bound and subject to the ordinary repair/verify
+loop; it does not infer a domain from a label. If the branch already has multiple
+variants, use complete or incomplete with actual IDs and canonical repairs instead.
 Do not silently pick a default length or accept lengths mentioned only in labels,
 objectives, chemistry or notes. List the actual same-branch represented_program_ids
 and compare their typed design_programs[*].length values with the requested domain.
@@ -75,7 +84,7 @@ def with_program_length_coverage(schema, obligations):
     findings = {}
     for obligation in obligations:
         properties = {
-            'verdict': {'type':'string','enum':['not_requested','complete','incomplete','unclear']},
+            'verdict': {'type':'string','enum':['not_requested','complete','incomplete','expand','unclear']},
             'requested_lengths': {'type':'array','uniqueItems':True,
                                   'items':{'type':'integer','minimum':1}},
             'represented_program_ids': {'type':'array','uniqueItems':True,
@@ -92,6 +101,88 @@ def with_program_length_coverage(schema, obligations):
     result['properties']['program_length_checks'] = {
         'type':'object','additionalProperties':False,'properties':findings,'required':list(findings)}
     result['required'].append('program_length_checks')
+    return result
+
+
+def compile_program_length_expansions(payload, obligations, span_map, *, projected_programs):
+    """Compile an explicit single-template domain without changing branch facts.
+
+    The caller first validates the response schema and previews ordinary patches
+    with the canonical evidence/path/value executor. Generated patches then pass
+    that same executor and complete-coverage checks. No request prose is parsed.
+    """
+    result = deepcopy(payload)
+    checks = result['program_length_checks']
+    occupied = {root: {p.get('program_id') for p in programs if isinstance(p, dict)}
+                for root, programs in projected_programs.items()}
+    original_patches = payload.get('patches') or []
+    for obligation in obligations:
+        finding = checks[obligation['check_id']]
+        if finding['verdict'] != 'expand':
+            continue
+        prefix = '$.program_length_checks.' + obligation['check_id'] + ': '
+
+        def require(condition, message):
+            if not condition:
+                raise ValueError(prefix + message)
+
+        domain = finding['requested_lengths']
+        identity = obligation['program_id']
+        root = obligation['programs_pointer']
+        span = span_map.get(finding.get('evidence_span_id'))
+        require(span and span['evidence_id'] in finding['evidence_refs'],
+                'expansion requires a span from its cited evidence source')
+        require(domain and all(type(n) is int and n > 0 for n in domain)
+                and len(set(domain)) == len(domain),
+                'expansion requires a nonempty domain of distinct positive integer lengths')
+        require(finding['represented_program_ids'] == [identity],
+                'expand represents exactly its existing single template program')
+        programs = projected_programs.get(root, [])
+        identifiers = [p.get('program_id') for p in programs if isinstance(p, dict)]
+        require(len(identifiers) == len(set(identifiers)) and identity in identifiers,
+                'the template must still exist among uniquely identified programs')
+        # A structural edit can move positional pointers; a length or ID edit
+        # competes with this operation. The model must choose one repair form.
+        for patch in original_patches:
+            path = patch['path']
+            if path == root or root.startswith(path + '/'):
+                require(False, 'expand cannot accompany an ancestor or collection replacement')
+            if path.startswith(root + '/'):
+                suffix = path[len(root) + 1:].split('/')
+                require(len(suffix) > 1 and suffix[1] not in {'length', 'program_id'},
+                        'expand cannot accompany program structure, ID or length patches in its collection')
+        index = next(i for i, p in enumerate(programs) if p.get('program_id') == identity)
+        template = programs[index]
+
+        def facts(program):
+            return {k: v for k, v in program.items()
+                    if k not in {'program_id', 'label', 'objective', 'length'}}
+
+        require(not any(p.get('program_id') != identity and facts(p) == facts(template)
+                        for p in programs if isinstance(p, dict)),
+                'equivalent variants already exist; audit their explicit coverage instead of expanding one')
+        proof = {key: deepcopy(finding[key])
+                 for key in ('evidence_refs', 'evidence_span_id')}
+        proof['reason'] = 'Compile the explicitly audited length domain: ' + finding['reason']
+        retained = template.get('length')
+        retained = retained if type(retained) is int and retained in domain else domain[0]
+        if type(template.get('length')) is not int or template.get('length') != retained:
+            result['patches'].append({**proof, 'op': 'replace' if 'length' in template else 'add',
+                                      'path': root + f'/{index}/length', 'value': retained})
+        represented = [identity]
+        for length in domain:
+            if length == retained:
+                continue
+            base = f'{identity}__length_{length}'
+            new_id, counter = base, 2
+            while new_id in occupied[root]:
+                new_id, counter = f'{base}_{counter}', counter + 1
+            occupied[root].add(new_id)
+            variant = {**deepcopy(template), 'program_id': new_id, 'length': length}
+            result['patches'].append({**deepcopy(proof), 'op': 'add', 'path': root + '/-',
+                                      'value': variant})
+            represented.append(new_id)
+        finding.update(verdict='complete', represented_program_ids=represented)
     return result
 
 
@@ -112,6 +203,9 @@ def program_length_coverage_errors(payload, obligations, span_map, *, projected_
             errors.append(path + ': span must belong to a cited evidence source')
         domain, ids = finding['requested_lengths'], finding['represented_program_ids']
         verdict = finding['verdict']
+        if verdict == 'expand':
+            errors.append(path + ': expansion must be compiled and validated before it establishes coverage')
+            continue
         if verdict == 'not_requested':
             if domain or ids:
                 errors.append(path + ': not_requested requires empty length and program arrays')

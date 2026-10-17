@@ -74,6 +74,7 @@ from aso_agents.region_audit import (
 from aso_agents.program_domains import (
     PROGRAM_LENGTH_AUDIT_INSTRUCTIONS, program_length_audit_obligations,
     program_length_coverage_errors, with_program_length_coverage,
+    compile_program_length_expansions,
 )
 from aso_agents.structured_outputs import (
     DESIGN_GOAL_SYNTHESIS_OUTPUT_SCHEMA,
@@ -18665,6 +18666,27 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
             # destinations only. Raw model output remains in telemetry unchanged.
             audited["patches"] = _goal_audit_effective_patches(envelope, audited.get("patches"))
             audited = _normalize_goal_contract_audit_status(audited)
+        if length_obligations and isinstance(audited.get("program_length_checks"), dict) and any(
+            isinstance(check, dict) and check.get("verdict") == "expand"
+            for check in (audited.get("program_length_checks") or {}).values()
+        ):
+            errors = _json_schema_validation_errors(audited, schema)
+            if errors:
+                raise ValueError("; ".join(errors))
+            materialized = _materialize_evidence_span_ids(deepcopy(audited), span_map)
+            preview = _apply_goal_audit_patches(envelope, materialized.get("patches"),
+                issue_records=[], evidence_sources=evidence_sources)
+            if preview["rejected"]:
+                raise ValueError("$.program_length_checks: expansion cannot use rejected canonical patches: "
+                                 + str(preview["rejected"]))
+            projected = {}
+            for obligation in length_obligations:
+                pointer = obligation["programs_pointer"]
+                exists, programs = _json_pointer_value(preview["request_envelope"], _json_pointer_tokens(pointer))
+                projected[pointer] = programs if exists and isinstance(programs, list) else []
+            audited = compile_program_length_expansions(audited, length_obligations, span_map,
+                                                        projected_programs=projected)
+            audited = _normalize_goal_contract_audit_status(audited)
         return audited
 
     phase_schema = _goal_contract_audit_schema_for_prompt(prompt)
@@ -18678,7 +18700,10 @@ async def _run_goal_contract_audit_agent_once(prompt: str) -> Dict[str, Any]:
         list(span_map),
     )
     def audit_contract_errors(payload: Dict[str, Any]) -> List[str]:
-        normalized = normalized_audit(payload)
+        try:
+            normalized = normalized_audit(payload)
+        except ValueError as exc:
+            return [str(exc)]
         errors = _goal_contract_audit_contract_errors(normalized, schema)
         if region_focused and not errors:
             errors.extend(region_audit_coverage_errors(normalized, region_obligations, span_map))
@@ -25724,6 +25749,18 @@ def _coalesce_goal_audit_patches(
     coalesced: List[Dict[str, Any]] = []
     rejected: List[Dict[str, Any]] = []
     for path, proposals in groups.items():
+        if path.endswith('/-') and all(item.get('op') == 'add' for item in proposals):
+            # Appends target successive new members, not one competing slot.
+            # Preserve distinct values in order; repeated identical proposals
+            # still collapse to the best evidence-bound copy.
+            values: Dict[str, List[Dict[str, Any]]] = {}
+            for item in proposals:
+                value = json.dumps(item.get('value'), ensure_ascii=False, sort_keys=True, default=str)
+                values.setdefault(value, []).append(item)
+            for duplicates in values.values():
+                valid = [item for item in duplicates if _goal_audit_evidence_is_valid(item, evidence_by_id)]
+                coalesced.append(valid[0] if valid else duplicates[0])
+            continue
         operations = {
             json.dumps(
                 {"op": str(item.get("op") or "").strip().lower(),
