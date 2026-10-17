@@ -1,5 +1,38 @@
 """Executable overlap semantics for half-open candidate and feature intervals."""
+from numbers import Integral
 from typing import Any, Dict, Iterable, List, Tuple
+
+
+def interval_overlap_summary(start: int, end: int, feature_start: int, feature_end: int,
+                             *, coordinate_convention: str) -> dict:
+    """Report intersection separately from either direction of containment.
+
+    Coordinates must already share a reference and frame. Explicitly choose
+    'inclusive' (including signed relative offsets) or 'half_open'. Each input
+    must describe a nonempty interval. This does not map reference frames or
+    establish biological binding.
+    """
+    if coordinate_convention not in {'inclusive', 'half_open'}:
+        raise ValueError('Choose an explicit inclusive or half_open coordinate convention')
+    values = (start, end, feature_start, feature_end)
+    if any(isinstance(x, bool) or not isinstance(x, Integral) for x in values):
+        raise TypeError('Interval coordinates must be integers')
+    start, end, feature_start, feature_end = map(int, values)
+    adjustment = 1 if coordinate_convention == 'inclusive' else 0
+    end_exclusive, feature_end_exclusive = end + adjustment, feature_end + adjustment
+    if start >= end_exclusive or feature_start >= feature_end_exclusive:
+        raise ValueError('Each interval must be nonempty and ordered in the declared convention')
+    left, right = max(start, feature_start), min(end_exclusive, feature_end_exclusive)
+    overlap = max(0, right - left)
+    return {
+        'coordinate_convention': coordinate_convention,
+        'overlap_interval': [left, right - adjustment] if overlap else None,
+        'overlap_nt': overlap, 'any_overlap': overlap > 0,
+        'contains_feature': interval_matches(start, end_exclusive, feature_start,
+                                             feature_end_exclusive, 'contains_feature'),
+        'within_feature': interval_matches(start, end_exclusive, feature_start,
+                                           feature_end_exclusive, 'full_containment'),
+    }
 
 
 def normalize_constraint_operator(value):

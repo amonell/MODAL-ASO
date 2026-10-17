@@ -5,6 +5,42 @@ from copy import deepcopy
 import numpy as np
 
 
+def compare_antisense_target(antisense_5to3: str, target_5to3: str) -> dict:
+    """Compare a physical ASO with an equal-length, forward RNA target window.
+
+    Both inputs are written 5′ to 3′. Reverse-complement the ASO exactly once
+    before comparing in target orientation. Accept canonical DNA/RNA letters;
+    normalize U to T and reject ambiguous bases, gaps and chemistry notation.
+    This is a local ungapped substitution count, not an affinity, efficacy,
+    transcriptome search, or genomic-strand interpretation.
+    """
+    def normalized(sequence, name):
+        if not isinstance(sequence, str):
+            raise TypeError(f'{name} must be a sequence string')
+        value = sequence.upper().replace('U', 'T')
+        if not value or set(value) - set('ACGT'):
+            raise ValueError(f'{name} requires nonempty canonical A/C/G/T/U bases')
+        return value
+
+    antisense = normalized(antisense_5to3, 'antisense_5to3')
+    target = normalized(target_5to3, 'target_5to3')
+    complement = str.maketrans('ACGT', 'TGCA')
+    aligned_query = antisense.translate(complement)[::-1]
+    result = mismatch_annotations(target, aligned_query, 'reverse_complement')
+    differences = result['mismatch_details_in_target_orientation']
+    for item in differences:
+        item['supplied_sequence_base'] = antisense[item['supplied_sequence_position_1based'] - 1]
+        item['expected_supplied_sequence_base'] = item['reference_base'].translate(complement)
+    return {
+        **result,
+        'antisense_5to3': antisense, 'target_5to3': target,
+        'aligned_query_5to3': aligned_query, 'length_nt': len(target),
+        'mismatch_count': len(differences), 'match_count': len(target) - len(differences),
+        'sequence_alphabet': 'DNA; U normalized to T',
+        'scope': 'Local ungapped canonical-base comparison; not binding affinity or efficacy.',
+    }
+
+
 def mismatch_annotations(reference_window: str, aligned_query: str, orientation: str) -> dict:
     """Describe an ungapped comparison in both target and supplied orientations.
 
