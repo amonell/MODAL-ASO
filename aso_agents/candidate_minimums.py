@@ -4,6 +4,8 @@ Inputs are compiled job geometry and typed constraints, never request prose.
 Meeting a count does not establish potency or bypass downstream evidence checks.
 """
 from copy import deepcopy
+import hashlib
+import json
 import math
 
 from .candidate_presentation import molecule_key
@@ -39,6 +41,41 @@ def genomic_regions_for_constraint(goal, program_id, constraint):
     # any one genomic locus is the requested transcript window.
     unique = {tuple(tuple(row) for row in rows) for rows in matching}
     return deepcopy(matching[0]) if len(unique) == 1 else []
+
+
+def _compiled_site_id(goal, job, metadata):
+    """Share a resolved spatial predicate across program/chemistry variants."""
+    filters = metadata.get("tile_constraint_filters") or []
+    if (metadata.get("output_space") != "genomic"
+            or not metadata.get("constraint_count") or not filters):
+        return None
+    assembly = (job.get("genome_assembly") or job.get("assembly")
+                or goal.get("genome_assembly") or goal.get("assembly"))
+
+    def intervals(rows):
+        sources = source_intervals({"materialized_rows": rows, "genome_assembly": assembly})
+        if rows and not sources:
+            raise ValueError("Unresolved compiled intervals")
+        return sorted(source["source_interval_id"] for source in sources)
+
+    rows = job.get("tile_filter_rows") or job.get("region_rows") or []
+    if not rows:
+        return None
+    try:
+        predicate = [intervals(rows), job.get("tile_overlap_requirement") or "any_overlap", [
+            [intervals(item.get("rows") or []),
+             [intervals(blocks) for blocks in item.get("region_groups") or []],
+             item.get("operator") or "union",
+             item.get("aso_overlap_requirement") or "any_overlap",
+             item.get("minimum_overlap_bp") or 1]
+            for item in filters]]
+    except (TypeError, ValueError, AttributeError):
+        return None
+    # Preserve reference scope and predicate order. Display labels, program IDs,
+    # oligo lengths and chemistry variants do not create extra physical sites.
+    reference = [job.get("species") or goal.get("species"), assembly, job.get("transcript_id")]
+    return "physical_region:" + hashlib.sha256(
+        json.dumps([reference, predicate], sort_keys=True).encode()).hexdigest()
 
 
 def requested_region_minimums(goal):
@@ -109,8 +146,6 @@ def requested_region_minimums(goal):
                         "explicit_scope_resolved": resolved,
                     })
             continue
-        group = groups.setdefault(group_id, {"group_id": group_id,
-            "label": job.get("label") or group_id, "minimum": minimum, "selectors": []})
         explicit_scope_resolved = not (
             job.get("targeting_policy") == "explicit_user_region"
             and not metadata.get("constraint_count")
@@ -118,6 +153,16 @@ def requested_region_minimums(goal):
         if not explicit_scope_resolved:
             from .splice_site_geometry import verified_reference_window_scope
             explicit_scope_resolved = verified_reference_window_scope(goal, job)
+        site_id = _compiled_site_id(goal, job, metadata) if explicit_scope_resolved else None
+        if site_id:
+            group_id = site_id
+        group = groups.setdefault(group_id, {"group_id": group_id,
+            "label": job.get("label") or group_id, "minimum": minimum, "selectors": []})
+        if site_id:
+            rows = job.get("tile_filter_rows") or job.get("region_rows") or []
+            group.update(site_scope="physical_constraint", label=" | ".join(dict.fromkeys(
+                str(row[3]) if len(row) > 3 and row[3] else f"{row[0]}:{row[1]}-{row[2]}"
+                for row in rows)))
         group["selectors"].append({
             "rows": deepcopy(job.get("tile_filter_rows") or job.get("region_rows") or []),
             "requirement": job.get("tile_overlap_requirement") or "any_overlap",
