@@ -108,7 +108,8 @@ def test_native_repair_contract_requires_both_bindings_and_validates_updates(mon
         assert schema == repair_schema(code, plan)
         assert {'base_plan_sha256', 'plan_updates'} <= set(schema['required'])
         prompt = json.loads(kwargs['prompt'])
-        assert prompt['execution_repair']['previous_plan'] == plan
+        assert prompt['execution_repair']['previous_plan'] == {
+            key: value for key, value in plan.items() if key != 'python_code'}
         assert kwargs['contract_validator'](repair) == []
         stale = deepcopy(repair)
         stale['base_plan_sha256'] = 'wrong'

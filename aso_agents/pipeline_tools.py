@@ -19933,8 +19933,15 @@ async def _run_sandbox_analysis_agent_once(payload: Dict[str, Any]) -> Dict[str,
             except (ValueError, SyntaxError) as exc:
                 return [str(exc)]
             return []
+        # Numbered source_lines provide the program once. Keep the full original
+        # plan locally for hash validation and application of the returned edits.
+        prompt_repair = {key: value for key, value in repair_context.items()
+                         if key != "previous_code"}
+        prompt_repair["previous_plan"] = {
+            key: value for key, value in (repair_context.get("previous_plan") or {}).items()
+            if key != "python_code"}
         repair = await _run_schema_validated_agent_once(
-            agent=agent, prompt=json.dumps({**payload, "output_schema": schema,
+            agent=agent, prompt=json.dumps({**payload, "execution_repair": prompt_repair, "output_schema": schema,
                 "source_lines": [{"line": index, "text": line} for index, line in enumerate(code.splitlines(), 1)]},
                 ensure_ascii=False), schema=schema, error_prefix="analysis_program_repair",
             contract_validator=validate)
