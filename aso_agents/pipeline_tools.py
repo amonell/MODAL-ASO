@@ -5376,6 +5376,9 @@ def _design_request_requires_splice_router(
     fallback_goal: Optional[Dict[str, Any]] = None,
 ) -> bool:
     if isinstance(request_meta, dict):
+        # Effect routing consumes predictions; biological splice intent is separate.
+        if _coerce_bool(request_meta.get("run_splice_eval")) is False:
+            return False
         intent = str(request_meta.get("intent") or (fallback_goal or {}).get("intent") or "").strip().lower()
         target_region = _normalize_target_region(request_meta.get("target_region") or (fallback_goal or {}).get("target_region"))
         if intent == "binding" and target_region in {"utr3", "utr5", "utrs", "translation_start", "cds"}:
@@ -5394,6 +5397,8 @@ def _design_request_requires_splice_router(
                 return True
             return intent == "splice_modulation"
     if not isinstance(fallback_goal, dict):
+        return False
+    if _coerce_bool(fallback_goal.get("run_splice_eval")) is False:
         return False
     explicit_goal = _coerce_bool(fallback_goal.get("run_splice_router"))
     if explicit_goal is not None:
@@ -39865,6 +39870,8 @@ def _resolve_run_splice_router(run_dir: str) -> bool:
     scoped = _scoped_steric_splice_requirement(final_payload, structured_goal, "router")
     if scoped is not None:
         return scoped
+    if not _resolve_run_splice_eval(run_dir):
+        return False
     target_region = _normalize_target_region(structured_goal.get("target_region"))
     intent = str(structured_goal.get("intent") or "").strip().lower()
     if intent == "binding" and target_region in {"utr3", "utr5", "utrs", "translation_start", "cds"}:

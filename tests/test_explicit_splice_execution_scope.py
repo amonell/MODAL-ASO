@@ -36,7 +36,8 @@ def test_intake_and_both_execution_resolvers_honor_explicit_evaluation_scope(eva
     })
     assert pipeline._resolve_run_splice_eval("unused") is evaluate
     assert runtime._resolve_run_splice_router(current, "") is True
-    assert pipeline._resolve_run_splice_router("unused") is True
+    # Reference/intent routing remains declared; effect execution requires predictions.
+    assert pipeline._resolve_run_splice_router("unused") is evaluate
     assert current == before
 
 
