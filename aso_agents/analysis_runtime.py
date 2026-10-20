@@ -5,6 +5,7 @@ Local variable values are not recorded; names, types and array shapes suffice
 to diagnose scalar/Series and numeric/string boundary errors.
 """
 import ast
+from fractions import Fraction
 import json
 from pathlib import Path
 import runpy
@@ -15,10 +16,11 @@ from contextlib import contextmanager
 
 @contextmanager
 def structured_excel_cells():
-    """Encode structured cells as JSON while preserving ordinary scalar types.
+    """Encode structured cells as JSON and exact ratios as lossless text.
 
     This is a serialization adapter, not a scientific transformation. Reject
     oversized values before openpyxl can silently truncate the evidence.
+    Ordinary scalar types and in-memory arithmetic remain unchanged.
     """
     receipt = {"format": "json", "converted_cells": 0, "source_types": {}}
     try:
@@ -28,9 +30,21 @@ def structured_excel_cells():
         return
     original = Cell._bind_value
 
+    def rational_text(value):
+        if isinstance(value, Fraction):
+            receipt["exact_rational_encoding"] = "exact rational text"
+            return str(value)
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
     def bind(cell, value):
-        if isinstance(value, (dict, list, tuple)):
-            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        if isinstance(value, Fraction):
+            encoded = rational_text(value)
+        elif isinstance(value, (dict, list, tuple)):
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False,
+                                 separators=(",", ":"), default=rational_text)
+        else:
+            return original(cell, value)
+        if isinstance(encoded, str):
             if len(encoded) > 32767:
                 raise ValueError("Structured Excel cell exceeds 32767 characters; preserve the complete value "
                                  "in a separate evidence sheet or file and put a reference in this cell.")
