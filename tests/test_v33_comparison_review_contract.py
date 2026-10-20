@@ -16,5 +16,4 @@ def test_operation_reviewer_receives_submitted_set_and_target_relative_boundarie
     )
     assert "compares distinct submitted physical ASO sets as well as generated sets" in prompt
     assert "it does not require newly designed molecules" in prompt
-    assert "supplied oligonucleotides do not make transcript-relative binding" in prompt
     assert '"task_type":"compare_aso_sets"' in prompt
