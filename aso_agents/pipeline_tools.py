@@ -29717,7 +29717,8 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         program_limits = {}
         for program in structured_goal.get("design_programs") or []:
             bounds = [_coerce_positive_int(program.get("candidate_limit"))]
-            if (hard_nonoverlap or panel_objectives is not None) and candidate_limit_per_site:
+            if ((hard_nonoverlap or panel_objectives is not None)
+                    and candidate_limit_per_site and not physical_site_groups):
                 bounds.append(per_site_limit)
             bounds = [value for value in bounds if value is not None]
             if program.get("program_id") and bounds:
