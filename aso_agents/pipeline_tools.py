@@ -3,6 +3,7 @@ import csv
 import asyncio
 from copy import copy, deepcopy
 from dataclasses import replace as dataclass_replace
+from functools import lru_cache
 import errno
 import hashlib
 import html
@@ -1099,6 +1100,31 @@ def _design_goal_for_program(
     return goal
 
 
+@lru_cache(maxsize=64)
+def _record_chemical_requirements(
+    recording_input_json: str, recorder_identity: Tuple[str, ...], run_agent: Any,
+) -> str:
+    """Reuse validated source extraction; JSON keeps cached results immutable."""
+    from .chemical_requirements import chemical_requirement_agent, validate_requirement_response
+    from .chemistry_contracts import ChemistryResolutionError
+    recording_input = json.loads(recording_input_json)
+    sources = recording_input["sources"]
+    recorder = _agent_with_strict_output_schema(chemical_requirement_agent,
+        schema_name="aso_chemical_requirements", schema=recording_input["output_schema"])
+    for recording_attempt in range(3):
+        recorded = run_async_from_sync(lambda: run_agent(
+            recorder, input=json.dumps(recording_input, ensure_ascii=False), max_steps=6))
+        try:
+            requirements = validate_requirement_response(
+                json.loads(recorded.final_output) if isinstance(recorded.final_output, str) else recorded.final_output,
+                sources)
+            return json.dumps(requirements, ensure_ascii=False)
+        except Exception as exc:
+            if recording_attempt == 2:
+                raise ChemistryResolutionError("chemistry_requirements_unresolved: " + str(exc)) from exc
+            recording_input["output_contract_feedback"] = {"previous_response": recorded.final_output, "error": str(exc)}
+
+
 def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]) -> Dict[str, Any]:
     from aso_chemistry import require_native_linkage_identity
     require_native_linkage_identity(goal)
@@ -1117,24 +1143,17 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
     )
     requested_length = _requested_oligo_length(goal)
     from .chemical_requirements import (requirement_sources, requirement_schema,
-        validate_requirement_response, chemical_requirement_agent, require_native_requirement_capabilities,
+        chemical_requirement_agent, require_native_requirement_capabilities,
         requirement_configuration_errors)
     sources = requirement_sources(goal)
     requirements = []
     if sources:
-        recording_schema = requirement_schema(sources)
-        recorder = _agent_with_strict_output_schema(chemical_requirement_agent,
-            schema_name="aso_chemical_requirements", schema=recording_schema)
-        recording_input = {"sources": sources, "output_schema": recording_schema}
-        for recording_attempt in range(3):
-            recorded = run_async_from_sync(lambda: Runner.run(recorder, input=json.dumps(recording_input, ensure_ascii=False), max_steps=6))
-            try:
-                requirements = validate_requirement_response(json.loads(recorded.final_output) if isinstance(recorded.final_output, str) else recorded.final_output, sources)
-                break
-            except Exception as exc:
-                if recording_attempt == 2:
-                    raise ChemistryResolutionError("chemistry_requirements_unresolved: " + str(exc)) from exc
-                recording_input["output_contract_feedback"] = {"previous_response": recorded.final_output, "error": str(exc)}
+        recording_input = {"sources": sources, "output_schema": requirement_schema(sources)}
+        recorder_identity = (str(chemical_requirement_agent.instructions),
+            repr(chemical_requirement_agent.model), repr(chemical_requirement_agent.model_settings),
+            repr(get_provider_config(require_credentials=False)))
+        requirements = json.loads(_record_chemical_requirements(
+            json.dumps(recording_input, ensure_ascii=False), recorder_identity, Runner.run))
         try:
             require_native_requirement_capabilities(requirements)
         except ValueError as exc:
