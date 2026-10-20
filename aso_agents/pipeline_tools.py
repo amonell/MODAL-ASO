@@ -45327,6 +45327,10 @@ def tool_analyze_artifact(state_path: str) -> Dict[str, Any]:
             error_message="artifact_refs_missing",
             details={"run_dir": run_dir},
         )
+    # Declared file deliverables need executed analysis and physical output
+    # checks. An artifact inventory cannot establish their completion.
+    if _requested_output_paths(run_dir, response_request_envelope.get("final_outputs")):
+        return _execute_sandbox_analysis(prepared, tool_name="tool_analyze_artifact")
     artifact_index = artifact_context.get("artifact_index") if isinstance(artifact_context.get("artifact_index"), dict) else {}
     response = _build_generated_aso_artifact_analysis_response(
         artifact_context=artifact_context,
