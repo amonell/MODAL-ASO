@@ -19924,16 +19924,21 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
 
 
 def _analysis_agent_prompt_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Send identical request context once while retaining the runtime manifest."""
-    declared = payload.get("declared_inputs")
-    if not isinstance(declared, dict):
-        return payload
-    repeated = {key for key in ("request_text", "request_envelope")
-                if key in payload and key in declared and payload[key] == declared[key]}
-    if not repeated:
-        return payload
-    return {**payload, "declared_inputs": {
-        key: value for key, value in declared.items() if key not in repeated}}
+    """Remove identical serialized context from model-facing copies only."""
+    context_keys = ("request_text", "task_request_text", "request_summary", "request_envelope")
+    prompt = payload
+    for container in ("declared_inputs", "request_envelope"):
+        nested = payload.get(container)
+        if not isinstance(nested, dict):
+            continue
+        repeated = {key for key in context_keys
+                    if key != container and key in payload and key in nested
+                    and json.dumps(payload[key], ensure_ascii=False)
+                    == json.dumps(nested[key], ensure_ascii=False)}
+        if repeated:
+            prompt = {**prompt, container: {
+                key: value for key, value in nested.items() if key not in repeated}}
+    return prompt
 
 
 async def _run_sandbox_analysis_agent_once(payload: Dict[str, Any]) -> Dict[str, Any]:
