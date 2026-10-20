@@ -17283,14 +17283,17 @@ async def _finalize_verified_request_plan(
     )
     if str(reviewed.get("error") or "").strip():
         return reviewed
-    reviewed = await _review_request_clarifications_if_needed(
-        request_evidence,
-        reviewed,
-    )
-    if str(reviewed.get("error") or "").strip():
-        return reviewed
     if str(reviewed.get("status") or "").strip().lower() != "ready":
-        return reviewed
+        # Review new completeness questions before synthesis. A ready plan was
+        # already reviewed by the compiler; review its synthesized goal below.
+        reviewed = await _review_request_clarifications_if_needed(
+            request_evidence,
+            reviewed,
+        )
+        if str(reviewed.get("error") or "").strip():
+            return reviewed
+        if str(reviewed.get("status") or "").strip().lower() != "ready":
+            return reviewed
     synthesized = await _synthesize_missing_design_goals(
         request_evidence,
         reviewed,
