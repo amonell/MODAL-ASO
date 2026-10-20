@@ -75,14 +75,11 @@ def test_mandatory_public_reference_cannot_route_to_self_contained_sandbox(monke
     assert len(reviews) == 2  # Both independent review passes inspect only the capable graph.
 
 
-def test_target_bound_physical_set_cannot_route_to_self_contained_sandbox():
+def test_target_metadata_does_not_force_native_evaluation():
     envelope = {"tasks": [{"task_id": "compare", "task_type": "sandbox_analysis",
         "native": False, "context": {"provided_asos": [{"name": "A", "sequence": "ACGT"}],
         "target_context": "a supplied molecule against a biological reference"}}]}
-    issues = pipeline._executor_capability_issues(envelope)
-    assert len(issues) == 1
-    assert issues[0]["category"] == "wrong_task_type"
-    assert issues[0]["task_ids"] == ["compare"]
+    assert pipeline._executor_capability_issues(envelope) == []
 
     # Supplied-row arithmetic without a biological target remains sandbox work.
     envelope["tasks"][0]["context"].pop("target_context")
@@ -96,10 +93,10 @@ def test_gene_label_on_supplied_row_audit_does_not_imply_reference_binding():
         "gene_symbol": "GENE"}}]}
     assert pipeline._executor_capability_issues(envelope) == []
 
-    # Declaring a target-relative operation or mandatory lookup still excludes
-    # the self-contained executor, even when the same supplied rows are used.
+    # Available finite-reference work is assessed by the semantic graph review;
+    # an explicit mandatory lookup still excludes the self-contained executor.
     envelope["tasks"][0]["context"]["target_context"] = "align against a reference"
-    assert [issue["category"] for issue in pipeline._executor_capability_issues(envelope)] == ["wrong_task_type"]
+    assert pipeline._executor_capability_issues(envelope) == []
     envelope["tasks"][0]["context"].pop("target_context")
     envelope["tasks"][0]["context"]["web_retrieval"] = {"required": True}
     assert [issue["category"] for issue in pipeline._executor_capability_issues(envelope)] == ["wrong_task_type"]

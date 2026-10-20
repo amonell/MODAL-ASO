@@ -16058,21 +16058,14 @@ def _executor_capability_issues(
                     "path": f"/tasks/{index}/context/transcript_id",
                     "reason": "The graph treats a transcript accession as a user-selected reference although it is absent from the request and supplied artifacts. Keep a canonical or feature-level request unbound until the native reference resolver selects an accession from the stated catalog.",
                 })
-        # A gene label can describe the source of observed rows without asking
-        # for any reference-relative operation. Explicit target/reference
-        # fields, rather than that label alone, exceed sandbox capabilities.
-        target_bound_physical_set = (
-            bool(context.get("provided_asos") or context.get("provided_aso_files"))
-            and bool(context.get("target_context") or context.get("transcript_id")
-                     or context.get("evaluation_targets"))
-        )
-        if task_type == "sandbox_analysis" and (
-            retrieval.get("required") is True or target_bound_physical_set
-        ):
+        # Target metadata alone does not establish a missing reference or a
+        # native prediction requirement. The evidence-bound graph review
+        # assesses those needs against the actual available inputs.
+        if task_type == "sandbox_analysis" and retrieval.get("required") is True:
             issues.append({
                 "category": "wrong_task_type", "task_ids": [task_id] if task_id else [],
                 "path": f"/tasks/{index}/task_type",
-                "reason": "The proposed task binds supplied physical ASOs to a biological target or declares mandatory external reference retrieval. sandbox_analysis only computes over supplied inputs. Select a native target-relative task that can resolve and verify the reference, preserving the supplied records, requested outputs and dependencies.",
+                "reason": "The proposed task declares mandatory external reference retrieval. sandbox_analysis computes over available inputs. Select a native task that can resolve and verify the required reference, preserving the supplied records, requested outputs and dependencies.",
             })
         if task_type != "sandbox_analysis" and task.get("native") is False:
             issues.append({
