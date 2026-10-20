@@ -28680,12 +28680,16 @@ def _sort_generated_candidate_indexed_rows(indexed_rows: List[Tuple[int, Dict[st
     )
 
 
-def _candidate_binding_intervals_for_exon_annotation(row: Dict[str, Any]) -> List[Tuple[str, int, int]]:
+def _candidate_binding_intervals_for_exon_annotation(
+    row: Dict[str, Any], *, output_space: str = "genomic",
+) -> List[Tuple[str, int, int]]:
     """Use explicit physical intervals before ambiguous legacy start/end fields.
 
     Native genomic segments and spans are one-based inclusive; the binding
     interval field is BED0 half-open.  Old untyped start/end rows remain BED0.
     """
+    if output_space != "genomic":
+        raise ValueError("This physical interval reader requires genomic output_space")
     raw_bed = row.get("binding_intervals_bed0_half_open")
     if isinstance(raw_bed, str):
         try:
