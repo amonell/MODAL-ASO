@@ -268,6 +268,23 @@ def list_supported_species() -> Dict[str, SpeciesConfig]:
     return dict(_SPECIES_DATA)
 
 
+def available_reference_files() -> List[Dict[str, Any]]:
+    """Describe configured local files without retrieval or identity claims."""
+    resources = []
+    for species, config in list_supported_species().items():
+        files = [("genome_fasta", config.genome_fasta), ("annotation_gtf", config.gtf_path)]
+        if config.genome_fasta.is_file():
+            files.append(("genome_fasta_index", Path(str(config.genome_fasta) + ".fai")))
+        for role, path in files:
+            if path.is_file():
+                resources.append({
+                    "species": species, "role": role, "path": str(path),
+                    "expected_assembly": config.ensembl_assembly,
+                    "identity_verified": False,
+                })
+    return resources
+
+
 def is_static_species(value: Optional[str]) -> bool:
     """Return whether a species has curated static reference metadata."""
     return normalize_species(value) in _SPECIES_DATA

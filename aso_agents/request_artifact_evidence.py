@@ -1,7 +1,8 @@
 """Bounded local evidence for the first request-planning call.
 
-Paths come only from the user's request, never a model proposal. This preview
-does not replace the complete artifact consumed by the eventual executor.
+Artifact paths come from the user's request, never a model proposal. Separate
+reference availability comes from runtime configuration. Previews do not replace
+the complete artifacts consumed by the eventual executor.
 """
 import hashlib
 import json
@@ -93,7 +94,14 @@ def collect_request_artifacts(runtime, request):
 
 
 def append_request_artifact_evidence(runtime, prompt, request):
+    from .species_config import available_reference_files
     evidence = collect_request_artifacts(runtime, request)
+    references = available_reference_files()
+    if references:
+        prompt = str(prompt) + (
+            "\n\nConfigured local reference files (presence, not identity verification):\n"
+            + json.dumps(references, ensure_ascii=False, indent=2)
+        )
     if not evidence["entries"]:
         return prompt
     return str(prompt) + (

@@ -26676,7 +26676,13 @@ def _repair_request_envelope_if_needed(
         should_semantically_audit = bool(
             tasks_present
             and not issues
-            and (semantic_audit or noncanonical_findings)
+            # Calculation-only graphs have no native ASO goal to synthesize.
+            # Their compiler and program contract reviews own these checks.
+            and ((semantic_audit and any(
+                _normalize_task_type_value(task.get("task_type"))
+                not in {"sandbox_analysis", "build_composite_report"}
+                for task in tasks
+            )) or noncanonical_findings)
         )
         if not issues and not should_semantically_audit:
             ready_envelope = deepcopy(request_envelope)
@@ -34639,8 +34645,10 @@ def _build_sandbox_declared_inputs(
     state: Dict[str, Any],
     request_envelope: Dict[str, Any],
 ) -> Dict[str, Any]:
+    from .species_config import available_reference_files
     declared: Dict[str, Any] = {"artifact_refs": [], "task_artifacts": [],
         "completed_design_candidates": [],
+        "reference_resources": available_reference_files(),
         "provided_asos": _normalize_provided_asos(request_envelope)}
     for ref in _resolve_artifact_ref_paths(request_envelope):
         path = Path(ref).expanduser()
