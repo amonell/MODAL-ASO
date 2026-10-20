@@ -13219,13 +13219,9 @@ def _build_scoped_design_request_text(
             ]
         )
     if structured_goal:
-        prompt_sections.extend(
-            [
-                "",
-                "Task-local structured goal:",
-                json.dumps(structured_goal, ensure_ascii=False, indent=2),
-                "Treat this structured goal as authoritative if it is compatible with the request.",
-            ]
+        prompt_sections.append(
+            "Treat context.structured_goal in the scoped design task as authoritative "
+            "if it is compatible with the request."
         )
     artifact_context = (
         deepcopy(direct_artifact_context)
