@@ -19930,7 +19930,21 @@ async def _compose_workbench_response_batch(payload: Dict[str, Any], *, archive=
         prompt = render_response_context(correction)
 
 
+def _analysis_agent_prompt_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Send identical request context once while retaining the runtime manifest."""
+    declared = payload.get("declared_inputs")
+    if not isinstance(declared, dict):
+        return payload
+    repeated = {key for key in ("request_text", "request_envelope")
+                if key in payload and key in declared and payload[key] == declared[key]}
+    if not repeated:
+        return payload
+    return {**payload, "declared_inputs": {
+        key: value for key, value in declared.items() if key not in repeated}}
+
+
 async def _run_sandbox_analysis_agent_once(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _analysis_agent_prompt_payload(payload)
     repair_context = payload.get("execution_repair")
     if isinstance(repair_context, dict) and repair_context.get("previous_code"):
         from .analysis_repair import repair_schema, apply_program_repair
@@ -19983,6 +19997,7 @@ async def _run_child_clarification_resolution_agent_once(payload: Dict[str, Any]
 
 
 async def _run_analysis_contract_review_agent_once(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _analysis_agent_prompt_payload(payload)
     from .analysis_review import review_schema
     from .sandbox_analysis_agent import analysis_contract_review_agent
     schema = review_schema(payload["program"])
