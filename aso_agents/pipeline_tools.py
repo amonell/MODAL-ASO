@@ -31254,22 +31254,8 @@ def _sequence_stage_trace(entry: Dict[str, Any], stage_sets: Dict[str, Set[str]]
 
 
 def _basic_html_document(title: str, body_markdown: str, *, run_dir=None) -> str:
-    from .report_presentation import TABLE_CSS, markdown_html
-    body = markdown_html(body_markdown, run_dir)
-    return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{html.escape(title)}</title>"
-        "<style>"
-        "body{font-family:ui-sans-serif,system-ui,sans-serif;max-width:980px;margin:40px auto;padding:0 24px 48px;line-height:1.55;color:#1f2328}"
-        "h1{font-size:1.7rem;letter-spacing:-.02em;margin:0 0 16px}h2{font-size:1.25rem;margin:1.6rem 0 10px}h3{font-size:1.05rem;margin:1.3rem 0 8px}"
-        "p,ul,ol,table{margin:0 0 14px}ul,ol{padding-left:22px}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#f6f8fa;padding:1px 5px;border-radius:4px}"
-        "table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:6px 10px;text-align:left;vertical-align:top}"
-        "th{background:#f6f8fa;font-weight:600}pre{white-space:pre-wrap;background:#f6f8fa;padding:16px;border-radius:8px}"
-        + TABLE_CSS + "</style></head><body><main class='report-content'>"
-        f"{body}"
-        "</main></body></html>"
-    )
+    from .readable_report import basic_document
+    return basic_document(title, body_markdown, run_dir)
 
 
 def _short_design_program_label(program_key: str) -> str:
@@ -31347,7 +31333,9 @@ def _composite_design_tab_entries(response_payload: Dict[str, Any], run_dir: str
         structured_goal = payload.get("child_structured_goal") if isinstance(payload.get("child_structured_goal"), dict) else {}
         task_context = payload.get("task_context") if isinstance(payload.get("task_context"), dict) else {}
         program_key = _design_program_key_from_structured_goal(structured_goal, task_context)
-        tab_label = _short_design_program_label(program_key)
+        program_label = {"gapmer_knockdown": "Gapmer ASOs", "splice_switching": "Splicing ASOs"}.get(program_key, "ASO design")
+        gene_label = str(structured_goal.get("gene_symbol") or task_context.get("gene_symbol") or "").strip()
+        tab_label = f"{gene_label} · {program_label}" if gene_label else program_label
         title = str(payload.get("task_label") or payload.get("label") or "").strip() or tab_label
         summary = _report_summary_line(str(payload.get("report_excerpt") or ""))
         rel_html = artifact_href(child_html_path, run_dir)
@@ -31497,136 +31485,13 @@ def _composite_html_document(
     response_payload: Dict[str, Any],
     run_dir: str,
 ) -> str:
-    from .report_presentation import TABLE_CSS, link_child_report_excerpts, markdown_html
+    from .report_presentation import link_child_report_excerpts
+    from .readable_report import composite_document
     design_tabs = _composite_design_tab_entries(response_payload, run_dir)
     body_markdown = link_child_report_excerpts(body_markdown, response_payload, run_dir)
     if not design_tabs:
         return _basic_html_document(title, body_markdown, run_dir=run_dir)
-
-    summary_html = markdown_html(body_markdown, run_dir)
-    radio_markup: List[str] = [
-        "<input class='tab-radio' type='radio' name='composite-tabs' id='tab-control-summary' checked>"
-    ]
-    label_markup: List[str] = [
-        "<label class='tab-button' for='tab-control-summary'>Summary</label>"
-    ]
-    panel_markup: List[str] = [
-        (
-            "<section id='tab-panel-summary' class='tab-panel'>"
-            "<div class='panel-head'>"
-            f"<h2>{html.escape(title)}</h2>"
-            "<p>Combined summary across all scoped child design runs, comparisons, and filter traces.</p>"
-            "</div>"
-            f"<div class='markdown report-content'>{summary_html}</div>"
-            "</section>"
-        )
-    ]
-    selector_rules: List[str] = [
-        "#tab-control-summary:checked ~ .tab-list label[for='tab-control-summary']{background:var(--accent);border-color:var(--accent);color:#fff}",
-        "#tab-control-summary:checked ~ #tab-panel-summary{display:block}",
-    ]
-    for idx, entry in enumerate(design_tabs, start=1):
-        control_id = f"tab-control-design-{idx}"
-        panel_id = f"tab-panel-design-{idx}"
-        tab_label = html.escape(entry["tab_label"])
-        title_text = html.escape(entry["title"])
-        summary_text = html.escape(entry.get("summary") or "Loads the child run's standard HTML report.")
-        html_href = html.escape(entry["html_href"], quote=True)
-        run_dir_href = html.escape(entry["run_dir_href"], quote=True)
-        md_href = html.escape(entry["md_href"], quote=True) if entry.get("md_href") else ""
-        iframe_attrs = [
-            "class='child-report-frame'",
-            f"title='{title_text}'",
-            "loading='lazy'",
-        ]
-        # A normal relative iframe keeps every nested download relative to its
-        # own child report under both file:// and HTTP. srcdoc uses the parent's
-        # base URL and silently breaks those same downloads after a handoff.
-        iframe_attrs.append(f"src='{html_href}'")
-        radio_markup.append(
-            f"<input class='tab-radio' type='radio' name='composite-tabs' id='{control_id}'>"
-        )
-        label_markup.append(
-            f"<label class='tab-button' for='{control_id}'>{tab_label}</label>"
-        )
-        selector_rules.append(
-            f"#{control_id}:checked ~ .tab-list label[for='{control_id}']{{background:var(--accent);border-color:var(--accent);color:#fff}}"
-        )
-        selector_rules.append(f"#{control_id}:checked ~ #{panel_id}{{display:block}}")
-        panel_bits = [
-            f"<section id='{panel_id}' class='tab-panel'>",
-            "<div class='panel-head'>",
-            f"<h2>{title_text}</h2>",
-            f"<p>{summary_text}</p>",
-            "<div class='panel-links'>",
-            f"<a href='{html_href}' target='_blank' rel='noopener noreferrer'>Open child HTML</a>",
-        ]
-        if md_href:
-            panel_bits.append(
-                f"<a href='{md_href}' target='_blank' rel='noopener noreferrer'>Open child markdown</a>"
-            )
-        panel_bits.append(
-            f"<a href='{run_dir_href}' target='_blank' rel='noopener noreferrer'>Open child folder</a>"
-        )
-        panel_bits.extend(
-            [
-                "</div>",
-                "</div>",
-                f"<iframe {' '.join(iframe_attrs)}></iframe>",
-                "</section>",
-            ]
-        )
-        panel_markup.append("".join(panel_bits))
-
-    return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{html.escape(title)}</title>"
-        "<style>"
-        ":root{color-scheme:light;--bg:#f4f1e8;--panel:#fffdf8;--ink:#1f2b24;--ink-soft:#49554d;"
-        "--line:#d7d0c3;--accent:#245b4a;--accent-soft:#dbe9e2;--code:#eef3f7;--shadow:0 16px 40px rgba(44,54,43,.08);"
-        "--mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;}"
-        "*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#f7f4ec 0%,#f1ede3 100%);"
-        "color:var(--ink);font-family:'IBM Plex Sans','Segoe UI',sans-serif;line-height:1.6}"
-        ".page{max-width:1380px;margin:0 auto;padding:28px 24px 36px}"
-        ".hero{padding:24px 28px;border:1px solid var(--line);border-radius:24px;background:var(--panel);box-shadow:var(--shadow);"
-        "margin-bottom:18px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.72rem;font-weight:700;color:var(--accent);margin-bottom:10px}"
-        ".hero h1{margin:0;font-size:2rem;line-height:1.1;letter-spacing:-.03em}.hero p{margin:12px 0 0;color:var(--ink-soft);max-width:78ch}"
-        ".tabs-shell{border:1px solid var(--line);border-radius:24px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}"
-        ".tab-radio{position:absolute;opacity:0;pointer-events:none}"
-        ".tab-list{display:flex;gap:10px;flex-wrap:wrap;padding:16px 18px;border-bottom:1px solid var(--line);background:#f8f5ee}"
-        ".tab-button{display:inline-flex;align-items:center;border:1px solid var(--line);background:#fffaf0;color:var(--ink);padding:10px 14px;border-radius:999px;"
-        "font:600 .95rem/1.1 'IBM Plex Sans','Segoe UI',sans-serif;cursor:pointer;transition:.15s ease}"
-        ".tab-button:hover{border-color:var(--accent);color:var(--accent)}"
-        ".tab-panel{display:none;padding:22px;min-width:0}"
-        ".panel-head{display:flex;gap:14px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:16px}"
-        ".panel-head h2{margin:0;font-size:1.28rem;letter-spacing:-.02em}.panel-head p{margin:6px 0 0;color:var(--ink-soft);max-width:78ch}"
-        ".panel-links{display:flex;gap:10px;flex-wrap:wrap}.panel-links a{text-decoration:none;color:var(--accent);font-weight:600}"
-        ".panel-links a:hover{text-decoration:underline}"
-        ".markdown{color:var(--ink);line-height:1.75}.markdown h1,.markdown h2,.markdown h3{letter-spacing:-.02em;margin:0 0 12px}"
-        ".markdown h1{font-size:1.65rem}.markdown h2{font-size:1.3rem;margin-top:1.45rem}.markdown h3{font-size:1.08rem;margin-top:1.15rem}"
-        ".markdown p,.markdown ul,.markdown ol,.markdown pre,.markdown table{margin:0 0 14px}.markdown ul,.markdown ol{padding-left:20px}"
-        ".markdown code{font-family:var(--mono);background:var(--code);padding:1px 5px;border-radius:6px}"
-        ".markdown pre{background:#f6f8fb;border:1px solid #d9e2ea;border-radius:14px;padding:14px 16px;overflow:auto}"
-        ".markdown table{border-collapse:collapse;width:100%;display:block;overflow:auto}"
-        ".markdown th,.markdown td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}"
-        ".markdown th{background:#f8f5ee}"
-        ".child-report-frame{width:100%;min-height:72vh;border:1px solid var(--line);border-radius:18px;background:#fff}"
-        f"{''.join(selector_rules)}"
-        "@media (max-width:900px){.page{padding:18px 14px 26px}.hero{padding:18px 18px 20px}.hero h1{font-size:1.55rem}"
-        ".tab-panel{padding:16px}.child-report-frame{min-height:64vh}}"
-        + TABLE_CSS + "</style></head><body><div class='page'>"
-        "<header class='hero'>"
-        "<div class='eyebrow'>Composite ASO Report</div>"
-        f"<h1>{html.escape(title)}</h1>"
-        "<p>This parent report keeps the cross-run synthesis at the top level and preserves each child design run as its own full HTML tab.</p>"
-        "</header>"
-        "<main class='tabs-shell'>"
-        f"{''.join(radio_markup)}"
-        f"<nav class='tab-list' aria-label='Composite report tabs'>{''.join(label_markup)}</nav>"
-        f"{''.join(panel_markup)}"
-        "</main></div></body></html>"
-    )
+    return composite_document(title, body_markdown, design_tabs, run_dir)
 
 
 def _summary_text(value: Any) -> str:

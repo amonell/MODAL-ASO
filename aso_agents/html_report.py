@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 from urllib.parse import quote
@@ -1539,6 +1540,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           padding: 18px;
         }
       }
+      __READER_CSS__
     </style>
   </head>
   <body>
@@ -1549,43 +1551,25 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           <h1 id="hero-title"></h1>
           <p class="hero-gene-id" id="hero-gene-id"></p>
           <details class="request-details"><summary>Original request</summary><p class="hero-request" id="hero-request"></p></details>
-          <div class="chip-row" id="hero-chips"></div>
-        </div>
-        <div class="hero-side">
-          <section class="hero-card">
-            <p class="hero-card-title">Run metadata</p>
-            <div class="hero-meta-grid" id="hero-meta-grid"></div>
-          </section>
+
         </div>
       </header>
 
-      <section class="panel panel--strong" style="margin-top:20px">
-        <div class="panel-title-row"><h2>Quick Overview</h2><span class="info-icon" data-help-key="overview_quick" tabindex="0">i</span></div>
-        <div class="grid-2">
-          <div id="quick-overview-copy"></div>
-          <div>
-            <div class="metric-grid" id="quick-overview-metrics"></div>
-            <div class="spacer"></div>
-            <div class="artifact-links" id="quick-overview-artifacts"></div>
-          </div>
-        </div>
-        <div class="spacer"></div>
-        <div class="chip-row" id="quick-overview-branches"></div>
-        <div class="spacer"></div>
-        <div id="quick-overview-alerts"></div>
-      </section>
-
       <nav class="tabs">
         <button class="tab-btn active" data-tab="results">Results</button>
-        <button class="tab-btn" data-tab="workflow">Decisions / Workflow</button>
-        <button class="tab-btn is-hidden" data-tab="gapmer">Gapmer</button>
-        <button class="tab-btn is-hidden" data-tab="steric-binding">Steric Hindrance</button>
-        <button class="tab-btn" data-tab="targets">Maps / Sites</button>
-        <button class="tab-btn" data-tab="safeguards">Safeguards</button>
+        <button class="tab-btn" data-tab="workflow">How it was calculated</button>
+        <button class="tab-btn is-hidden" data-tab="gapmer">Gapmer predictions</button>
+        <button class="tab-btn is-hidden" data-tab="steric-binding">Binding sites</button>
+        <button class="tab-btn" data-tab="targets">Target maps</button>
+        <button class="tab-btn" data-tab="safeguards">Additional checks</button>
       </nav>
 
       <main class="stack">
-        <section class="tab-panel active panel report-content" id="results">__RESULTS_SECTION__</section>
+        <section class="tab-panel active panel reader-content report-content" id="results">
+          <div id="quick-overview-alerts"></div>
+          __RESULTS_SECTION__
+          <details><summary>More downloads</summary><div class="artifact-links" id="quick-overview-artifacts"></div></details>
+        </section>
         <section class="tab-panel workflow-section" id="workflow">
           <div class="panel panel--strong">
             <div class="panel-title-row"><h2>Workflow Graph</h2><span class="info-icon" data-help-key="workflow_graph" tabindex="0">i</span></div>
@@ -1667,6 +1651,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           </div>
         </section>
       </main>
+      <footer class="reader-footer"><details><summary>Report information</summary><div class="hero-meta-grid" id="hero-meta-grid"></div></details></footer>
     </div>
 
     <script id="report-data" type="application/json">__REPORT_DATA__</script>
@@ -1935,66 +1920,20 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
       }
 
       function renderQuickOverview() {
-        const guide = reportData.guide || {};
         const overview = reportData.overview || {};
-        const summary = guide.summary || {};
-        const copyRoot = document.getElementById("quick-overview-copy");
-        if (copyRoot) {
-          const paragraphs = [
-            summary.headline,
-            summary.result,
-          ]
-            .map((item) => stripInlineEvidenceRefs(item))
-            .filter((item, index, arr) => item && item !== (reportData.meta || {}).user_request && arr.indexOf(item) === index);
-          const bullets = (summary.bullets || [])
-            .map((item) => stripInlineEvidenceRefs(item))
-            .filter((item) => item);
-          copyRoot.innerHTML = paragraphs.length
-            ? `
-                ${paragraphs.map((item) => `<p class="summary-text">${escapeHtml(item)}</p>`).join("")}
-                ${renderBullets(bullets.slice(0, 4))}
-              `
-            : '<div class="empty">No overview summary available.</div>';
-        }
-
-        const preferredMetricLabels = new Set(["Native panel records", "Targets", "Routed goals"]);
-        const metrics = (overview.key_metrics || []).filter((item) => preferredMetricLabels.has(item.label) && (item.value > 0 || item.label === "Native panel records")).slice(0, 3);
-        const metricsRoot = document.getElementById("quick-overview-metrics");
-        if (metricsRoot) {
-          metricsRoot.innerHTML = metrics.length
-            ? metrics.map((item) => `
-                <article class="metric-card">
-                  <div class="metric-label">${escapeHtml(item.label)}</div>
-                  <div class="metric-value">${escapeHtml(formatValue(item.value))}</div>
-                  <div class="metric-detail">${escapeHtml(item.detail || "")}</div>
-                </article>
-              `).join("")
-            : '<div class="empty">No overview metrics available.</div>';
-        }
-
+        const labels = {"Native candidate panel (CSV)":"Design candidates (CSV)",
+          "Complete native candidate evidence":"All candidate details (JSON)",
+          "Scored steric pool (Excel)":"All scored steric candidates (Excel)",
+          "Scored gapmer pool (Excel)":"All scored gapmer candidates (Excel)"};
         const artifactsRoot = document.getElementById("quick-overview-artifacts");
-        const artifacts = (overview.primary_artifacts || []).slice(0, 6);
-        if (artifactsRoot) {
-          artifactsRoot.innerHTML = artifacts.length
-            ? artifacts.map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`).join("")
-            : '<div class="empty">No primary artifacts linked.</div>';
-        }
-
-        const branchesRoot = document.getElementById("quick-overview-branches");
-        const branches = overview.branch_outcomes || [];
-        if (branchesRoot) {
-          branchesRoot.innerHTML = branches.length
-            ? branches.map((item) => badge(`${item.title}: ${item.status || "unknown"}`, item.tone || "neutral")).join("")
-            : "";
-        }
-
+        const artifacts = overview.primary_artifacts || [];
+        artifactsRoot.innerHTML = artifacts.length
+          ? artifacts.map(item=>`<a class="artifact-link" href="${escapeHtml(item.href)}">${escapeHtml(labels[item.label] || item.label)}</a>`).join("")
+          : '<p>No additional downloads are recorded.</p>';
+        const alerts = (overview.alerts || []).filter(Boolean);
         const alertsRoot = document.getElementById("quick-overview-alerts");
-        const alerts = (overview.alerts || []).map((item) => stripInlineEvidenceRefs(item)).filter((item) => item);
-        if (alertsRoot) {
-          alertsRoot.innerHTML = alerts.length
-            ? `<div class="panel" style="padding:16px;margin-top:6px"><div class="section-kicker">Caveats</div>${renderBullets(alerts.slice(0, 5))}</div>`
-            : "";
-        }
+        alertsRoot.innerHTML = alerts.length
+          ? `<section class="reader-section reader-limits"><h2>Limitations and missing results</h2>${renderBullets(alerts)}</section>` : "";
       }
 
       function renderArtifactLinks(items) {
@@ -2423,7 +2362,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
 
       function renderHero() {
         const meta = reportData.meta || {};
-        document.getElementById("hero-title").textContent = meta.gene_symbol || meta.gene_id || "Run results";
+        document.getElementById("hero-title").textContent = (meta.gene_symbol || meta.gene_id) ? `${meta.gene_symbol || meta.gene_id} · ASO results` : "ASO results";
         const geneIdEl = document.getElementById("hero-gene-id");
         if (geneIdEl) {
           if (meta.gene_symbol && meta.gene_id) {
@@ -2435,16 +2374,6 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           }
         }
         document.getElementById("hero-request").textContent = meta.user_request || "No user request captured.";
-
-        const chipBits = [];
-        (meta.modalities || []).forEach((entry) => chipBits.push(badge(entry, "teal")));
-        if (meta.target_count) {
-          chipBits.push(badge(`${meta.target_count} target${meta.target_count === 1 ? "" : "s"}`, "rust"));
-        }
-        if (meta.ranked_aso_count) {
-          chipBits.push(badge(`${meta.ranked_aso_count} supporting scored ASOs`, "neutral"));
-        }
-        document.getElementById("hero-chips").innerHTML = chipBits.join("");
 
         const metaRows = [
           ["Run", meta.run_name],
@@ -3898,11 +3827,13 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         });
       }
     </script>
+    __READER_SCRIPT__
   </body>
 </html>
 """
     from .oligoai import html_section
     from .report_presentation import TABLE_CSS
+    from .readable_report import DESIGN_CSS, READER_SCRIPT, design_results
     evaluations = report_payload.get("oligoai_evaluations") or [report_payload.get("oligoai_evaluation") or {}]
     sections = []
     for index, evaluation in enumerate(evaluations):
@@ -3910,10 +3841,17 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         if index:
             section = section.replace('id="oligoai-evaluation"', f'id="oligoai-evaluation-{index + 1}"')
         sections.append(section)
-    return (html.replace("__REPORT_DATA__", data_json)
-        .replace("__REPORT_PRESENTATION_CSS__", TABLE_CSS)
-        .replace("__RESULTS_SECTION__", report_payload.get("results_html") or '<p>Final results are not recorded.</p>')
-        .replace("__OLIGOAI_SECTION__", ''.join(sections)))
+    substitutions = {
+        "__REPORT_DATA__": data_json,
+        "__REPORT_PRESENTATION_CSS__": TABLE_CSS,
+        "__RESULTS_SECTION__": design_results(report_payload),
+        "__OLIGOAI_SECTION__": ''.join(sections),
+        "__READER_CSS__": DESIGN_CSS,
+        "__READER_SCRIPT__": READER_SCRIPT,
+    }
+    # Substitute the template once so literal tokens in source evidence survive.
+    return re.sub('|'.join(map(re.escape, substitutions)), lambda match: substitutions[match[0]], html)
+
 
 
 def _collect_branch_outcomes(

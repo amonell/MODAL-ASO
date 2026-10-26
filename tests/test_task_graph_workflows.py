@@ -729,7 +729,8 @@ def test_chooser_focused_v2_markdown_summarizes_provided_aso_evaluation(tmp_path
     assert written_payload["markdown"] == written_report
     assert written_payload.get("answer_summary") == payload.get("answer_summary")
     written_html = Path(artifacts["report_html"]).read_text(encoding="utf-8")
-    assert "<h1>Sequence Orientation</h1>" in written_html
+    # The reading view owns the page h1; the unchanged scientific section is h2.
+    assert "<h2>Sequence Orientation</h2>" in written_html
     assert "<pre>" not in written_html
     assert (resolve_run_path(run_dir, "existing_aso_evaluation.xlsx")).exists()
     assert scoring_path.with_suffix(".xlsx").exists()
