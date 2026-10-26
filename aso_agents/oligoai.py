@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 from .response_artifacts import digest, write_json
+from .oligoai_readiness import OligoAIUnavailable
 
 SOURCE_REVISION = "487e96177e8e2d736654de5b52b39a34401fd0a5"
 MODEL_REVISION = "a9d91f4ca370cead8e0571e14a16d48a63d0ecee"
@@ -301,8 +302,10 @@ def released_model_predict(inputs, directory, *, use_service=True, gpu_lock_fd=N
             return result
     request = directory / "model-inputs.json"
     write_json(request, {"schema_version": "modal-aso-oligoai-input/1.0", "inputs": inputs})
-    if not python.exists() or not checkpoint.exists() or not source.exists():
-        raise RuntimeError("OligoAI runtime is not installed; run modal-aso setup --features oligoai")
+    from .oligoai_readiness import inspect_installation, OligoAIUnavailable
+    readiness = inspect_installation(root)
+    if readiness["status"] != "installed":
+        raise OligoAIUnavailable(readiness["detail"])
     if file_sha(checkpoint) != MODEL_SHA256:
         raise ValueError("OligoAI released checkpoint checksum mismatch")
     command = [str(python), "-m", "aso_agents.oligoai_runner", "--input", str(request),
@@ -409,6 +412,11 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
                     entry["status"] = "predicted"
                     for context in entry["contexts"]:
                         context["predicted_inhibition_percent"] = by_id[context["input_id"]]
+        except OligoAIUnavailable as exc:
+            result["runtime_availability"] = {"status": "unavailable", "detail": str(exc)}
+            for entry in result["candidates"]:
+                if entry["status"] == "pending":
+                    entry.update(status="unavailable", reason=str(exc))
         except Exception as exc:
             result["inference_error"] = f"{type(exc).__name__}: {exc}"
             for entry in result["candidates"]:

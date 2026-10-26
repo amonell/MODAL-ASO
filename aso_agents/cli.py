@@ -29,6 +29,9 @@ def _setup(args):
     features = set(args.features)
     if "all" in features:
         features = {"tools", "references", "splice", "oligoai"}
+    model_root = getattr(args, "oligoai_root", None)
+    if model_root and "oligoai" not in features:
+        raise ValueError("--oligoai-root requires --features oligoai")
     if "oligoai" in features and (platform.system(), platform.machine()) != ("Linux", "x86_64"):
         raise RuntimeError("OligoAI requires Linux x86-64 with an NVIDIA Ampere or newer GPU. Use --features tools references splice on Apple silicon.")
     print(f"Data: {data_root()}")
@@ -55,7 +58,7 @@ def _setup(args):
             install_mouse_model()
     if "oligoai" in features:
         from .oligoai_runtime import install
-        install(oligoai_root(), Path(sys.executable))
+        install(model_root or oligoai_root(), Path(sys.executable))
         print("Ready: OligoAI")
     print("Setup complete. Run modal-aso doctor to check this environment.")
     return 0
@@ -82,7 +85,16 @@ def _doctor(args):
         add(species + " references", "ok" if not missing else "missing", f"{len(values) - len(missing)}/{len(values)} verified; {reference_root()}")
     from .model_assets import inventory as model_inventory
     for item in model_inventory(args.species, full=args.verify):
-        add(item["name"], "ok" if item["status"] == "verified" else item["status"], item["path"])
+        add(item["name"], "ok" if item["status"] == "verified" else item["status"], item.get("detail", item["path"]))
+    from .oligoai_readiness import inspect_installation
+    installation = inspect_installation()
+    add("OligoAI runtime files", "optional" if installation["status"] == "missing" else "ok" if installation["status"] == "installed" else "error", installation["detail"])
+    if "oligoai" in getattr(args, "require_model", []):
+        from .oligoai_readiness import require_oligoai
+        try:
+            add("OligoAI runtime", "ok", require_oligoai()["detail"])
+        except RuntimeError as exc:
+            add("OligoAI runtime", "error", exc)
     import torch
     add("Inference device", "ok", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU; OligoAI requires a supported NVIDIA GPU")
     from .llm_provider import get_provider_config
@@ -100,6 +112,10 @@ def _doctor(args):
 
 def _assets(args):
     _configure(args)
+    if args.action == "import-model":
+        from .oligoai_readiness import register_existing
+        print(json.dumps(register_existing(args.source), indent=2))
+        return 0
     from .reference_assets import import_reference, inventory
     if args.action == "import":
         print(json.dumps(import_reference(args.species[0], args.source), indent=2))
@@ -123,6 +139,7 @@ def _run(argv):
     locations = argparse.ArgumentParser(add_help=False)
     locations.add_argument("--data-dir", type=Path)
     locations.add_argument("--output-dir", type=Path)
+    locations.add_argument("--require-model", action="append", choices=["oligoai"], default=[])
     args, remainder = locations.parse_known_args(argv)
     _configure(args)
     if args.output_dir:
@@ -140,6 +157,9 @@ def _run(argv):
             if args.output_dir and args.output_dir.expanduser().resolve() != output_root:
                 raise ValueError("A resumed request uses its existing output directory. Omit --output-dir when resuming.")
             os.environ["ASO_RUNS_DIR"] = str(output_root)
+    if "oligoai" in args.require_model and not any(flag in remainder for flag in ("--help", "-h")):
+        from .oligoai_readiness import require_oligoai
+        require_oligoai()
     from .runtime_binaries import refresh_runtime_path
     refresh_runtime_path()
     os.environ.setdefault("MODAL_ASO_SKIP_RUNTIME_INSTALL", "1")
@@ -167,15 +187,21 @@ def main(argv=None):
         setup.add_argument("--data-dir", type=Path, help="Persistent data directory (saved for future sessions)")
         setup.add_argument("--species", nargs="+", choices=["human", "mouse"], default=["human"])
         setup.add_argument("--features", nargs="+", choices=["tools", "references", "splice", "oligoai", "all"], default=["tools", "references"])
+        setup.add_argument("--oligoai-root", type=Path, help="Install or reuse OligoAI here; remember the path after successful setup")
         setup.set_defaults(func=_setup)
         doctor = sub.add_parser("doctor", help="Check the local installation")
         doctor.add_argument("--data-dir", type=Path)
         doctor.add_argument("--species", nargs="+", choices=["human", "mouse"], default=["human"])
         doctor.add_argument("--verify", action="store_true", help="Rehash reference files")
         doctor.add_argument("--json", action="store_true")
+        doctor.add_argument("--require-model", action="append", choices=["oligoai"], default=[], help="Require a working model runtime, including its GPU access")
         doctor.set_defaults(func=_doctor)
         assets = sub.add_parser("assets", help="List, verify or import existing references")
         actions = assets.add_subparsers(dest="action", required=True)
+        import_model = actions.add_parser("import-model", help="Register an existing model installation without downloading or using the GPU")
+        import_model.add_argument("model", choices=["oligoai"])
+        import_model.add_argument("source", type=Path)
+        import_model.set_defaults(func=_assets)
         for name in ["list", "verify", "import"]:
             action = actions.add_parser(name)
             action.add_argument("--data-dir", type=Path)

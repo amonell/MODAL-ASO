@@ -68,6 +68,27 @@ Install the corresponding species references before splice models. Splice models
 
 OligoAI supports DNA/MOE/cET sugars and PO/PS bonds. Reports identify unsupported chemistries and the conditions attached to each prediction.
 
+Setup remembers a custom OligoAI directory across sessions:
+
+```bash
+modal-aso setup --features oligoai --oligoai-root /path/to/oligoai
+```
+
+Register an existing installation without downloading it again or using the GPU:
+
+```bash
+modal-aso assets import-model oligoai /path/to/oligoai
+```
+
+Registration verifies the released checkpoint and source and remembers their location; it does not certify current CUDA access. Before a batch or a request that requires OligoAI predictions, check the actual execution environment:
+
+```bash
+modal-aso doctor --require-model oligoai --verify
+modal-aso --require-model oligoai "your request"
+```
+
+The required-model check exercises the isolated runtime and GPU before any LLM request. Run it inside the container or sandbox that will execute the workload. That environment must expose the model directory, its Python dependencies and supported GPU access; a host installation or environment variable alone cannot make hidden files or devices accessible. Missing optional predictions remain unavailable and do not establish a failed biological design.
+
 ## Upgrade
 
 ```bash

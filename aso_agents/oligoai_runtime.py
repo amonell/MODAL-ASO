@@ -13,7 +13,7 @@ import sys
 from .asset_store import asset_lock, atomic_json, download, file_lock, sha256
 from .model_sources import install_source
 from .oligoai import SOURCE_REVISION, MODEL_REVISION, MODEL_SHA256, MODEL_FILE
-from .paths import cache_root, oligoai_root, resource_root
+from .paths import cache_root, oligoai_root, resource_root, save_settings
 
 FLASH_NAME = "flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
 FLASH_WHEEL = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/" + FLASH_NAME.replace("+", "%2B")
@@ -43,7 +43,7 @@ print(json.dumps({'python':sys.version.split()[0], 'torch':torch.__version__,
     env = dict(os.environ, PYTHONNOUSERSITE="1")
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
-    return json.loads(subprocess.check_output([str(python), "-c", script, str(source)], env=env, text=True))
+    return json.loads(subprocess.check_output([str(python), "-c", script, str(source)], env=env, text=True, stderr=subprocess.PIPE))
 
 
 def install(root=None, native_python=None):
@@ -69,6 +69,7 @@ def install(root=None, native_python=None):
             previous = {}
         if previous.get("identity") == identity and python.is_file():
             _probe(python, source)
+            save_settings({"oligoai_root": str(root)})
             return root
         if not python.is_file():
             subprocess.run([str(native_python), "-m", "venv", str(root / "venv")], check=True)
@@ -86,6 +87,7 @@ def install(root=None, native_python=None):
         probe = _probe(python, source)
         packages = json.loads(subprocess.check_output([str(python), "-m", "pip", "list", "--format=json"], env=env, text=True))
         atomic_json(root / "installation.json", {"identity": identity, "runtime": probe, "packages": packages})
+    save_settings({"oligoai_root": str(root)})
     return root
 
 

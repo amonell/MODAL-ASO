@@ -53,5 +53,9 @@ def inventory(species=("human", "mouse"), *, full=False):
             result["status"] = "verified"
     except (OSError, ValueError, KeyError):
         pass
+    if result["status"] == "unverified":
+        result["detail"] = (f"OligoAI environment at {root / 'venv'} is present or recorded, "
+                            "but its pinned installation record is incomplete or unverified. "
+                            "Run modal-aso setup --features oligoai to validate or repair it.")
     values.append(result)
     return values

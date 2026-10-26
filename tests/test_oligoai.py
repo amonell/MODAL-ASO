@@ -57,6 +57,28 @@ def test_physical_identity_and_every_bond_are_preserved(tmp_path):
     assert float(records[0]["predicted_inhibition_percent"]) == 73.125
 
 
+def test_missing_optional_runtime_is_unavailable_without_changing_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASO_OLIGOAI_ROOT", str(tmp_path / "not mounted"))
+    candidate = row()
+    before = deepcopy(candidate)
+    result = evaluate_candidates([candidate], {}, tmp_path / "reports", references=[reference()])
+    assert result["predicted_count"] == 0
+    assert result["candidates"][0]["status"] == "unavailable"
+    assert result["runtime_availability"]["status"] == "unavailable"
+    assert "not mounted" in result["candidates"][0]["reason"]
+    assert "inference_error" not in result
+    assert {k: v for k, v in candidate.items() if k != "oligoai_evaluation"} == before
+
+
+def test_real_predictor_error_is_not_hidden_as_missing_optional_install(tmp_path):
+    def broken(*_):
+        raise RuntimeError("predictor crashed")
+    result = evaluate_candidates([row()], {}, tmp_path, references=[reference()], predictor=broken)
+    assert result["candidates"][0]["status"] == "error"
+    assert "predictor crashed" in result["inference_error"]
+    assert "runtime_availability" not in result
+
+
 def test_unsupported_ome_is_not_substituted(tmp_path):
     rows = [row(architecture="2ome:5-10-5")]
     result = evaluate_candidates(rows, {}, tmp_path, references=[reference()], predictor=lambda *a: pytest.fail("must not call model"))

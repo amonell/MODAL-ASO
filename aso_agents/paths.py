@@ -63,8 +63,14 @@ def reference_root() -> Path:
 
 
 def oligoai_root() -> Path:
-    override = os.environ.get("ASO_OLIGOAI_ROOT")
-    return Path(override).expanduser().resolve() if override else data_root() / "models/oligoai"
+    configured = os.environ.get("ASO_OLIGOAI_ROOT") or settings().get("oligoai_root")
+    if configured is not None:
+        if not isinstance(configured, (str, os.PathLike)):
+            raise ValueError("The configured OligoAI directory must be a path")
+        if not str(configured).strip():
+            raise ValueError("The configured OligoAI directory must not be empty")
+        return Path(configured).expanduser().resolve()
+    return data_root() / "models/oligoai"
 
 
 def splice_root() -> Path:
