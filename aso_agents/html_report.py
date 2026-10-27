@@ -1549,19 +1549,20 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         <div>
           <p class="eyebrow">MODAL-ASO report</p>
           <h1 id="hero-title"></h1>
-          <p class="hero-gene-id" id="hero-gene-id"></p>
-          <details class="request-details"><summary>Original request</summary><p class="hero-request" id="hero-request"></p></details>
+          <details class="request-details"><summary>Original request and target ID</summary><p class="hero-request" id="hero-request"></p><p class="hero-gene-id" id="hero-gene-id"></p></details>
 
         </div>
       </header>
 
       <nav class="tabs">
-        <button class="tab-btn active" data-tab="results">Results</button>
+        <button class="tab-btn active" data-tab="results">Summary and results</button>
+        <details class="reader-explore"><summary>Explore the analysis</summary><div class="reader-detail-tabs">
         <button class="tab-btn" data-tab="workflow">How it was calculated</button>
         <button class="tab-btn is-hidden" data-tab="gapmer">Gapmer predictions</button>
         <button class="tab-btn is-hidden" data-tab="steric-binding">Binding sites</button>
         <button class="tab-btn" data-tab="targets">Target maps</button>
         <button class="tab-btn" data-tab="safeguards">Additional checks</button>
+        </div></details>
       </nav>
 
       <main class="stack">
@@ -1665,6 +1666,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         tab.addEventListener("click", () => {
           tabs.forEach((node) => node.classList.toggle("active", node === tab));
           panels.forEach((panel) => panel.classList.toggle("active", panel.id === tab.dataset.tab));
+          if (tab.dataset.tab === "results") document.querySelectorAll('.reader-explore').forEach(node => node.open = false);
         });
       });
 

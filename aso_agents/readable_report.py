@@ -1,7 +1,8 @@
 """Reader-facing HTML over saved reports; never rewrite the scientific source.
 
-Only known interface headings are renamed. Free prose, tables, identifiers,
-units, sequences and code remain intact. Unknown sections stay expanded.
+Short explanations introduce verified saved counts and terms. Free scientific
+prose, table records, identifiers, units and sequences remain available intact.
+Unknown sections stay expanded.
 This module deliberately has no model, prediction or selection dependencies.
 """
 from __future__ import annotations
@@ -23,7 +24,7 @@ body{margin:0;background:#f7f9f7;color:var(--reader-ink);font:16px/1.65 system-u
 .reader-subtitle{color:var(--reader-muted);margin:0;max-width:75ch}
 .reader-content{min-width:0;background:white;border:1px solid var(--reader-line);border-radius:12px;padding:24px 28px}
 .reader-content h2{font-size:1.25rem;line-height:1.4;margin:0 0 12px;letter-spacing:-.015em}
-.reader-content h3{font-size:1.05rem;line-height:1.5}
+.reader-content h3{font-size:1.05rem;line-height:1.5;text-transform:none;letter-spacing:normal;color:var(--reader-ink)}
 .reader-content p,.reader-content li{max-width:85ch}
 .reader-section{margin:0 0 28px;scroll-margin-top:20px}
 .reader-section:last-child{margin-bottom:0}
@@ -51,6 +52,21 @@ body{margin:0;background:#f7f9f7;color:var(--reader-ink);font:16px/1.65 system-u
 .reader-content .reader-rank code{white-space:normal;overflow-wrap:anywhere}
 .reader-table-compact .reader-detail-column{display:none}
 .reader-column-toggle{font:inherit;font-size:.88rem;border:1px solid var(--reader-line);background:white;color:var(--reader-accent);border-radius:6px;padding:6px 10px;cursor:pointer}
+.reader-orientation{border-bottom:1px solid var(--reader-line);padding:0 0 24px;margin:0 0 28px}
+.reader-eyebrow{color:var(--reader-accent);font-size:.76rem;letter-spacing:.09em;text-transform:uppercase;font-weight:700;margin:0 0 6px}
+.reader-orientation h2{font-size:1.55rem;margin:0 0 10px}.reader-orientation h3{font-size:1rem;margin:16px 0 6px}
+.reader-purpose{font-size:1.05rem;margin:0 0 18px}
+.reader-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0;max-width:900px}
+.reader-fact{display:flex;flex-direction:column;align-items:flex-start;background:#f2f6f2;border-radius:8px;padding:16px;min-width:0}
+.reader-fact-value{font-size:1.9rem;font-weight:650;line-height:1.2;color:#244f40;overflow-wrap:anywhere}
+.reader-fact-label{font-weight:600;margin-top:8px}.reader-fact-note,.reader-fact-source{font-size:.85rem;line-height:1.5;margin-top:6px;color:var(--reader-muted)}
+.reader-attention{padding:12px 16px;border-left:3px solid #ae7a39;background:#fff8ee;margin:18px 0}
+.reader-attention h3{margin:0 0 6px}.reader-attention ul{padding-left:20px;margin:0}
+.reader-actions{display:flex;align-items:center;flex-wrap:wrap;gap:14px 20px;margin-top:20px;font-size:.95rem}
+.reader-actions .reader-action{background:var(--reader-accent);color:white;padding:9px 16px;border-radius:7px;text-decoration:none}
+.reader-content details.reader-basics{padding:0;border:0;margin:14px 0;font-size:.9rem}
+.reader-tools h2{margin:0;font-size:1.2rem}.reader-header{overflow-wrap:anywhere}
+@media(max-width:600px){.reader-facts{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.reader-fact{padding:12px}.reader-fact-value{font-size:1.6rem}.reader-fact-label{font-size:.9rem}.reader-orientation h2{font-size:1.35rem}}
 :focus-visible{outline:3px solid #23624e;outline-offset:3px}
 @media(max-width:600px){.reader-page{padding:20px 12px 40px}.reader-content{padding:18px 14px}.reader-header h1{font-size:1.6rem}.reader-glossary dl{display:block}.reader-glossary dd{margin:0 0 14px}.reader-content details{padding:10px}}
 @media print{body{background:white}.reader-page{max-width:none;padding:0}.reader-tools,.reader-nav{display:none}.reader-content{border:0;padding:0}.reader-content .table-scroll{overflow:visible}.reader-content table{width:100%;min-width:0}.reader-content td{overflow-wrap:anywhere}.reader-section{break-inside:avoid}}
@@ -108,7 +124,7 @@ RESULT_HEADINGS = {
 LIMIT_HEADINGS = {"caveats", "limitations", "main uncertainty", "what remains uncertain"}
 
 TABLE_LABELS = {
-    'id': 'Candidate', 'set': 'Set', 'sequence': 'Sequence',
+    'id': 'ID', 'set': 'Set', 'sequence': 'Sequence',
     'target_score': 'Target score', 'offtarget_hits': 'Off-target matches',
     'source_row': 'Input row', 'source_row_number': 'Input row',
     'pooled_nondominated_frontier': 'Nondominated across all sets',
@@ -177,9 +193,10 @@ def friendly_tables(fragment):
                 index += 1
                 key = headers[index] if index < len(headers) else ''
                 raw = html.unescape(re.sub('<[^>]+>', '', cell_match[1]))
-                if key == 'native rank / scope' and (rank := re.fullmatch(r'(\d+)\s+/\s+(.+)', raw)):
+                if key == 'native rank / scope' and (rank := re.fullmatch(r'(\d+|unavailable|not recorded)\s+/\s+(.+)', raw)):
+                    rank_label = rank[1] if rank[1].isdigit() else 'No rank supplied'
                     return ('<td data-recorded-value="' + html.escape(raw, quote=True)
-                            + '"><details class="reader-rank"><summary>' + rank[1]
+                            + '"><details class="reader-rank"><summary>' + rank_label
                             + ' · group details</summary><p>Design group: <code>'
                             + html.escape(rank[2]) + '</code></p></details></td>')
                 if key in {'status', 'outcome', 'retention_status'}:
@@ -205,6 +222,10 @@ def friendly_tables(fragment):
     return re.sub(r'<th>([^<]*)</th>', header, fragment)
 
 TERMS = (
+    (r"\bASOs?\b|antisense", "ASO", "A short synthetic strand designed to bind RNA. A candidate ASO is a proposed option for further study."),
+    (r"\bRNA\b|transcript", "RNA / transcript", "RNA carries or helps use genetic instructions. A transcript is one RNA product of a gene; different versions can contain different regions."),
+    (r"splic", "Splicing", "How pieces of RNA are joined. Changes in splicing can change which RNA version is produced."),
+    (r"predict|estimate", "Prediction", "A result calculated by a model. It is different from an effect measured in an experiment."),
     (r"\bisoform\w*\b", "Isoform", "A version of an RNA transcript. Coverage of one version does not necessarily mean coverage of all versions."),
     (r"off[-_ ]target", "Off-target match", "A sequence match outside the intended target. The reference and mismatch settings limit which matches were checked; a match alone does not establish a biological effect."),
     (r"\bGC(?:_|\b)", "GC fraction", "The fraction of a sequence made up of G and C bases. A fraction of 0.30 is 30%."),
@@ -212,6 +233,7 @@ TERMS = (
     (r"nondominated|pareto", "Nondominated candidate", "No other candidate in the stated comparison is at least as good on every compared measure and better on at least one. This is not a claim of overall biological superiority."),
     (r"\brank\b|selection_rank", "Rank", "The order recorded for a particular candidate set. Ranks from different sets or scoring methods may not be comparable."),
     (r"\b(?:unavailable|not_predicted|not recorded)\b", "Unavailable result", "A missing measurement or prediction. It is not a zero, a negative finding, or evidence that the ASO does not work."),
+    (r"\bN/?A\b", "NA / N/A", "The report supplies no value in that field. It may be unavailable or not applicable; check the accompanying notes. It does not mean zero."),
 )
 
 
@@ -219,7 +241,7 @@ def glossary_html(text):
     terms = [(name, meaning) for pattern, name, meaning in TERMS if re.search(pattern, text, re.I)]
     if not terms:
         return ""
-    return ('<details class="reader-glossary"><summary>Terms used in this report</summary><dl>'
+    return ('<details class="reader-glossary" id="reader-terms"><summary>Terms used in this report</summary><dl>'
             + ''.join('<dt>' + html.escape(name) + '</dt><dd>' + html.escape(meaning) + '</dd>' for name, meaning in terms)
             + '</dl></details>')
 
@@ -251,6 +273,20 @@ def _sections(markdown):
 
 def _intro_html(lines, report_dir, extra_details, header_request):
     """Fold only the generated request/administration blocks; keep their text."""
+    # Only a leading metadata block is eligible. The same text inside a code
+    # example or after scientific prose must stay in its original context.
+    file_indices = set()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if re.fullmatch(r'\s*(?:Input|Audit table|Output file):\s*`[^`]+`\s*\.?\s*', line):
+            file_indices.add(index)
+        else:
+            break
+    file_lines = [line for index, line in enumerate(lines) if index in file_indices]
+    if file_lines:
+        extra_details.append('<details><summary>Input and output files</summary>' + markdown_html('\n'.join(file_lines), report_dir) + '</details>')
+        lines = [line for index, line in enumerate(lines) if index not in file_indices]
     text = '\n'.join(lines)
     before, marker, request = text.partition('\nOriginal request:\n')
     if marker:
@@ -266,7 +302,7 @@ def _intro_html(lines, report_dir, extra_details, header_request):
     return markdown_html(text, report_dir)
 
 
-def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None):
+def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None, context=None):
     """Reorganize saved text for reading without editing its evidence blocks.
 
     Reordering is limited to known result/limitation sections. Every original
@@ -307,17 +343,32 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
         nav.append('<a href="#' + downloads[0][1] + '">Downloads</a>')
     if details:
         nav.append('<a href="#reader-details">Methods and details</a>')
-    tools = ('<div class="reader-tools"><p>Results first. Open the details when you need them.</p>'
-             '<button type="button" class="reader-expand">Expand all details</button></div>') if include_tools else ''
+    terms = glossary_html(str(markdown or ''))
+    if terms:
+        nav.append('<a href="#reader-terms">Explain report terms</a>')
+    tools = ('<div class="reader-tools"><h2 id="reader-findings">Findings and data</h2>'
+             '<button type="button" class="reader-expand">Expand all details</button></div>') if include_tools else '<span id="reader-findings"></span>'
     # A free-form introduction may itself be the only scientific summary.
     lead = ''.join('<section class="reader-section" id="' + item[1] + '">' + item[3] + '</section>' for item in intro)
     detail_html = ('<section class="reader-section" id="reader-details"><h2>Methods and details</h2>' + ''.join(details) + '</section>') if details else ''
-    return (tools + ('<nav class="reader-nav" aria-label="In this report">' + ''.join(nav) + '</nav>' if nav else '')
+    from .report_orientation import build_orientation, orientation_html
+    orientation = orientation_html(build_orientation(sections, context), findings='reader-findings',
+                                   downloads=downloads[0][1] if downloads else None,
+                                   limitations=limits[1] if limits else None)
+    return (orientation + tools + ('<nav class="reader-nav" aria-label="In this report">' + ''.join(nav) + '</nav>' if nav else '')
             + lead + ''.join(item[3] for item in blocks) + ''.join(item[3] for item in downloads)
-            + detail_html + glossary_html(str(markdown or '')))
+            + detail_html + terms)
 
 
 READER_SCRIPT = """<script>
+// In-page links can point to a folded explanation or a nested source section.
+function revealReaderAnchor(){
+  let anchor=location.hash.slice(1);try{anchor=decodeURIComponent(anchor);}catch(_error){}
+  const target=document.getElementById(anchor);
+  if(!target)return;
+  for(let node=target;node;node=node.parentElement){if(node.tagName==='DETAILS')node.open=true;}
+}
+addEventListener('hashchange',revealReaderAnchor);revealReaderAnchor();
 document.querySelectorAll('.reader-content table').forEach(table=>{
   const columns=[...table.querySelectorAll('thead th')].map((th,index)=>th.classList.contains('reader-detail-column')?index:-1).filter(index=>index>=0);
   if(!columns.length)return;
@@ -377,7 +428,10 @@ def design_results(payload):
     markdown = (payload.get('overview') or {}).get('report_markdown') or ''
     if not markdown:
         return saved or '<p>Final results are not recorded.</p>'
-    body = readable_markdown_html(markdown, payload.get('oligoai_report_dir'), header_request=(payload.get('meta') or {}).get('user_request'))
+    meta = payload.get('meta') or {}
+    body = readable_markdown_html(markdown, payload.get('oligoai_report_dir'), header_request=meta.get('user_request'),
+                                  context={'kind': 'design', 'gene': meta.get('gene_symbol') or meta.get('gene_id'),
+                                           'evaluations': payload.get('oligoai_evaluations') or []})
     inventory, separator, _ = saved.partition('<h2>Report and interpretation</h2>')
     if inventory and separator:
         body += ('<details><summary>ASOs produced during design</summary>' + inventory + '</details>')
@@ -396,10 +450,13 @@ body{background:#f7f9f7;color:var(--reader-ink)}
 .hero-request{max-width:85ch;color:var(--reader-ink);font-size:.95rem;line-height:1.65;white-space:pre-wrap}
 .request-details summary{color:var(--reader-accent);cursor:pointer;font-size:.95rem}
 .reader-content details>summary,.request-details>summary,.reader-footer details>summary{list-style:disclosure-closed;display:list-item}
+.request-details>summary{list-style-position:inside}
 .reader-content details[open]>summary,.request-details[open]>summary,.reader-footer details[open]>summary{list-style-type:disclosure-open}
 .reader-content details>summary::-webkit-details-marker,.request-details>summary::-webkit-details-marker,.reader-footer details>summary::-webkit-details-marker{display:inline}
 .panel,.panel--strong{background:white;border:1px solid var(--reader-line);border-radius:12px;box-shadow:none}
 .tabs{position:static;background:transparent;border:0;box-shadow:none;padding:0;margin:20px 0;gap:8px;flex-wrap:wrap}
+.reader-explore{position:relative;font-size:.9rem;max-width:100%}.reader-explore>summary{cursor:pointer;padding:10px 14px;border:1px solid var(--reader-line);border-radius:8px;background:white;list-style:disclosure-closed inside;display:list-item}
+.reader-explore[open]>summary{list-style-type:disclosure-open}.reader-detail-tabs{display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 0;max-width:100%}
 .tab-btn{background:white;border:1px solid var(--reader-line);border-radius:8px;padding:9px 14px;color:var(--reader-ink);font-family:inherit}
 .tab-btn.active{background:var(--reader-accent);color:white;border-color:var(--reader-accent)}
 .hero-meta-grid{display:block;min-width:0}.meta-row{display:flex;gap:18px;flex-wrap:wrap;overflow-wrap:anywhere;min-width:0}.meta-row span{min-width:0;max-width:100%;overflow-wrap:anywhere}
@@ -416,7 +473,7 @@ def composite_document(title, markdown, entries, report_dir):
     controls = ["<input class='tab-radio' type='radio' name='composite-tabs' id='tab-control-summary' checked>"]
     labels = ["<label class='tab-button' for='tab-control-summary'>Overview</label>"]
     panels = ["<section class='tab-panel reader-content report-content' id='tab-panel-summary'>"
-              + readable_markdown_html(markdown, report_dir) + '</section>']
+              + readable_markdown_html(markdown, report_dir, context={'kind': 'combined', 'design_labels': [entry['tab_label'] for entry in entries]}) + '</section>']
     rules = ["#tab-control-summary:checked ~ #tab-panel-summary{display:block}",
              "#tab-control-summary:checked ~ .tab-list label[for='tab-control-summary']{background:#23624e;color:white}",
              "#tab-control-summary:focus-visible ~ .tab-list label[for='tab-control-summary']{outline:3px solid #23624e;outline-offset:3px}"]
