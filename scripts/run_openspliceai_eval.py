@@ -61,6 +61,9 @@ import argparse
 import json
 import math
 import sys
+import importlib.util
+from functools import lru_cache
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -68,6 +71,23 @@ import numpy as np
 import torch
 from openspliceai.predict import predict as predict_mod  # type: ignore
 from openspliceai.predict import utils as predict_utils  # type: ignore
+
+
+@lru_cache(maxsize=1)
+def _cryptic_calculator():
+    # A separately installed model interpreter must not import the harness's
+    # compiled dependencies or package initializer. This helper needs only
+    # NumPy from this interpreter and is shipped beside the native package.
+    script = Path(__file__).resolve()
+    candidates = [script.parents[1] / "aso_agents" / "cryptic_splice_evidence.py",
+                  script.parents[2] / "cryptic_splice_evidence.py"]
+    path = next((path for path in candidates if path.is_file()), None)
+    if path is None:
+        raise FileNotFoundError("Packaged cryptic-splice evidence helper is missing")
+    spec = importlib.util.spec_from_file_location("modal_cryptic_splice_evidence", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.paired_evidence
 
 
 @dataclass
@@ -78,6 +98,7 @@ class EvalRequest:
     replacement_sequence: str
     sites: List[Dict[str, int]]
     primary: Optional[Dict[str, int]]
+    cryptic_context: Optional[dict] = None
 
 
 def _parse_requests(payload: Dict[str, object]) -> Tuple[str, int, List[EvalRequest]]:
@@ -142,6 +163,7 @@ def _parse_requests(payload: Dict[str, object]) -> Tuple[str, int, List[EvalRequ
                 replacement_sequence=rep_seq,
                 sites=sites,
                 primary=primary,
+                cryptic_context=item.get("cryptic_context") if isinstance(item.get("cryptic_context"),dict) else None,
             )
         )
 
@@ -245,6 +267,9 @@ def evaluate_requests(model_path: str, flanking_size: int, requests: List[EvalRe
                 "length": int(pred_ref.shape[0]),
                 "metrics": primary_metrics,
                 "sites": site_results,
+                **({"cryptic_splice_evidence":_cryptic_calculator()(
+                    pred_ref,pred_del,pred_ref,pred_rep,model="OpenSpliceAI",
+                    first_perturbation="length_preserving_N_mask",**req.cryptic_context)} if req.cryptic_context else {}),
             }
         )
 

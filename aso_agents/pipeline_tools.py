@@ -689,6 +689,7 @@ _TOOL_TRANSITIONS: Dict[str, List[str]] = {
     "submit_clarification_answers": ["apply_clarification_to_goal"],
     "apply_clarification_to_goal": [
         "restart_from_stage",
+        "tool_build_report_payload",
         "tool_execute_design_task",
         "tool_answer_question",
         "tool_analyze_artifact",
@@ -2182,6 +2183,10 @@ def _discover_core_artifacts(run_dir: str) -> Dict[str, Any]:
         "splicing_eval_csv": str(_run_path(run_path, "splice_site_comparisons.csv")),
         "generated_aso_set_json": str(_run_path(run_path, "generated_aso_set.json")),
         "generated_filter_trace_json": str(_run_path(run_path, "generated_filter_trace.json")),
+        "candidate_assessments_json": str(_run_path(run_path, "candidate_assessments.json")),
+        "recommended_shortlist_json": str(_run_path(run_path, "recommended_shortlist.json")),
+        "recommended_shortlist_csv": str(_run_path(run_path, "recommended_shortlist.csv")),
+        "recommended_shortlist_md": str(_run_path(run_path, "recommended_shortlist.md")),
     }
     exists = {key: Path(path).exists() for key, path in artifacts.items()}
     context = _goal_payload_context(str(run_path))
@@ -20077,6 +20082,9 @@ def _resolve_child_clarification_from_inherited_context(
     questions = _normalize_questions_input(child_questions)
     if not questions:
         return []
+    task_id = str(task.get("task_id") or "") if isinstance(task, dict) else ""
+    parent_qa_history = [item for item in parent_qa_history or [] if isinstance(item, dict)
+                         and (not item.get("task_id") or item["task_id"] == task_id)]
     inherited_target_context = _target_context_from_clarification_answers(parent_qa_history)
     if inherited_target_context and all(_clarification_question_mentions_target_context(question) for question in questions):
         return [{"question": question, "answer": inherited_target_context} for question in questions]
@@ -27377,15 +27385,17 @@ def _strategy_route_candidate_paths(root: Path) -> List[Path]:
         for child in strategy_routes_dir.iterdir()
         if child.is_file() and child.name.endswith(".route.csv")
     )
-    csv_route_bases = {child.name[: -len(".csv")] for child in route_csvs}
     route_jsons = sorted(
         child
         for child in strategy_routes_dir.iterdir()
         if child.is_file()
         and child.name.endswith(".route.json")
-        and child.name[: -len(".json")] not in csv_route_bases
     )
-    return [*route_csvs, *route_jsons]
+    # Native JSON preserves full precision, structured chemistry and screening
+    # provenance. CSV is a presentation projection and may omit these fields.
+    json_route_bases = {child.name[: -len(".json")] for child in route_jsons}
+    return sorted([*route_jsons, *(path for path in route_csvs
+        if path.name[: -len(".csv")] not in json_route_bases)])
 
 
 def _route_label_from_token(value: Any) -> str:
@@ -27678,7 +27688,8 @@ def _collect_generated_candidate_rows(
             if len(scored_matches) == 1:
                 scored = scored_matches[0]
                 for field, value in scored.items():
-                    if (field.startswith(("Off_target_", "off_target_"))
+                    if ((field.startswith(("Off_target_", "off_target_", "target_accessibility"))
+                         or field == "cryptic_splice_evidence")
                             and row_copy.get(field) in (None, "")):
                         row_copy[field] = deepcopy(value)
                 row_copy["screening_evidence_source"] = str(scored_path)
@@ -28696,6 +28707,15 @@ def _bind_candidate_physical_site_groups(rows, groups, intervals_for_row):
 
 
 def _sort_generated_candidate_indexed_rows(indexed_rows: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int, Dict[str, Any]]]:
+    native = _native_sort_generated_candidate_indexed_rows(indexed_rows)
+    if not any(row.get("candidate_assessment") for _, row in native):
+        return native
+    from .candidate_assessment import rank_candidates
+    indices = {id(row): index for index, row in native}
+    return [(indices[id(row)], row) for row in rank_candidates([row for _, row in native])]
+
+
+def _native_sort_generated_candidate_indexed_rows(indexed_rows: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int, Dict[str, Any]]]:
     from .splice_recommendations import recommendation_sort_key, report_recommendation_fields
     def scope_tier(row):
         value = _optional_int(row.get("requested_exon_proximity_tier"))
@@ -29711,6 +29731,11 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     else:
         eligible_rows = list(normalized_rows)
     _annotate_requested_exon_proximity(eligible_rows, structured_goal)
+    from .chemical_identity import attest_candidate_rows
+    from .candidate_assessment import assess_candidates, write_assessment_artifacts
+    assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
+    eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
+    eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
     candidate_limit = _structured_candidate_limit(structured_goal)
     candidate_limit_per_site = _structured_candidate_limit_is_per_site(structured_goal)
     candidate_group_scope = _structured_candidate_group_scope(structured_goal)
@@ -29985,6 +30010,7 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     from aso_agents.design_delivery import write_design_panel
     panel_artifacts = write_design_panel(generated_set_payload, structured_goal, generated_set_path.parent)
     chemistry_artifacts = write_native_chemistry_exports(eligible_rows, generated_set_path.parent)
+    assessment_artifacts = write_assessment_artifacts(assessment_pool, eligible_rows, structured_goal, generated_set_path.parent)
     write_layout_manifest(run_path)
     return {
         "generated_aso_set_json": str(generated_set_path),
@@ -29993,6 +30019,7 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
            if candidate_selection.get("eligible_pool_path") else {}),
         **panel_artifacts,
         **chemistry_artifacts,
+        **assessment_artifacts,
         **({"oligoai_evaluation": oligoai_evaluation,
             "oligoai_evaluation_json": oligoai_evaluation["artifact_json"],
             "oligoai_predictions_csv": oligoai_evaluation["artifact_csv"]} if oligoai_evaluation else {}),
@@ -31520,6 +31547,7 @@ _V2_EXCEL_SHEETS: List[Tuple[str, List[str]]] = [
             "off_target_exact_count",
             "off_target_gene_count",
             "splice_eval_status",
+            "cryptic_splice_evidence",
             "splice_eval_skip_reason",
             "delta_inclusion_deletion",
             "delta_inclusion_replacement",
@@ -42603,6 +42631,8 @@ def _derive_next_actions(state: Dict[str, Any]) -> Dict[str, Any]:
         _add_action("tool_apply_gapmer_constraints", "Gapmer uniqueness ready; apply final gapmer constraints.")
     elif status == "gapmer_scoring_ready":
         _add_action("tool_build_report_payload", "Gapmer scoring complete; build report payload.")
+    elif status == "shortlist_size_ready":
+        _add_action("tool_build_report_payload", "Shortlist size received; select from existing computed candidates and build the report.")
     elif status == "report_payload_ready":
         _add_action("tool_write_markdown_report", "Report payload ready; generate markdown report.")
     elif status == "report_markdown_ready":
@@ -51983,6 +52013,8 @@ def _run_splice_eval_on_tiles_json(
         from .splice_recommendations import preserve_splice_site_evidence
         row["splice_site_deltas"] = preserve_splice_site_evidence(
             result_entry, structured_goal.get("isoform_transcripts") or {})
+        if isinstance(result_entry.get("cryptic_splice_evidence"), dict):
+            row["cryptic_splice_evidence"] = deepcopy(result_entry["cryptic_splice_evidence"])
         delta_names: List[str] = []
         delta_del_values: List[str] = []
         delta_rep_values: List[str] = []
@@ -52865,6 +52897,9 @@ def _build_atomic_routing_plan(
             "min_threshold": 0.01,
             "step": 0.04,
             "min_count": min_count,
+            # The final selector uses off-target and chemistry evidence across
+            # the entire route-eligible pool. Do not discard rows at a preview cap.
+            "max_results": 0,
             "default_max_abs_delta": 0.1,
             "output_path": output_path,
         }
@@ -56148,7 +56183,9 @@ def tool_apply_gapmer_constraints(
         gapmer_results=gapmer_results,
         structured_goal=structured_goal,
         runtime=runtime,
-        apply_candidate_limit=True,
+        # Apply requested counts once, after candidate assessment at delivery.
+        # Earlier truncation would hide alternatives from off-target triage.
+        apply_candidate_limit=False,
     )
     if aggregate_constraint.get("error"):
         return _tool_failure(
@@ -56310,6 +56347,18 @@ def tool_build_report_payload(
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
     existing_payload = final_payload.get("report_payload") if isinstance(final_payload.get("report_payload"), dict) else {}
+    from .shortlist_clarification import size_question
+    question = size_question(structured_goal, bool(_collect_generated_candidate_rows(run_dir, structured_goal)))
+    if question:
+        _apply_clarification_request_to_state(state, question)
+        state["pending_questions"] = question["questions"]
+        state["status"] = "needs_user_input"
+        state["phase"] = "awaiting_clarification"
+        _mark_last_tool(state, "tool_build_report_payload", "ok")
+        _save_state(state_path, state, snapshot_reason="shortlist_size_requested")
+        return {"status":"needs_user_input", "needs_user_input":True, "state_path":state_path,
+                "run_dir":run_dir, "questions":question["questions"], "clarification_kind":"shortlist_size",
+                "clarification_request":question}
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
@@ -56498,6 +56547,11 @@ def tool_write_markdown_report(
             panel = panel.replace("# Candidate panel", "## Selected physical panel", 1)
             markdown_text += "\n\n" + panel
     panel_csv = generated_artifacts.get("design_panel_csv") if isinstance(generated_artifacts, dict) else None
+    shortlist_path = generated_artifacts.get("recommended_shortlist_md") if isinstance(generated_artifacts, dict) else None
+    if shortlist_path and Path(shortlist_path).is_file() and not separately_requested_panel:
+        from .report_presentation import read_markdown_fragment
+        markdown_text += "\n\n" + read_markdown_fragment(shortlist_path, run_dir).replace(
+            "# Recommended shortlist", "## Recommended shortlist", 1)
     if panel_csv and not separately_requested_panel:
         from .design_delivery import translation_start_panel_evidence
         start_evidence = translation_start_panel_evidence(structured_goal, panel_csv)
@@ -57331,6 +57385,74 @@ def apply_clarification_to_goal(
     normalized_answers = answers if isinstance(answers, list) else []
     if not pending_apply and not normalized_answers:
         return {"status": "fatal_error", "error": "no_pending_clarification_application"}
+
+    if clarification.get("kind") == "shortlist_size":
+        if not pending_apply and clarification.get("applied_at") and not state.get("pending_questions"):
+            return {"status":"ok", "state_path":state_path, "run_dir":run_dir,
+                    "restart_stage":"report", "scientific_recomputation":False,
+                    "applied_answers":0, "already_applied":True}
+        from .shortlist_clarification import parse_size_answer
+        try:
+            preference = parse_size_answer(normalized_answers)
+        except ValueError as exc:
+            clarification["pending_apply"] = False
+            state["pending_questions"] = [str(exc)]
+            state["status"], state["phase"] = "needs_user_input", "awaiting_clarification"
+            _save_state(state_path, state, snapshot_reason="shortlist_size_unresolved")
+            return {"status":"needs_user_input", "needs_user_input":True,
+                    "state_path":state_path,"questions":state["pending_questions"]}
+        child = _child_task_clarification_request_from_state(
+            state, preferred_task_id=str(state.get("current_task_id") or ""))
+        if child and child.get("kind") == "shortlist_size":
+            if [item.get("question") for item in normalized_answers] != child.get("questions"):
+                return {"status":"fatal_error", "error":"shortlist_answer_child_question_mismatch"}
+            task_id = child["task_id"]
+            artifact = state["task_artifacts"][task_id]
+            artifact.update(child_resume_answers=deepcopy(normalized_answers),
+                child_resume_summary="Apply the requested shortlist size to this design only; reuse computed science.",
+                child_pending_questions=[], child_status="resume_requested")
+            validation = state.setdefault("task_validation", {}).setdefault(task_id, {})
+            validation.update(status="runnable", issues=[], questions=[], reason="")
+            state.setdefault("task_statuses", {}).setdefault(task_id, {}).update(status="pending", updated_at=_timestamp())
+            state["blocked_task_ids"] = [item for item in state.get("blocked_task_ids", []) if item != task_id]
+            state["clarification_queue"] = [item for item in state.get("clarification_queue", []) if item.get("task_id") != task_id]
+            state.setdefault("clarification_qa_history", []).extend({**deepcopy(item),
+                "kind":"shortlist_size", "task_id":task_id, "request_effect":"augment",
+                "ts":_timestamp(), "answer_source":clarification.get("answer_source", "controller")}
+                for item in normalized_answers)
+            clarification.update(pending_apply=False, applied_at=_timestamp(), applied_restart_stage="")
+            state.pop("pending_clarification_restart_stage", None)
+            state.pop("pending_clarification_issue_summary", None)
+            state.update(pending_questions=[], status="request_parsed_ready",
+                phase="clarification_applied_task_resume", last_error=None)
+            _mark_last_tool(state, "apply_clarification_to_goal", "ok")
+            _save_state(state_path, state, snapshot_reason="shortlist_size_child_resume")
+            return {"status":"ok", "state_path":state_path, "run_dir":run_dir,
+                    "restart_stage":"", "scientific_recomputation":False,
+                    "applied_answers":len(normalized_answers), "resumed_child_task_ids":[task_id]}
+        context = _load_goal_context_from_run_dir(run_dir)
+        goal, final = context["structured_goal"], context["final_payload"]
+        goal.update(preference)
+        final.update(preference)
+        final.pop("report_payload", None)
+        for item in normalized_answers:
+            state.setdefault("clarification_qa_history", []).append({
+                **deepcopy(item), "kind":"shortlist_size", "ts":_timestamp(),
+                "request_effect":"augment",
+                "answer_source":clarification.get("answer_source", "controller")})
+        context["payload"]["qa_history"] = deepcopy(state["clarification_qa_history"])
+        _save_goal_payload(run_dir, context["payload"], goal, final)
+        clarification.update(pending_apply=False, applied_at=_timestamp(), applied_restart_stage="report")
+        state.pop("pending_clarification_restart_stage", None)
+        state.pop("pending_clarification_issue_summary", None)
+        state["pending_questions"] = []
+        state["status"], state["phase"] = "shortlist_size_ready", "shortlist_size_ready"
+        state["last_error"] = None
+        _mark_last_tool(state, "apply_clarification_to_goal", "ok")
+        _save_state(state_path, state, snapshot_reason="shortlist_size_applied")
+        return {"status":"ok", "state_path":state_path, "run_dir":run_dir,
+                "restart_stage":"report", "scientific_recomputation":False,
+                "applied_answers":len(normalized_answers)}
 
     scope_payload = {
         "original_request": str(state.get("request") or "").strip(),

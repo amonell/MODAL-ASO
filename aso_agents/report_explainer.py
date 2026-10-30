@@ -132,9 +132,11 @@ def build_report_explainer_context(
                     "warning": goal.get("warning"),
                     "fallback_selection_used": goal.get("fallback_selection_used"),
                 }
-                for goal in (strategy_routing.get("goals") or [])[:8]
+                for goal in (strategy_routing.get("goals") or [])
                 if isinstance(goal, dict)
             ],
+            "listed_goal_count": len(strategy_routing.get("goals") or []),
+            "count_scope": "goal_count is the complete recorded route count; listed goals can be a reporting view and must never replace that total",
             "final_route_order_source": (
                 "strategy_routing.goals"
                 if isinstance(strategy_routing.get("goals"), list) and strategy_routing.get("goals")

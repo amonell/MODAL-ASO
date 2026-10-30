@@ -171,14 +171,14 @@ def test_malformed_cohort_is_not_iterated_as_individual_characters(monkeypatch):
     assert g == previous
 
 
-def test_duplicate_catalog_alias_is_not_arbitrarily_selected(monkeypatch):
+def test_equivalent_catalog_aliases_resolve_to_one_verified_identity(monkeypatch):
     g = goal()
     g["isoform_transcripts"]["duplicate"] = deepcopy(g["isoform_transcripts"]["anchor"])
     previous = deepcopy(g)
     monkeypatch.setattr(native, "_fetch_transcript_structure", structure)
-    with pytest.raises(ValueError, match="catalog_ambiguous"):
-        complete_target_references(native, g)
-    assert g == previous
+    assert complete_target_references(native, g)
+    assert g["declared_target_reference_resolution"][0]["catalog_label"] == "anchor"
+    assert g["isoform_transcripts"]["duplicate"] == previous["isoform_transcripts"]["duplicate"]
 
 
 def test_legacy_symbol_in_gene_id_matches_verified_reference_symbol(monkeypatch):

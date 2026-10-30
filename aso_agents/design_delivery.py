@@ -659,6 +659,7 @@ def write_design_panel(candidate_set, goal, output_directory):
                   "genomic_end_1based": genomic_end,
                   "target_genomic_strand": row.get("strand") if row.get("strand") in {"+", "-"} else None,
                   "native_rank": row.get("selection_rank"),
+                  "candidate_assessment": json.dumps(row.get("candidate_assessment") or {}, sort_keys=True),
                   "ranking_scope": row.get("ranking_scope") or row.get("job_id") or row.get("source_path"),
                   "physical_binding_intervals_bed0": json.dumps(row.get("binding_intervals_bed0_half_open") or [], sort_keys=True),
                   "binding_region_membership": json.dumps(row.get("binding_region_membership") or [], sort_keys=True),
@@ -821,5 +822,7 @@ def write_design_panel(candidate_set, goal, output_directory):
             lines.extend(["", "RNA accessibility was estimated with [ViennaRNA RNAplfold](https://viennarna.readthedocs.io/en/latest/man/RNAplfold.html) on the recorded full transcript sequences. The score is the probability that the entire target binding window is unpaired. Parameters, tool version, sequence hashes and raw matrices are preserved with each measurement. No empirical efficacy cutoff is imposed."])
         else:
             lines.extend(["", f"Target-RNA accessibility was measured for {measured} of {len(rows)} selected rows; missing measurements remain unavailable and cannot support accessibility ranking."])
+    if any(row.get("candidate_assessment") for row in rows):
+        lines.extend(["", "The [recommended shortlist](recommended_shortlist.md) combines the recorded selection constraints and candidate evidence. The [complete assessment pool](candidate_assessments.json) retains per-molecule motif flags, off-target scope, unavailable evidence and chemistry-qualified Tm/ΔG references."])
     markdown_path.write_text("\n".join(lines) + "\n")
     return {"design_panel_csv": str(csv_path), "design_panel_md": str(markdown_path)}

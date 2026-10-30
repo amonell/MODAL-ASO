@@ -13658,6 +13658,16 @@ def _compute_splice_site_plan(
     isoform_transcripts: Dict[str, Dict[str, Any]],
     structured_goal: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    plan, comparisons = _compute_native_splice_site_plan(isoform_objectives, isoform_transcripts, structured_goal)
+    from aso_agents.intron_events import bind_intron_events
+    return bind_intron_events(plan, comparisons, structured_goal or {}, isoform_transcripts)
+
+
+def _compute_native_splice_site_plan(
+    isoform_objectives: List[Dict[str, Any]],
+    isoform_transcripts: Dict[str, Dict[str, Any]],
+    structured_goal: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     if isinstance(structured_goal, dict):
         _supplement_splice_context_from_exon_targets(structured_goal)
         refreshed_objectives = structured_goal.get("splice_isoform_objectives")
@@ -19188,6 +19198,8 @@ def _normalize_snapgene_objective_labels(
 def _snapgene_patient_reference_requested(structured_goal: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(structured_goal, dict):
         return False
+    if structured_goal.get("use_supplied_sequence_variants") is True:
+        return True
     if isinstance(structured_goal.get("patient_variant"), dict):
         return True
     patient_variants = structured_goal.get("patient_variants")
@@ -24594,7 +24606,7 @@ def _annotate_gapmer_off_targets(
     mismatch_goal = dict(structured_goal)
     if not isinstance(mismatch_goal.get("constraints"), dict) and isinstance(parameter_constraints, dict):
         mismatch_goal["constraints"] = parameter_constraints
-    mismatch_budget = _resolve_num_mismatches(mismatch_goal, default=0)
+    mismatch_budget = _resolve_num_mismatches(mismatch_goal, default=2)
     if not tiles_json_path or not os.path.exists(tiles_json_path):
         return None
     try:
@@ -25238,6 +25250,10 @@ def _collect_program_splice_plan_entries(
     splice_plan = structured_goal.get("splice_site_plan")
     if not isinstance(splice_plan, list):
         return []
+    from aso_agents.intron_events import program_intron_sites
+    intron_sites = program_intron_sites(program, structured_goal.get("isoform_transcripts") or {}, splice_plan)
+    if intron_sites is not None:
+        return intron_sites
 
     desired_site_kind = _normalize_design_program_site_kind(program.get("site_kind")) or "both"
     desired_exon = program.get("exon_label")

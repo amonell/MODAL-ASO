@@ -25,6 +25,9 @@ MODAL-ASO connects transcript selection, candidate design, chemistry, off-target
 | **Gapmer design** | RNase H-active candidates, target accessibility and OligoAI predictions. |
 | **Splice modulation** | Splice-switching candidates with predicted junction effects. |
 | **Regulatory blocking** | Steric candidates targeting RNA regulatory interactions. |
+| **Translation inhibition** | Steric candidates at transcript-resolved translation-start regions. |
+| **Intron events and cryptic sites** | Reference-bound intron retention/excision hypotheses and localized cryptic splice targets, with collateral splice-site evidence. |
+| **Recommended shortlist** | Count-aware selection from the eligible pool, with off-target scope, contextual motif flags, and qualified reference thermodynamics. |
 | **ASO evaluation** | Assess supplied sequences, compare candidates and inspect existing results. |
 
 ## Quick start
@@ -48,7 +51,7 @@ Configure DeepSeek through OpenRouter:
 ```bash
 export ASO_LLM_PROVIDER=openrouter
 export OPENROUTER_API_KEY="your-api-key"
-export OPENROUTER_MODEL="deepseek/deepseek-v4-flash"
+export OPENROUTER_MODEL="deepseek/deepseek-v4.1-flash"
 export OPENROUTER_REASONING_EFFORT=max
 ```
 
@@ -59,6 +62,12 @@ modal-aso "Design 10 RNase H-active gapmer ASOs targeting human PCSK9 mRNA."
 ```
 
 Answer any clarification questions in the terminal. Open the printed **`report.html`** path when the run finishes.
+
+If a design request does not specify a panel size, MODAL-ASO asks after scoring how many distinct ASOs to recommend. Answer with an overall count or `all eligible`. Changing that preference resumes selection and reporting from the computed candidates. The full assessed pool remains in `candidate_assessments.json`; `recommended_shortlist.json`, `.csv`, and `.md` explain the selected molecules.
+
+Off-target screening defaults to exact, one- and two-substitution searches; an explicit supported budget takes precedence. Counts retain the reference, mismatch budget and hit unit. Incomplete or capped searches cannot establish a clean screen. Published motif flags retain their chemistry and experimental context: for example, [TGC/TCC findings in LNA 3-8-3 gapmers](https://pmc.ncbi.nlm.nih.gov/articles/PMC4005641/) are not universal MOE toxicity rules. Only explicit user sequence exclusions act as hard motif filters.
+
+Tm and ΔG use the [Sugimoto RNA/DNA nearest-neighbor model](https://doi.org/10.1021/bi00035a029) for an unmodified, perfect-match reference duplex at 1 M sodium (default: 37 °C and 500 nM per strand). Modified molecules, including 2′MOE/PS ASOs, receive a clearly labeled reference proxy; the harness does not invent modified-chemistry affinity parameters. These values are not measured binding affinities or efficacy scores. Predicted splice-site changes likewise do not establish intron retention, absence of cryptic products, or protein outcomes.
 
 <details>
 <summary><strong>Choose another model or reasoning level</strong></summary>

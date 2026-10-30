@@ -51,7 +51,7 @@ def _coerce_non_negative_int(value: Any) -> Optional[int]:
     return number if number >= 0 else None
 
 
-def _resolve_num_mismatches(structured_goal: Dict[str, Any], default: int = 1) -> int:
+def _resolve_num_mismatches(structured_goal: Dict[str, Any], default: int = 2) -> int:
     """Resolve the requested off-target mismatch budget from structured fields."""
     candidates: List[Any] = []
     if isinstance(structured_goal, dict):
@@ -517,7 +517,7 @@ def emit_pipeline_config(structured_goal_json: str, bed_json: str, chemistry_jso
     chemistry_mode = _extract_chemistry_mode(structured_goal, chemistry)
     tile_len = _resolve_tile_length(structured_goal if isinstance(structured_goal, dict) else {}, chemistry, default=20)
     tile_len, length_note = _normalize_gapmer_tile_length(chemistry_mode, tile_len)
-    num_mismatches = _resolve_num_mismatches(structured_goal if isinstance(structured_goal, dict) else {}, default=1)
+    num_mismatches = _resolve_num_mismatches(structured_goal if isinstance(structured_goal, dict) else {}, default=2)
     if isinstance(structured_goal, dict):
         structured_goal["num_mismatches"] = num_mismatches
 

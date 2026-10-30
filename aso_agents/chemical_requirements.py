@@ -28,7 +28,10 @@ chemical_requirement_agent = Agent(
         "any explicitly stated segment counts, including zeros, even if they are incompatible. "
         "Platform is functional gapmer/steric_blocker architecture, not a sugar name. "
         "Equals uses a scalar for sugars/counts/policies, arrays for "
-        "position-specific linkages or attached groups. One_of uses a JSON array of alternative complete values; "
+        "position-specific linkages or attached groups. A uniform full-PS backbone belongs in backbone=PS; "
+        "if additionally recording its bond policy, use linkages=all_PS. Never encode a uniform backbone "
+        "as a one-element positional vector. Positional vectors must contain one entry per actual bond. "
+        "One_of uses a JSON array of alternative complete values; "
         "excludes uses an array of forbidden values. A requirement with no available field uses other, "
         "with its full description as value. Leave unstated fields null; do not erase a requirement because it "
         "sounds inconvenient. Return the supplied JSON schema only."
@@ -54,7 +57,9 @@ FIELD_TYPES = {
     'dna_gap': {'type':'integer', 'minimum':0, 'description':'Count of DNA nucleotides in central gap. No DNA gap means zero.'},
     'wing_3prime': {'type':'integer', 'minimum':0, 'description':'Explicit residue count in the 3prime segment of a wing-gap-wing partition. Do not infer zero or another wing count from an unpartitioned fully modified chain.'},
     'length': {'type':'integer','minimum':1, 'description':'Total number of residues in the whole oligo, independently of whether a wing-gap-wing partition is specified.'},
-    'linkages': {'type':'array', 'items':{'type':'string'}, 'description':'One 5prime-to-3prime PS/PO entry per internucleotide bond.'},
+    'linkages': {'anyOf':[{'type':'string','enum':['all_PS','all_PO']},
+                         {'type':'array','minItems':1,'items':{'type':'string','enum':['PS','PO']}}],
+                 'description':'Uniform all_PS/all_PO policy, or an explicit position-specific vector with one entry per bond. A singleton vector means exactly one bond, never a whole-chain policy.'},
     'cytosine_methylation': {'type':'string','description':'all for all cytosines 5-methylated, none for all unmethylated, or a verbatim different policy. Never confuse OMe with base methylation.'},
     'stereochemistry': {'type':'string','description':'Explicit stereochemical requirement verbatim.'},
     'terminal_modifications': {'type':'array','items':{'type':'string'}},
@@ -105,13 +110,21 @@ def _supported(field, value):
     if field == "cytosine_methylation": return value in ("all", "none", "profile_default")
     if field == "stereochemistry": return value in (None, "not_stereodefined")
     if field in ("terminal_modifications", "conjugates"): return value == []
-    if field == "linkages": return isinstance(value, list) and all(v == "PS" for v in value)
+    if field == "linkages": return value == "all_PS" or (isinstance(value, list) and bool(value) and all(v == "PS" for v in value))
     if field in ("wing_5prime", "wing_3prime", "dna_gap", "length"):
         return type(value) is int and value >= (1 if field == "length" else 0) and (field != "dna_gap" or value == 0 or value >= 6)
     return False
 
 def _constraint_matches(r, actual):
     value = json.loads(r['value_json'])
+    if r['field'] == 'linkages':
+        def match(policy):
+            if isinstance(policy, str) and policy in {'all_PS', 'all_PO'}:
+                return isinstance(actual, list) and bool(actual) and all(bond == policy[4:] for bond in actual)
+            return actual == policy
+        return (match(value) if r['operator'] == 'equals' else
+                any(match(option) for option in value) if r['operator'] == 'one_of' else
+                not any(match(option) for option in value))
     if r['field'] == 'cytosine_methylation' and value == 'profile_default':
         return True
     if r['field'] == 'stereochemistry' and r['operator'] == 'excludes' and value and actual == 'not_stereodefined':
@@ -167,7 +180,7 @@ def requirement_configuration_errors(requirements, recommendation):
         value = json.loads(r["value_json"]); actual = represented.get(r["field"])
         if r["field"] == "cytosine_methylation" and value == "profile_default":
             continue
-        matches = actual == value if r["operator"] == "equals" else actual in value if r["operator"] == "one_of" else actual not in value
+        matches = _constraint_matches(r, actual)
         if r["field"] == "stereochemistry" and r["operator"] == "excludes" and value and actual == "not_stereodefined":
             matches = False  # Undefined PS configuration cannot establish an excluded stereoisomer.
         if r["field"] == "other" or not matches:

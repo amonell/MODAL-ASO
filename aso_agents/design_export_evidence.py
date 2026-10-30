@@ -37,7 +37,7 @@ def design_export_evidence(task_id, producer, artifact_path):
                 rows = payload if isinstance(payload, list) else None
                 collection = "$" if isinstance(payload, list) else None
                 if isinstance(payload, dict):
-                    collections = [(name, payload[name]) for name in ("rows", "asos", "candidates")
+                    collections = [(name, payload[name]) for name in ("rows", "asos", "candidates", "records")
                                    if isinstance(payload.get(name), list)]
                     if len(collections) == 1:
                         collection, rows = collections[0]
@@ -69,6 +69,8 @@ def design_export_evidence(task_id, producer, artifact_path):
                     if isinstance(path, str) and path:
                         add(path, role)
     for name, role in (("structured_goal.json", "resolved_design_contract"),
+                       ("candidate_assessments.json", "complete_candidate_assessment_pool"),
+                       ("recommended_shortlist.json", "recommended_shortlist"),
                        ("generated_aso_set.json", "final_output"),
                        ("splice_site_comparisons.csv", "recorded_splice_predictions"),
                        ("strategy_router_summary.json", "recorded_selection_evidence")):

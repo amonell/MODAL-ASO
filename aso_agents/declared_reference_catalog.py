@@ -4,6 +4,30 @@ from copy import deepcopy
 from .gapmer_selectivity import resolve_catalog_label
 
 
+def _declared_structure(runtime, reference, goal):
+    """Resolve external accessions before using the Ensembl structure endpoint."""
+    physical_id, provenance = reference, {}
+    if runtime._looks_like_refseq_transcript_accession(reference):
+        from .transcript_chooser_agent import resolve_external_transcript_accession, _get_ensembl_json
+        resolution = resolve_external_transcript_accession(reference, species=goal.get("species") or "human") or {}
+        physical_id = resolution.get("transcript_id")
+        if resolution.get("ambiguous") or not physical_id:
+            raise ValueError("declared_target_reference_external_mapping_unresolved: " + reference)
+        exact = (resolution.get("requested_accession") == reference
+                 and resolution.get("method") == "local_gencode_refseq_xref")
+        if not exact:
+            _, records = _get_ensembl_json(f"/xrefs/id/{physical_id}?external_db=RefSeq_mRNA")
+            exact = any(reference == str(record.get("display_id") or "")
+                        for record in records if isinstance(record, dict)) if isinstance(records, list) else False
+        if not exact:
+            raise ValueError("declared_target_reference_exact_accession_unverified: " + reference)
+        provenance = {**resolution, "requested_accession":reference, "exact_accession_verified":True}
+    structure = runtime._fetch_transcript_structure(physical_id)
+    if not isinstance(structure, dict) or not runtime._source_identifier_matches(structure, physical_id):
+        raise ValueError("declared_target_reference_identity_unresolved: " + reference)
+    return structure, physical_id, provenance
+
+
 def _check_context(runtime, record, goal, reference):
     species = runtime.normalize_species(goal.get("species"))
     actual_species = record.get("species")
@@ -37,7 +61,8 @@ def complete_target_references(runtime, goal, final_payload=None):
         cohort = program.get("transcript_ids") or []
         if not isinstance(cohort, list):
             raise ValueError("declared_target_reference_cohort_must_be_list")
-        values = [program.get("transcript_id"), *cohort]
+        values = [program.get("transcript_id"), *cohort,
+                  (program.get("splice_event") or {}).get("reference_transcript_id")]
         for value in values:
             if isinstance(value, str) and value.strip():
                 identifiers = requests.setdefault(value.strip(), [])
@@ -74,9 +99,7 @@ def complete_target_references(runtime, goal, final_payload=None):
             continue
         label = resolve_catalog_label(reference, catalog, catalog)
         if label is None:
-            structure = runtime._fetch_transcript_structure(reference)
-            if not isinstance(structure, dict) or not runtime._source_identifier_matches(structure, reference):
-                raise ValueError("declared_target_reference_identity_unresolved: " + reference)
+            structure, physical_id, provenance = _declared_structure(runtime, reference, goal)
             _check_context(runtime, structure, goal, reference)
             exons = structure.get("exons_tx") or []
             if not exons or not structure.get("seq_region_name") or str(structure.get("strand")) not in {"1", "-1", "+", "-"}:
@@ -90,8 +113,9 @@ def complete_target_references(runtime, goal, final_payload=None):
                 raise ValueError("declared_target_reference_catalog_conflict: " + reference)
             structure = {**structure, "strand": -1 if str(structure["strand"]) in {"-", "-1"} else 1}
             catalog[reference] = {
-                "transcript_id": reference,
-                "metadata": runtime.resolved_transcript_metadata(structure, {}),
+                "transcript_id": physical_id,
+                "metadata": {**runtime.resolved_transcript_metadata(structure, {}),
+                    **({"reference_accession_resolution":provenance} if provenance else {})},
                 "sites": runtime._extract_splice_sites(structure),
                 "exons_tx": deepcopy(exons),
                 "chrom": structure["seq_region_name"],

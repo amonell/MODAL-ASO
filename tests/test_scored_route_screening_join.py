@@ -44,3 +44,17 @@ def test_different_placement_or_conflicting_scored_rows_are_not_joined(tmp_path)
     assert 'Off_target_exact_count' not in _collect_generated_candidate_rows(str(tmp_path))[0]
     _write_scored(tmp_path, [_scored(exact=0), _scored(exact=2)])
     assert 'Off_target_exact_count' not in _collect_generated_candidate_rows(str(tmp_path))[0]
+
+
+def test_native_json_precedes_lossy_csv_projection(tmp_path):
+    _write_route(tmp_path)
+    path = tmp_path/'artifacts/design/strategy_routes/rank01_donor_500.route.json'
+    value = {**_scored(), 'selected_delta_deletion':0.123456789,
+             'off_target_count_status':'complete_within_declared_scope',
+             'cryptic_splice_evidence':{'model':'test','deletion':{'status':'scanned_within_declared_scope'}}}
+    path.write_text(json.dumps({'rows':[value]}))
+    rows = _collect_generated_candidate_rows(str(tmp_path))
+    assert len(rows) == 1
+    assert rows[0]['selected_delta_deletion'] == 0.123456789
+    assert rows[0]['cryptic_splice_evidence'] == value['cryptic_splice_evidence']
+    assert rows[0]['_source_path'] == str(path)

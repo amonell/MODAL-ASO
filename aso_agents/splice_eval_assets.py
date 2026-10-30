@@ -73,7 +73,7 @@ def ensure_splicetransformer_assets(repo_root: Path | None = None,
         destination.parent.mkdir(parents=True, exist_ok=True)
         with file_lock(asset_lock(destination)):
             if destination.exists() or destination.is_symlink():
-                if destination.resolve() != genome.resolve():
+                if not destination.samefile(genome):
                     raise ValueError(f"SpliceTransformer uses a different genome: {destination}")
             else:
                 destination.symlink_to(genome.resolve())

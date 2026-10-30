@@ -19,6 +19,9 @@ def _aliases(label, entry):
     aliases = {str(value).strip().casefold() for value in
             (label, entry.get('transcript_id'), entry.get('id'), entry.get('versioned_id'),
              meta.get('id'), meta.get('versioned_id')) if value}
+    resolution = meta.get('reference_accession_resolution') or {}
+    if resolution.get('exact_accession_verified') is True and resolution.get('requested_accession'):
+        aliases.add(str(resolution['requested_accession']).casefold())
     for record in (entry, meta):
         version = record.get('version')
         if isinstance(version, bool) or not str(version or '').isdecimal():
@@ -55,13 +58,15 @@ def _compatible_identity(left, right):
 
 def _reference_context_compatible(left, right):
     from .species_config import normalize_species
-    for field in ('species', 'assembly_name'):
+    for field in ('species', 'assembly_name', 'gene_id'):
         groups = []
         for entry in (left, right):
             values = {str(value) for value in
                       (entry.get(field), (entry.get('metadata') or {}).get(field)) if value}
             if field == 'species':
                 values = {normalize_species(value) for value in values}
+            elif field == 'gene_id':
+                values = {value.split('.',1)[0] for value in values}
             groups.append(values)
         if any(len(values) > 1 for values in groups) or (all(groups) and groups[0] != groups[1]):
             return False
@@ -93,14 +98,26 @@ def resolve_catalog_label(label, catalog, resolved):
         return None
     sources = [(key, entry) for key, entry in resolved.items()
                if identity in _aliases(key, entry)]
-    if len(sources) > 1 or any(not _compatible_identity(_aliases(key, entry), set())
+    def equivalent(records):
+        if len(records) < 2:
+            return True
+        first_key, first = records[0]
+        structure = _complete_structure(first)
+        return bool(structure) and all(
+            _complete_structure(entry) == structure
+            and _compatible_identity(_aliases(first_key, first), _aliases(key, entry))
+            and _reference_context_compatible(first, entry)
+            for key, entry in records[1:])
+    if not equivalent(sources) or any(not _compatible_identity(_aliases(key, entry), set())
                                for key, entry in sources):
         return None
     direct = [(key, entry) for key, entry in catalog.items() if identity in _aliases(key, entry)]
     if direct:
-        if len(direct) != 1:
+        if not equivalent(direct):
             return None
-        key, entry = direct[0]
+        # Duplicate labels for the same attested transcript are aliases, not
+        # biological ambiguity. Use one stable identity for all role joins.
+        key, entry = sorted(direct, key=lambda pair: str(pair[0]))[0]
         aliases = _aliases(key, entry)
         if not _compatible_identity(aliases, set()):
             return None

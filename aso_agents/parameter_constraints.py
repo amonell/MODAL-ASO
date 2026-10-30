@@ -64,6 +64,11 @@ _GC_EXACT_PATTERN = re.compile(
     r"(?:exactly|equal(?:s)?|=)\s*(?P<value>\d+(?:\.\d+)?\s*%?)",
     re.IGNORECASE,
 )
+_GC_NAMED_BOUND_PATTERN = re.compile(
+    r"\b(?:(?P<before>min(?:imum)?|max(?:imum)?)[_\s]+gc(?:\s+content)?|"
+    r"gc(?:\s+content)?[_\s]+(?P<after>min(?:imum)?|max(?:imum)?))\s*[:=]\s*"
+    r"(?P<value>\d+(?:\.\d+)?\s*%?)", re.IGNORECASE,
+)
 _HOMOPOLYMER_EXCLUDE_PATTERN = re.compile(
     r"(?:exclude|avoid|disallow|filter\s+out|remove)\s+"
     r"(?:sequences?\s+with\s+)?"
@@ -925,6 +930,14 @@ def _extract_gc_from_texts(texts: List[str]) -> Tuple[Optional[float], Optional[
     for text in texts:
         if not isinstance(text, str) or not text.strip():
             continue
+        bounds = {}
+        for bound in _GC_NAMED_BOUND_PATTERN.finditer(text):
+            side = (bound.group("before") or bound.group("after"))[:3].lower()
+            bounds[side] = _coerce_fraction(bound.group("value"))
+        if bounds:
+            # "min GC = 0" is a lower bound, not the exact-GC equality
+            # matched by the legacy unqualified "GC = value" pattern.
+            return bounds.get("min"), bounds.get("max"), False, False
         match = _GC_GT_LT_PATTERN.search(text)
         if match:
             min_val = _coerce_fraction(match.group("min"))

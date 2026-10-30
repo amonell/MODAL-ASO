@@ -30,6 +30,12 @@ def test_pinned_model_reuses_reference_without_copying_it(tmp_path, monkeypatch)
     target = assets.required_splicetransformer_files()[-1]
     assert target.is_symlink() and target.resolve() == genome.resolve()
     assert all(value == assets.SPLICETRANSFORMER_REVISION for value in calls)
+    # Imported bundles can preserve the same genome inode through hard links.
+    # Different path spellings must not be mistaken for different references.
+    target.unlink()
+    target.hardlink_to(genome)
+    assert assets.ensure_splicetransformer_assets()["status"] == "ok"
+    assert target.samefile(genome)
 
 
 def test_model_install_rejects_a_conflicting_genome(tmp_path, monkeypatch):

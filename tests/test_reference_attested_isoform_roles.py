@@ -23,15 +23,13 @@ def test_version_is_attested_by_reference_record_and_does_not_change_catalog_key
     assert catalog == before
 
 
-@pytest.mark.parametrize('fault', ['duplicate', 'wrong_version', 'conflicting_metadata',
+@pytest.mark.parametrize('fault', ['wrong_version', 'conflicting_metadata',
                                   'conflicting_key', 'source_version', 'assembly', 'species', 'structure'])
 def test_ambiguity_and_conflicting_reference_evidence_remain_unresolved(fault):
     catalog = {'TX17': entry()}
     resolved = {'requested': entry()}
     query = 'TX17.4'
-    if fault == 'duplicate':
-        catalog['duplicate'] = entry()
-    elif fault == 'wrong_version':
+    if fault == 'wrong_version':
         catalog['TX17']['metadata']['version'] = 5
     elif fault == 'conflicting_metadata':
         catalog['TX17']['metadata']['versioned_id'] = 'TX17.5'
@@ -46,6 +44,14 @@ def test_ambiguity_and_conflicting_reference_evidence_remain_unresolved(fault):
     else:
         resolved['requested']['exons_tx'][0]['end'] = 201
     assert resolve_catalog_label(query, catalog, resolved) is None
+
+
+def test_identical_attested_aliases_coalesce_but_different_genes_do_not():
+    catalog = {'TX17':entry(), 'duplicate':entry()}
+    assert resolve_catalog_label('TX17.4',catalog,{'requested':entry()}) == 'TX17'
+    catalog['TX17']['metadata']['gene_id'] = 'GENE1.2'
+    catalog['duplicate']['metadata']['gene_id'] = 'GENE2.3'
+    assert resolve_catalog_label('TX17.4',catalog,{}) is None
 
 
 def test_named_alias_joins_only_complete_same_reference_structure_and_attested_version():

@@ -13,6 +13,7 @@ from pathlib import Path
 from Bio.Seq import Seq
 from pyfaidx import Fasta  # type: ignore
 from .species_config import get_species_config, normalize_species, try_normalize_species
+from .cryptic_splice_evidence import annotation_sites, paired_evidence
 
 # Optional progress callback (set by UI/orchestrator)
 PROGRESS_CALLBACK: Optional[Callable[[str], None]] = None
@@ -548,6 +549,12 @@ def _evaluate_with_openspliceai(
                 "reference_sequence": roi_seq_oriented,
                 "deletion_sequence": del_seq_oriented,
                 "replacement_sequence": rep_seq_oriented,
+                "cryptic_context": {
+                    "chrom":chrom,"left":roi_left_row,"right":roi_right_row,"strand":strand_char,
+                    "annotated":annotation_sites(ex_g,strand_char,normalized_sites),
+                    "annotation_radius_nt":0,
+                    "excluded_intervals":[[offset,offset+length-1]],
+                },
                 "sites": [
                     {
                         "key": entry["key"],
@@ -652,6 +659,8 @@ def _evaluate_with_openspliceai(
 
         result_entry = {
             "name": ctx["name"],
+            "cryptic_splice_evidence":tile_result.get("cryptic_splice_evidence") or {
+                "status":"unavailable","reason":"backend_did_not_return_unannotated_gain_evidence"},
             "chrom": ctx["chrom"],
             "start": ctx["start"],
             "end": ctx["end"],
@@ -1738,6 +1747,12 @@ def evaluate_splice_shifts_on_tiles(
             "delta_inclusion_deletion": delta_del,
             "delta_inclusion_replacement": delta_rep,
         }
+        result_entry["cryptic_splice_evidence"] = paired_evidence(
+            pred_ref_del,pred_alt_del,pred_ref_rep,pred_alt_rep,
+            model="SpliceTransformer",first_perturbation="span_deletion_with_output_zero_padding",
+            chrom=chrom,left=roi_left_row,right=roi_right_row,strand=strand_char_tx,
+            annotated=annotation_sites(ex_g,strand_char_tx,normalized_sites),
+            annotation_radius_nt=0,excluded_intervals=[(offset,offset+length-1)])
         if site_deltas:
             result_entry["splice_site_deltas"] = site_deltas
             result_entry["delta_inclusion_deletion_mean"] = _mean([sd.get("delta_inclusion_deletion") for sd in site_deltas])
