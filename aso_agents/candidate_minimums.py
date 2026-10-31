@@ -95,11 +95,13 @@ def requested_region_minimums(goal):
         constraints += (materialized.get("by_program") or {}).get(job.get("program_id")) or []
         positive_sites = [constraint for constraint in constraints
                           if isinstance(constraint, dict)
-                          and constraint.get("source_type") == "explicit_rows"
+                          and constraint.get("source_type") in {"explicit_rows", "splice_relative_window"}
                           and constraint.get("operator") != "exclude"]
         if positive_sites:
-            # Each source interval is one site, regardless of repeated display
-            # names or the number of genomic blocks in its exon projection.
+            # Each explicitly nominated interval or junction-relative window
+            # is one site. Union determines eligibility, not permission to
+            # satisfy every requested per-site minimum at just one boundary.
+            # Exon projection blocks and repeated labels do not add sites.
             filters = metadata.get("tile_constraint_filters") or []
             for constraint in positive_sites:
                 sites = genomic_sources(goal, constraint)

@@ -29,13 +29,13 @@ def bind_candidate_program_groups(rows, goal):
     bound = []
     for row in rows:
         identity = None
-        for key in ("program_id", "job_id", "job_label", "target_region_label"):
+        for key in ("program_id", "job_id", "design_job_id", "job_label", "target_region_label"):
             matches = aliases.get(str(row.get(key) or ""), set())
             if len(matches) == 1:
                 identity = next(iter(matches))
                 break
         if identity is None and not any(row.get(key) for key in
-                ("program_id", "job_id", "job_label", "target_region_label")):
+                ("program_id", "job_id", "design_job_id", "job_label", "target_region_label")):
             # Aggregate single-producer exports can omit job annotations. The
             # recorded source modality still identifies the only possible
             # producer. Never guess across multiple producers or replace a

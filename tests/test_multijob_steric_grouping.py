@@ -1,17 +1,19 @@
 """Scored steric panels retain the job that produced each molecule."""
 
 import json
+import pytest
 
 from aso_agents import pipeline_tools
 from aso_agents.candidate_presentation import bind_candidate_program_groups
 
 
-def test_per_site_selection_uses_recorded_scored_job_provenance(tmp_path, monkeypatch):
+@pytest.mark.parametrize('job_count', [1, 3])
+def test_per_site_selection_uses_recorded_scored_job_provenance(tmp_path, monkeypatch, job_count):
     monkeypatch.setattr(pipeline_tools, "_canonical_gapmer_candidate_path", lambda _: None)
     monkeypatch.setattr(pipeline_tools, "_strategy_route_candidate_paths", lambda _: [])
     jobs = []
     by_job = {}
-    for number in range(3):
+    for number in range(job_count):
         job_id = f"job_{number}"
         program_id = f"program_{number}"
         path = tmp_path / "artifacts" / "design" / "steric_jobs" / job_id / "steric_scored_uniqueness.json"
@@ -35,7 +37,7 @@ def test_per_site_selection_uses_recorded_scored_job_provenance(tmp_path, monkey
         ],
     }
     collected = pipeline_tools._collect_generated_candidate_rows(str(tmp_path), structured_goal=goal)
-    assert len(collected) == 9
+    assert len(collected) == 3 * job_count
     assert {row["program_id"] for row in collected} == {job["program_id"] for job in jobs}
     assert all(row["job_id"] in by_job and row["Times_mapped"] == 1 for row in collected)
 
@@ -44,7 +46,7 @@ def test_per_site_selection_uses_recorded_scored_job_provenance(tmp_path, monkey
         grouped, candidate_limit=2, per_site=True,
         expected_group_labels=[job["label"] for job in jobs],
     )
-    assert len(selected) == 6
+    assert len(selected) == 2 * job_count
     assert {row["candidate_group_label"] for row in selected} == {
         job["label"] for job in jobs
     }

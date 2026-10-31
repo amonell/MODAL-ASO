@@ -112,6 +112,24 @@ def test_program_gate_filters_aggregate_pool_without_changing_source_rows():
     assert rows == original
 
 
+def test_union_of_nominated_junction_windows_requires_each_sites_minimum():
+    goal = {'min_asos_per_site': 1, 'steric_design_jobs': [
+        {'job_id': 'one_job', 'program_id': 'one_program',
+         'region_rows': [['chrFixture', 100, 140], ['chrFixture', 300, 340]],
+         'selection_meta': {'region_constraints': {'constraint_count': 2, 'output_space': 'genomic'}}}],
+        'materialized_region_constraints': {'by_program': {'one_program': [
+            {'constraint_id': name, 'label': 'same label', 'source_type': 'splice_relative_window',
+             'coordinate_space': 'genomic', 'operator': operator,
+             'materialized_rows': [['chrFixture', start, start+40]],
+             'aso_overlap_requirement': 'any_overlap'}
+            for name, start, operator in [('boundary_a', 100, 'include'), ('boundary_b', 300, 'union')]]}}}
+    groups = requested_region_minimums(goal)
+    assert len(groups) == 2 and all(group['minimum'] == 1 for group in groups)
+    rows = [{'intervals': [['chrFixture', start, start+18]]} for start in [110, 310]]
+    assert [[belongs_to_region(row, group, intervals) for group in groups] for row in rows] == [
+        [True, False], [False, True]]
+
+
 def test_program_gate_keeps_separate_rules_and_does_not_infer_identity_from_location():
     goal, source = fixture()
     other = {'constraint_id': 'other_region', 'materialized_rows': [['chrFixture', 3000, 3050]],

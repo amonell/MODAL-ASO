@@ -47,6 +47,37 @@ def row_for(binding, target='ATGCAA', start=3):
             'Genomic_segments': json.dumps(binding.segments('a', start, len(target)))}
 
 
+@pytest.mark.parametrize('normalize', [False, True])
+def test_legacy_design_job_identity_survives_final_region_gate(monkeypatch, normalize):
+    goal, program, _ = setup(monkeypatch)
+    goal['steric_design_jobs'] = [{'job_id': 'persisted_job', 'program_id': 'panel'}]
+    binding, _ = context(goal, program)
+    row = row_for(binding)
+    row.pop('program_id')
+    row.update(design_job_id='persisted_job', target_region_label='A constraint description, not a program ID')
+    original = deepcopy(row)
+    presented = _normalized_generated_candidate_row(row) if normalize else row
+    kept, receipt = filter_final_rows_by_regions([presented], goal, native._tile_row_overlap_intervals)
+    assert receipt['status'] == 'complete'
+    assert len(kept) == 1 and kept[0]['program_id'] == 'panel'
+    assert kept[0]['mature_rna_binding']['required_transcript_ids'] == ['TX_A.2', 'TX_B.7']
+    assert row == original
+
+
+@pytest.mark.parametrize('normalize', [False, True])
+def test_unrecognized_design_job_cannot_use_single_producer_fallback(monkeypatch, normalize):
+    goal, program, _ = setup(monkeypatch)
+    goal['steric_design_jobs'] = [{'job_id': 'persisted_job', 'program_id': 'panel'}]
+    binding, _ = context(goal, program)
+    row = row_for(binding)
+    row.pop('program_id')
+    row['design_job_id'] = 'an_unknown_job'
+    presented = _normalized_generated_candidate_row(row) if normalize else row
+    kept, receipt = filter_final_rows_by_regions([presented], goal, native._tile_row_overlap_intervals)
+    assert not kept
+    assert receipt['unresolved_rows'] == [{'row_index': 0, 'reason': 'program_scope_unresolved'}]
+
+
 @pytest.mark.parametrize('strand', ['+', '-'])
 def test_shared_target_uses_each_transcripts_own_mature_and_genomic_coordinates(monkeypatch, strand):
     goal, program, _ = setup(monkeypatch, strand=strand)

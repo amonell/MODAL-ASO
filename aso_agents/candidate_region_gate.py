@@ -60,7 +60,7 @@ def filter_final_rows_by_regions(rows, goal, intervals_for_row):
     for index, row in enumerate(bound):
         program_id = str(row.get('program_id') or '')
         if needs_program and not program_id and len(programs) == 1 and not any(
-                row.get(key) for key in ('program_id', 'job_id', 'job_label', 'target_region_label')):
+                row.get(key) for key in ('program_id', 'job_id', 'design_job_id', 'job_label', 'target_region_label')):
             only_id, only = next(iter(programs.items()))
             if not row.get('source_modality') or only.get('modality') == row['source_modality']:
                 program_id = only_id

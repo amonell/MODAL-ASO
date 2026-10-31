@@ -81,6 +81,41 @@ def test_alias_binding_preserves_catalog_population_and_version_conflicts():
         bind_uniqueness_context(context, catalog, refs)
 
 
+@pytest.mark.parametrize('receipt_collection', ['reference_accession_resolution', 'reference_accession_resolutions'])
+def test_verified_external_alias_does_not_require_duplicate_catalog_accession(receipt_collection):
+    refs = references()
+    refs['short']['metadata'] = {'versioned_id': 'TX1.2'}
+    catalog = {entry['transcript_id']: deepcopy(entry) for entry in refs.values()}
+    receipt = {'requested_accession': 'NM_000001.3', 'transcript_id': 'TX1',
+               'exact_accession_verified': True}
+    refs['short']['metadata'][receipt_collection] = [receipt] if receipt_collection.endswith('resolutions') else receipt
+    before = deepcopy(catalog)
+    assert resolve_catalog_label('short', catalog, refs) == 'TX1'
+    assert resolve_catalog_label('NM_000001.3', catalog, refs) == 'TX1'
+    assert resolve_catalog_label('NM_000001.4', catalog, refs) is None
+    assert catalog == before
+
+
+@pytest.mark.parametrize('fault', ['physical_version_conflict', 'physical_version_missing',
+                                  'structure_conflict', 'external_version_conflict'])
+def test_external_alias_cannot_erase_physical_or_explicit_version_conflicts(fault):
+    refs = references()
+    refs['short']['metadata'] = {'versioned_id': 'TX1.2', 'reference_accession_resolution': {
+        'requested_accession': 'NM_000001.3', 'transcript_id': 'TX1', 'exact_accession_verified': True}}
+    catalog = {'TX1': deepcopy(refs['short'])}
+    catalog['TX1']['metadata'].pop('reference_accession_resolution')
+    if fault == 'physical_version_conflict':
+        catalog['TX1']['metadata']['versioned_id'] = 'TX1.1'
+    elif fault == 'physical_version_missing':
+        catalog['TX1']['metadata'].pop('versioned_id')
+    elif fault == 'structure_conflict':
+        catalog['TX1']['exons_tx'][0]['end'] += 1
+    else:
+        catalog['TX1']['metadata']['reference_accession_resolution'] = {
+            'requested_accession': 'NM_000001.4', 'transcript_id': 'TX1', 'exact_accession_verified': True}
+    assert resolve_catalog_label('short', catalog, refs) is None
+
+
 def row(target, chemistry):
     antisense = target.translate(str.maketrans('ACGT', 'TGCA'))[::-1]
     return {'Sequence': target, 'Synthesis': antisense,

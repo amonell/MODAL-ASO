@@ -14,13 +14,14 @@ from aso_chemistry import encode_idt_oligo, gapmer_architecture
 from .preservation_context import preserved_catalog_labels, preservation_resolution_objectives
 
 
-def _aliases(label, entry):
+def _aliases(label, entry, *, include_accessions=True):
     meta = entry.get('metadata') or {}
     aliases = {str(value).strip().casefold() for value in
             (label, entry.get('transcript_id'), entry.get('id'), entry.get('versioned_id'),
              meta.get('id'), meta.get('versioned_id')) if value}
-    receipts = [meta.get('reference_accession_resolution') or {},
-                *(meta.get('reference_accession_resolutions') or [])]
+    receipts = ([meta.get('reference_accession_resolution') or {},
+                 *(meta.get('reference_accession_resolutions') or [])]
+                if include_accessions else [])
     for resolution in receipts:
         if (isinstance(resolution, dict) and resolution.get('exact_accession_verified') is True
                 and resolution.get('requested_accession')):
@@ -135,13 +136,18 @@ def resolve_catalog_label(label, catalog, resolved):
     matches = set()
     for key, entry in sources:
         source_ids = _aliases('', entry)
+        # An attested external accession is an alias of this physical record,
+        # not another sequence version that every gene-wide catalog must list.
+        # The physical record's version still requires catalog attestation;
+        # any explicitly shared alias-version conflict remains disqualifying.
+        physical_versions = _versions(_aliases('', entry, include_accessions=False))
         for target, other in catalog.items():
             other_ids = _aliases('', other)
             structure = _complete_structure(entry)
             if (source_ids & other_ids and structure and structure == _complete_structure(other)
                     and _compatible_identity(source_ids, _aliases(target, other))
                     and _reference_context_compatible(entry, other)
-                    and all(base in _versions(other_ids) for base in _versions(source_ids))):
+                    and all(base in _versions(other_ids) for base in physical_versions)):
                 matches.add(target)
     return next(iter(matches)) if len(matches) == 1 else None
 

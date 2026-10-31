@@ -45,6 +45,14 @@ Import verifies the assembly and annotation, then links files into the managed d
 
 The source directory can be read-only. It must remain accessible while the links are in use. Keep the managed data directory writable for indexes, locks and installation records.
 
+## Supplied isoform files
+
+Name the requested isoform and provide its SnapGene or GenBank path in the request. Quote paths containing spaces. Each requested isoform outcome retains its own file binding; a file listed as an attachment alone does not replace that biological objective. Structured requests use `artifact_ref_path` on the corresponding isoform objective and primary-outcome target.
+
+Whether the supplied sequence also defines a patient genetic background is a separate choice. The harness asks for clarification when that role is unresolved. Missing files or unresolved annotations stop reference preparation instead of silently removing the requested outcome.
+
+Verified external accessions retain their mapping provenance when joined to the physical sequence catalog. The resolved transcript version and exon structure must agree; matching a stable accession alone does not erase a version conflict.
+
 ## Check stored files
 
 ```bash

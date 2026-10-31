@@ -18936,9 +18936,9 @@ def _make_steric_bed_rows(goal: Dict[str, Any]) -> List[List[Any]]:
     return rows
 
 
-SNAPGENE_EXTENSIONS = (".dna", ".gb", ".gbk", ".snapgene")
+SNAPGENE_EXTENSIONS = (".dna", ".gb", ".gbk", ".genbank", ".snapgene")
 SNAPGENE_PATH_PATTERN = re.compile(
-    r"([A-Za-z]:)?[^\s\"']+\.(?:dna|gb|gbk|snapgene)",
+    r"([A-Za-z]:)?[^\s\"']+\.(?:dna|gbk|genbank|gb|snapgene)",
     re.IGNORECASE,
 )
 
@@ -18972,7 +18972,7 @@ def _resolve_snapgene_path(path_str: str) -> Optional[Path]:
     candidate = Path(path_str).expanduser()
     if not candidate.is_absolute():
         candidate = Path.cwd().joinpath(candidate).resolve()
-    if candidate.exists():
+    if candidate.is_file():
         return candidate
     return None
 
@@ -18983,9 +18983,14 @@ def _detect_snapgene_paths(*texts: str) -> List[str]:
     for text in texts:
         if not text:
             continue
-        for match in SNAPGENE_PATH_PATTERN.finditer(text):
-            candidate = match.group(0)
-            resolved = _resolve_snapgene_path(candidate)
+        quoted = [match[2] for match in re.finditer(
+            r"([\"'])(.+?\.(?:dna|gbk|genbank|gb|snapgene))\1", text, re.IGNORECASE)]
+        candidates = quoted + [match.group(0) for match in SNAPGENE_PATH_PATTERN.finditer(text)]
+        for candidate in candidates:
+            # Try the literal name first: punctuation can be part of a filename.
+            # Parentheses/brackets around a prose path are not part of that path.
+            resolved = (_resolve_snapgene_path(candidate)
+                        or _resolve_snapgene_path(candidate.lstrip("([{<")))
             if resolved:
                 path_str = str(resolved)
                 if path_str not in seen:
@@ -19078,7 +19083,8 @@ def _objective_uses_snapgene(objective: Dict[str, Any], structured_goal: Dict[st
         return True
     if label.startswith("snapgene:") or label.startswith("snap gene:"):
         return True
-    if objective.get("snapgene_path") or objective.get("source") == "snapgene":
+    if (objective.get("snapgene_path") or objective.get("artifact_ref_path")
+            or objective.get("source") == "snapgene"):
         return True
     preseeded = structured_goal.get("preseeded_isoform_transcripts") or {}
     entry = preseeded.get(objective.get("isoform_label"))
@@ -19341,6 +19347,9 @@ def _prepare_snapgene_objectives(
     if not isinstance(structured_goal, dict):
         return {}
 
+    from aso_agents.isoform_outcome_contract import complete_isoform_outcomes
+    complete_isoform_outcomes(structured_goal)
+
     raw_objectives = structured_goal.get("splice_isoform_objectives")
     isoform_objectives = raw_objectives if isinstance(raw_objectives, list) else []
     detected_texts: List[str] = []
@@ -19352,11 +19361,25 @@ def _prepare_snapgene_objectives(
     for objective in isoform_objectives:
         if not isinstance(objective, dict):
             continue
-        for key in ("isoform_label", "snapgene_path", "rationale"):
+        for key in ("isoform_label", "snapgene_path", "artifact_ref_path", "rationale"):
             text = str(objective.get(key) or "").strip()
             if text:
                 detected_texts.append(text)
     snapgene_paths = _detect_snapgene_paths(*detected_texts)
+    # Typed paths survive spaces and punctuation, and cannot silently disappear
+    # because a prose path detector fails. Format does not assign biological role.
+    declared_paths = [ref.get("path") for ref in structured_goal.get("artifact_refs") or []
+                      if isinstance(ref, dict)]
+    declared_paths += [obj.get("artifact_ref_path") for obj in isoform_objectives
+                       if isinstance(obj, dict)]
+    for path in declared_paths:
+        if not isinstance(path, str) or Path(path).suffix.lower() not in SNAPGENE_EXTENSIONS:
+            continue
+        resolved = _resolve_snapgene_path(path)
+        if resolved is None:
+            raise ValueError("supplied_isoform_reference_unavailable: " + path)
+        if str(resolved) not in snapgene_paths:
+            snapgene_paths.append(str(resolved))
     if not snapgene_paths:
         return {}
 
@@ -19368,6 +19391,16 @@ def _prepare_snapgene_objectives(
                 snapgene_paths.insert(0, resolved_text)
 
     path_label_map = _normalize_snapgene_objective_labels(structured_goal, snapgene_paths)
+    for objective in isoform_objectives:
+        if not isinstance(objective, dict) or not objective.get("artifact_ref_path"):
+            continue
+        resolved = _resolve_snapgene_path(objective["artifact_ref_path"])
+        label = str(objective.get("isoform_label") or "").strip()
+        if resolved and label:
+            path = str(resolved)
+            if path in path_label_map and path_label_map[path] != label:
+                raise ValueError("supplied_isoform_reference_ambiguous: " + path)
+            path_label_map[path] = label
     unresolved_paths = [path for path in snapgene_paths if path not in path_label_map]
     if unresolved_paths and isoform_objectives:
         llm_mapping = _select_snapgene_isoform_labels_with_llm(
@@ -19385,6 +19418,16 @@ def _prepare_snapgene_objectives(
     for path, label in path_label_map.items():
         if isinstance(label, str) and label.strip() and label not in reverse_label_map:
             reverse_label_map[label] = path
+
+    for target in structured_goal.get("evaluation_targets") or []:
+        if not isinstance(target, dict):
+            continue
+        path = target.get("artifact_ref_path") or target.get("isoform_label")
+        if not isinstance(path, str):
+            continue
+        resolved = _resolve_snapgene_path(path)
+        if resolved and str(resolved) in path_label_map:
+            target["isoform_label"] = path_label_map[str(resolved)]
 
     for objective in isoform_objectives:
         if not isinstance(objective, dict):
@@ -19458,6 +19501,16 @@ def _prepare_snapgene_objectives(
             continue
         preseeded[label] = transcript_entry
 
+    if snapgene_errors:
+        structured_goal["snapgene_resolution_errors"] = dict(snapgene_errors)
+        if isinstance(final_payload, dict):
+            final_payload["snapgene_resolution_errors"] = dict(snapgene_errors)
+        raise ValueError("supplied_isoform_reference_unresolved: " + json.dumps(snapgene_errors, sort_keys=True))
+
+    structured_goal.pop("snapgene_resolution_errors", None)
+    if isinstance(final_payload, dict):
+        final_payload.pop("snapgene_resolution_errors", None)
+
     if preseeded:
         structured_goal["preseeded_isoform_transcripts"] = deepcopy(preseeded)
         if isinstance(final_payload, dict):
@@ -19484,11 +19537,6 @@ def _prepare_snapgene_objectives(
                 run_dir,
                 list(prepared_annotations.values()),
             )
-
-    if snapgene_errors:
-        structured_goal["snapgene_resolution_errors"] = snapgene_errors
-        if isinstance(final_payload, dict):
-            final_payload["snapgene_resolution_errors"] = dict(snapgene_errors)
 
     return {
         "snapgene_paths": snapgene_paths,

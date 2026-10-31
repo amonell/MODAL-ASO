@@ -147,6 +147,7 @@ def build_tiles(runtime, goal, job, chemistry, output_dir):
             'source':'steric_cdna','coordinate_system':'1based_inclusive',
             'Genomic_segments':json.dumps([{'chrom':c,'start':a,'end':b} for c,a,b in segments]),
             'mature_rna_reference':transcript, 'design_job_id':job['job_id'],
+            'job_id':job['job_id'], 'program_id':job.get('program_id'),
             **({'mature_rna_binding': binding_evidence} if binding_evidence else {})})
     runtime._annotate_tile_rows_with_rnafold(rows)
     Path(output_dir).mkdir(parents=True,exist_ok=True)

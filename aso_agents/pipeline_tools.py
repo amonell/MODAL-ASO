@@ -27608,7 +27608,7 @@ def _collect_generated_candidate_rows(
     if isinstance(structured_goal, dict):
         by_job = structured_goal.get("steric_tiling_results_by_job") or {}
         jobs = structured_goal.get("steric_design_jobs") or []
-        if isinstance(by_job, dict) and isinstance(jobs, list) and len(jobs) > 1:
+        if isinstance(by_job, dict) and isinstance(jobs, list) and jobs:
             for job in jobs:
                 if not isinstance(job, dict):
                     continue
@@ -27682,7 +27682,7 @@ def _collect_generated_candidate_rows(
                 **_strategy_route_source_metadata(path, row),
                 **job_source_meta.get(str(path), {}),
             }
-            group_key = str(row.get("program_id") or row.get("job_id")
+            group_key = str(row.get("program_id") or row.get("job_id") or row.get("design_job_id")
                             or source_meta.get("job_id") or source_meta.get("job_label") or "").strip()
             key = (sequence, chrom, start, end, group_key)
             if ordered_roles:
@@ -29562,7 +29562,7 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
             or row.get("Region")
             or row.get("region")
         ),
-        "job_id": row.get("job_id"),
+        "job_id": row.get("job_id") or row.get("design_job_id"),
         "program_id": row.get("program_id"),
         "job_label": row.get("job_label"),
         "target_region_label": row.get("target_region_label"),

@@ -14,6 +14,8 @@ Genomic tiling evidence identifies the configured reference indexes by their con
 
 Reference accessions are joined to the resolved transcript only through verified identities. A preservation constraint keeps that same reference binding. An intron objective remains one program with two flanking junctions when the run resumes; those exon references do not create extra design objectives.
 
+If a count is required at each nominated junction window, the final panel must cover each window separately, including when one design program searches their union. Mature-RNA candidates retain their producing job so the final panel can recheck the applicable region constraints.
+
 Published sequence motifs are context-dependent flags; explicit user motif exclusions are separate hard constraints. Reference Tm and ΔG describe an unmodified perfect-match RNA/DNA duplex at the reported conditions, not validated 2′MOE/PS affinity. For splice-evaluated candidates, `cryptic_splice_evidence` records the largest acceptor/donor score gains outside the supplied annotation and perturbed ASO span, with genomic coordinates and search scope. These computational flags do not establish toxicity, cryptic RNA products, or safety.
 
 ## Predictions

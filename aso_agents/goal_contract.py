@@ -262,6 +262,7 @@ CANONICAL_GOAL_COLLECTION_FIELDS = {
     ),
     "evaluation_targets": frozenset(
         {
+            "artifact_ref_path",
             "chrom",
             "desired_delta",
             "desired_effect",
@@ -296,6 +297,7 @@ CANONICAL_GOAL_COLLECTION_FIELDS = {
     ),
     "splice_isoform_objectives": frozenset(
         {
+            "artifact_ref_path",
             "aggregate_class",
             "desired_abundance",
             "desired_effect",
@@ -822,6 +824,8 @@ _SEQUENCE_CONSTRAINT_SCHEMA = {
 }
 
 CANONICAL_GOAL_FIELD_SCHEMAS = {
+    "artifact_ref_path": {"type": "string", "minLength": 1,
+        "description": "Exact declared path of the supplied file defining this isoform outcome. Pair it with an isoform_label; artifact_refs alone does not bind a biological target. This field does not declare the file to contain ASO observations or to define a patient genetic background."},
     "num_mismatches": {"type": "integer", "minimum": 0, "description": "Explicit off-target substitution search budget. Preserve requested values, including zero; runtime supports 0 through 3 and must report larger requests as unsupported rather than silently reduce them."},
     "transcript_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": True,
                        "description": "Required transcript cohort for this program. For a shared-sequence gapmer panel every selected target must match every member. Avoided or preserved transcripts belong in preservation_targets, and reference-only sequences in artifact_refs; neither is an additional required knockdown target. Independent transcript panels use separate programs; alternative isoform directions use splice_isoform_objectives."},
@@ -999,7 +1003,8 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     "source_attribution": _SOURCE_ATTRIBUTION_SCHEMA,
     "species": {"type": "string"},
     "species_targets": {"type": "array", "items": _SPECIES_TARGET_SCHEMA},
-    "splice_isoform_objectives": {"type": "array", "items": {}},
+    "splice_isoform_objectives": {"type": "array", "items": {},
+        "description": "Preserve every requested isoform outcome. For an isoform defined by a supplied sequence/annotation file, use artifact_ref_path with the exact declared path and an isoform_label; listing the file only in artifact_refs is not an executable target binding."},
     "start": {"type": "integer", "minimum": 0},
     "strand": {"type": "string", "enum": ["+", "-", "."]},
     "target_context": {"type": "string"},
@@ -1522,6 +1527,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- Separate complete-library coverage from selected-panel cardinality. A request to retain every tiled or supplied row, including failed candidates, defines an enumeration/reporting obligation, not a requirement that every row pass selection. If the request also nominates a smaller selected subset, candidate_minimum, candidate_limit, and any independently requested per-site counts describe only that eligible subset. Preserve the full-library obligation, original source inputs, all-row metrics, and failed-selection annotations for the analysis/export tasks; never replace the complete library with the filtered selected panel. Do not infer per-site counts merely because the library targets one site or contains many windows.\n"
     "- Preserve requested candidate counts without aggregation. For an inclusive global count range, set candidate_minimum to its lower bound and top-level candidate_limit to its upper bound; a finite panel range cannot have a null candidate_limit. For an exact global count, set both fields to that count. Use top-level candidate_limit only for a maximum that applies to the complete design task. When the request says a count applies independently to each site, window, or route, store that exact number at top-level candidate_limit_per_site. Never multiply a per-unit count by the number of branches, convert it into an overall total, or leave it only on program-local candidate_limit fields. For an exact per-unit count, also store that number at min_asos_per_site. For a minimum-only count, set min_asos_per_site without inventing an upper bound. Distinguish the count of molecules from oligo length and tiling/search-row counts.\n"
     "- Put each target fact in the object whose scope the evidence supports. Global biological outcomes belong in evaluation_targets and splice_isoform_objectives. Put a target identity on a design program only when the evidence explicitly assigns that identity to that intervention branch; never distribute global outcome identities across parallel programs merely because their counts match. Use exon_label for a numeric exon, site_kind for acceptor/donor/both, transcript_id for an explicitly supplied transcript identifier in that object's scope, isoform_label for a user-supplied isoform description without an identifier, and desired_delta for direction. Do not leave target identity only in prose.\n"
+    "- Preserve every file-defined isoform outcome as an isoform objective and primary_outcome target with its own isoform_label and artifact_ref_path containing the exact declared input path. Listing that file only in artifact_refs is insufficient. Do not assign the file to a different named isoform. Its genetic-background role is a separate choice; clarify that role when unresolved.\n"
     "- transcript_id holds one accession. A program targeting a transcript cohort stores its members in transcript_ids, never a comma-joined singular ID. Distinct requested isoform directions remain in splice_isoform_objectives; shared knockdown and splice switching are separate programs with their own mechanisms. Exact per-site or per-panel counts set both candidate_limit_per_site and min_asos_per_site.\n"
     "- When the request assigns a named isoform or transcript to a particular intervention route, store that identity on the route_target evaluation target, the corresponding design program, and a corresponding splice_isoform_objectives item. Use design_programs[*].isoform_label or design_programs[*].transcript_id; a name present only in the program label or objective is not executable route scope. The splice objective must use the same typed identity, objective_scope='specific_isoform' or 'specific_transcript' as appropriate, and the evidence-supported desired_abundance. Never downgrade a named isoform-abundance route to default_exon_context. A transcript supplied only to locate an exon or splice junction is a reference identity, not an isoform-abundance outcome: preserve it on transcript_lock and the program, use an exon evaluation target and default_exon_context for the structural splice objective, and do not alternate that objective between default_exon_context and specific_transcript during repair. Do not add an identity to a program when the evidence states only a global outcome.\n"
     "- " + EVALUATION_TARGET_ROLE_INSTRUCTIONS + "\n"
