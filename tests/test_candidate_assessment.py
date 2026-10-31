@@ -53,7 +53,9 @@ def test_published_flags_are_chemistry_qualified_and_not_exclusions():
     assert screen["flags"][0]["positions_1based"] == [2]
     assert screen["flags"][0]["applicability"] == "outside_studied_architecture"
     assert screen["flags"][2]["cytosines_5mC_at_all_hits"] is True
-    assert motif_screen("ATGC" + "A"*10,{"nucleotide_sugars_5to3":["LNA"]*3+["DNA"]*8+["LNA"]*3})["flags"][0]["applicability"] == "matches_studied_architecture"
+    studied = {"nucleotide_sugars_5to3":["LNA"]*3+["DNA"]*8+["LNA"]*3,
+               "linkages_5to3":["PS"]*13, "base_modifications_5to3":["none"]*14}
+    assert motif_screen("ATGC" + "A"*10, studied)["flags"][0]["applicability"] == "matches_studied_chemistry"
 
 
 def test_custom_iupac_matches_overlap_and_fail_closed_on_invalid_rules():

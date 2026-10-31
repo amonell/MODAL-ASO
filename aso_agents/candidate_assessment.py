@@ -13,7 +13,7 @@ import re
 
 from .candidate_presentation import molecule_key
 
-VERSION = "candidate-assessment/1"
+VERSION = "candidate-assessment/2"
 IUPAC = {**dict(zip("ACGT", "ACGT")), "R":"AG", "Y":"CT", "S":"GC", "W":"AT",
          "K":"GT", "M":"AC", "B":"CGT", "D":"AGT", "H":"ACT", "V":"ACG", "N":"ACGT"}
 MOTIF_SOURCE = "https://pmc.ncbi.nlm.nih.gov/articles/PMC4005641/"
@@ -45,17 +45,36 @@ def motif_screen(sequence, molecule=None, rules=()):
         return {"status":"unavailable", "reason":"physical_antisense_sequence_unresolved", "flags":[]}
     molecule = molecule or {}
     sugars = molecule.get("nucleotide_sugars_5to3") or []
+    linkages = molecule.get("linkages_5to3") or []
     modifications = molecule.get("base_modifications_5to3") or []
     lna_383 = sugars == ["LNA"] * 3 + ["DNA"] * 8 + ["LNA"] * 3
+    cpg_positions = _positions(sequence, "CG")
+    linkage_known = len(linkages) == len(sequence) - 1 and all(linkages)
+    modifications_known = len(modifications) == len(sequence) and all(modifications)
+    full_ps = all(linkage == "PS" for linkage in linkages) if linkage_known else None
+    cpg_methylated = (all(modifications[p - 1] == "5mC" for p in cpg_positions)
+                      if modifications_known else None)
+    if len(sugars) != len(sequence):
+        applicability = "chemistry_unresolved"
+    elif not lna_383:
+        applicability = "outside_studied_architecture"
+    elif not linkage_known or not modifications_known:
+        applicability = "chemistry_unresolved"
+    elif not full_ps or not cpg_methylated or any(value not in {"none", "5mC"} for value in modifications):
+        applicability = "outside_studied_chemistry"
+    else:
+        applicability = "matches_studied_chemistry"
     flags = []
     for motif in ("TGC", "TCC"):
         positions = _positions(sequence, motif)
         if positions:
             flags.append({"rule_id":"lna_383_" + motif.lower(), "motif":motif,
                 "positions_1based":positions, "action":"flag", "source":MOTIF_SOURCE,
-                "applicability":"matches_studied_architecture" if lna_383 else "outside_studied_architecture",
-                "context":"Association in mouse liver with LNA 3-8-3 gapmers; not a validated MOE, OMe or PMO toxicity rule."})
-    positions = _positions(sequence, "CG")
+                "applicability":applicability,
+                "study_chemistry":{"lna_383":lna_383, "fully_phosphorothioate":full_ps,
+                    "cpg_positions_1based":cpg_positions, "cpg_methylation_matches":cpg_methylated},
+                "context":"Association in mouse liver with fully PS LNA 3-8-3 gapmers and methylated CpG motifs; other or unresolved chemistry retains a contextual flag, not a validated toxicity prediction."})
+    positions = cpg_positions
     if positions:
         methylated = len(modifications) == len(sequence) and all(modifications[p - 1] == "5mC" for p in positions)
         flags.append({"rule_id":"cpg_immune_context", "motif":"CG", "positions_1based":positions,
@@ -226,7 +245,7 @@ def rank_candidates(rows):
             screen = assessment.get("off_target") or {}
             counts = (tuple(v if v is not None else math.inf for v in screen.get("counts_by_mismatch", []))
                       if screen.get("status") == "complete_within_declared_scope" else (math.inf,)*4)
-            applicable = sum(flag["applicability"] in {"matches_studied_architecture", "user_defined"}
+            applicable = sum(flag["applicability"] in {"matches_studied_chemistry", "user_defined"}
                              for flag in (assessment.get("motifs") or {}).get("flags", []))
             expression = screen.get("expression_weighted_risk")
             if not screen.get("expression_tissue") or expression is not None and expression < 0:
@@ -316,8 +335,11 @@ def write_assessment_artifacts(pool, selected, goal, directory):
 def shortlist_size_specified(goal):
     if goal.get("shortlist_size_preference") == "all_eligible":
         return True
-    for scope in [goal, *(goal.get("design_programs") or [])]:
-        if any(type(scope.get(key)) is int and scope[key] > 0 for key in
-               ("candidate_limit","candidate_limit_per_site","per_site_candidate_limit")):
-            return True
-    return goal.get("candidate_role_selection") is not None
+    def bounded(scope, keys=("candidate_limit", "candidate_limit_per_site", "per_site_candidate_limit")):
+        return isinstance(scope, dict) and any(
+            type(scope.get(key)) is int and scope[key] > 0 for key in keys)
+    if bounded(goal) or goal.get("candidate_role_selection") is not None:
+        return True
+    programs = goal.get("design_programs") or []
+    # A bound on one program says nothing about the size of the others.
+    return bool(programs) and all(bounded(program, ("candidate_limit",)) for program in programs)

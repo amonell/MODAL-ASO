@@ -29758,6 +29758,12 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     candidate_limit = _structured_candidate_limit(structured_goal)
     candidate_limit_per_site = _structured_candidate_limit_is_per_site(structured_goal)
     candidate_group_scope = _structured_candidate_group_scope(structured_goal)
+    program_candidate_limits = {
+        program["program_id"]: limit
+        for program in structured_goal.get("design_programs") or []
+        if isinstance(program, dict) and program.get("program_id")
+        and (limit := _coerce_positive_int(program.get("candidate_limit"))) is not None
+    }
     physical_site_groups = []
     if candidate_limit_per_site and candidate_group_scope == "program":
         from .candidate_minimums import requested_region_minimums
@@ -29820,25 +29826,34 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
             panel_objectives=panel_objectives,
             reference_catalog=structured_goal.get("isoform_transcripts") or {},
         )
-    elif candidate_limit is not None or candidate_limit_per_site:
+    elif candidate_limit is not None or candidate_limit_per_site or program_candidate_limits:
         if candidate_group_scope == "physical_region":
             intervals_for_row = _goal_runtime_module()._tile_row_overlap_intervals
             eligible_rows = _bind_candidate_physical_site_groups(
                 eligible_rows, physical_site_groups, intervals_for_row)
-        if candidate_group_scope == "program":
+        if candidate_group_scope == "program" or program_candidate_limits:
             from .candidate_presentation import bind_candidate_program_groups
             eligible_rows = bind_candidate_program_groups(eligible_rows, structured_goal)
         group_limits = {}
-        if candidate_group_scope == "program":
+        if candidate_group_scope == "program" or program_candidate_limits:
             from .candidate_presentation import program_group_labels
             labels = program_group_labels(structured_goal)
-            group_limits = {labels[program["program_id"]]: limit
-                for program in structured_goal.get("design_programs") or []
-                if program.get("program_id") in labels
-                and (limit := _coerce_positive_int(program.get("candidate_limit"))) is not None}
+            group_limits = {labels[program_id]: limit
+                            for program_id, limit in program_candidate_limits.items()
+                            if program_id in labels}
+        program_selection = {}
+        if group_limits and candidate_group_scope != "program":
+            # Route-scoped limits are additional constraints, not permission to
+            # ignore an explicit program bound. Keep the full assessment pool.
+            eligible_rows, program_selection = _apply_generated_candidate_limit(
+                eligible_rows, candidate_limit=None, per_site=True,
+                group_scope="program", group_limits=group_limits,
+                diversify=structured_goal.get("candidate_selection_policy") == "diverse_target_sites")
+            group_limits = {}
+        grouped_selection = candidate_limit_per_site or bool(group_limits)
         scoped_limit = (_coerce_positive_int(structured_goal.get("candidate_limit_per_site")
                         or structured_goal.get("per_site_candidate_limit"))
-                        if candidate_limit_per_site else candidate_limit)
+                        if candidate_limit_per_site else None if group_limits else candidate_limit)
         physical_limit = _coerce_positive_int(structured_goal.get("candidate_limit"))
         physical_rows, physical_selection = (
             _select_physical_splice_coverage(eligible_rows, structured_goal, physical_limit)
@@ -29855,20 +29870,26 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
             eligible_rows, candidate_selection = _apply_generated_candidate_limit(
                 eligible_rows,
                 candidate_limit=scoped_limit,
-                per_site=candidate_limit_per_site,
+                per_site=grouped_selection,
                 expected_group_labels=(
                     ([group["group_id"] for group in physical_site_groups]
                      if candidate_group_scope == "physical_region" else
                      _structured_candidate_group_labels(structured_goal, group_scope=candidate_group_scope))
-                    if candidate_limit_per_site
+                    if grouped_selection
                     else []
                 ),
                 group_scope=candidate_group_scope,
                 group_limits=group_limits,
-                global_candidate_limit=(physical_limit if candidate_limit_per_site else None),
+                global_candidate_limit=(physical_limit if grouped_selection else None),
                 diversify=structured_goal.get("candidate_selection_policy") == "diverse_target_sites",
                 candidate_minimum=_coerce_positive_int(structured_goal.get("candidate_minimum")),
             )
+        if program_selection:
+            candidate_selection = {**program_selection, **candidate_selection,
+                "program_limit_selection": program_selection,
+                "eligible_count": program_selection["eligible_count"],
+                "selected_count": len(eligible_rows),
+                "unselected_count": program_selection["eligible_count"] - len(eligible_rows)}
         if persisted_candidate_selection and not candidate_limit_per_site:
             # Re-exporting a previously selected panel must not rewrite its
             # selection method or original eligible/unselected counts.
