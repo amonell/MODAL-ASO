@@ -15425,15 +15425,27 @@ def _collect_splice_target_exon_effects(structured_goal: Dict[str, Any]) -> List
         elif not effect_by_exon[exon_label] and effect_norm:
             effect_by_exon[exon_label] = effect_norm
 
-    for exon_label in _normalize_exon_label_collection(structured_goal.get("exon_labels")):
-        _add_exon_target(exon_label, structured_goal.get("desired_effect"))
-    for exon_label in _normalize_exon_label_collection(structured_goal.get("exon_label")):
-        _add_exon_target(exon_label, structured_goal.get("desired_effect"))
-
     raw_programs = structured_goal.get("design_programs")
+    intron_kinds = {"intron_retention", "intron_excision"}
+    has_intron_program = isinstance(raw_programs, list) and any(
+        isinstance(program, dict) and (program.get("splice_event") or {}).get("event_type") in intron_kinds
+        for program in raw_programs
+    )
+    # When intron programs are present, aggregate exon ordinals can name their
+    # flanking boundaries. They do not request exon-included/skipped isoforms.
+    # Independent exon programs and explicitly supplied objectives below keep
+    # their own context; ordinary legacy exon-only goals retain the fallback.
+    if not has_intron_program:
+        for exon_label in _normalize_exon_label_collection(structured_goal.get("exon_labels")):
+            _add_exon_target(exon_label, structured_goal.get("desired_effect"))
+        for exon_label in _normalize_exon_label_collection(structured_goal.get("exon_label")):
+            _add_exon_target(exon_label, structured_goal.get("desired_effect"))
+
     if isinstance(raw_programs, list):
         for program in raw_programs:
             if not isinstance(program, dict):
+                continue
+            if (program.get("splice_event") or {}).get("event_type") in intron_kinds:
                 continue
             intent = str(program.get("intent") or structured_goal.get("intent") or "").strip().lower()
             if intent != "splice_modulation" and not any(

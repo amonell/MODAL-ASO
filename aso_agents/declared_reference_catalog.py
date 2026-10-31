@@ -77,6 +77,14 @@ def complete_target_references(runtime, goal, final_payload=None):
                 identifiers = requests.setdefault(value.strip(), [])
                 if program.get("program_id") not in identifiers:
                     identifiers.append(program.get("program_id"))
+    # The locked accession remains authoritative when a planner emits only its
+    # physical Ensembl ID, or a legacy feature request has no program at all.
+    # Attest that alias before downstream selectors inspect the existing catalog.
+    lock = goal.get("transcript_lock") if goal.get("transcript_policy") == "user_locked" else None
+    if isinstance(lock, dict):
+        reference = lock.get("value") or lock.get("transcript_id") or lock.get("reference_accession")
+        if isinstance(reference, str) and runtime._looks_like_refseq_transcript_accession(reference.strip()):
+            requests.setdefault(reference.strip(), [])
     from .preservation_context import preservation_resolution_objectives
     for objective in preservation_resolution_objectives(goal):
         reference = objective.get("transcript_id")

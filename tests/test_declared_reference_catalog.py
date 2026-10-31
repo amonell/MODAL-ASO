@@ -33,8 +33,9 @@ def goal():
                                 "transcript_ids": ["ENST00000000001.2", "ENST00000000002.3"]}]}
 
 
+@pytest.mark.parametrize('declaration', ['program', 'lock_only', 'physical_program'])
 @pytest.mark.parametrize('fault', [None, 'structure', 'unverified_accession'])
-def test_existing_accession_label_still_needs_attestation_before_feature_selection(monkeypatch, fault):
+def test_existing_accession_label_still_needs_attestation_before_feature_selection(monkeypatch, fault, declaration):
     import importlib
     chooser = importlib.import_module('aso_agents.transcript_chooser_agent')
     accession = 'NM_123456.7'
@@ -46,6 +47,10 @@ def test_existing_accession_label_still_needs_attestation_before_feature_selecti
     g.update(target_region='utr3', transcript_lock={'kind': 'reference_accession', 'value': accession},
              isoform_transcripts={accession: record},
              design_programs=[{'program_id': 'sites', 'modality': 'steric', 'intent': 'binding', 'transcript_id': accession, 'target_region': 'utr3'}])
+    if declaration == 'lock_only':
+        g['design_programs'] = []
+    elif declaration == 'physical_program':
+        g['design_programs'][0]['transcript_id'] = physical
     before = deepcopy(g)
     fetched = structure(physical)
     if fault == 'structure':
