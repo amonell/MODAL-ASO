@@ -36,6 +36,14 @@ row and its verified exon structure. A primary transcript is not a fallback
 for a different accession or an unresolved version. This applies to rows
 supplied as arrays as well as interval dictionaries.
 
+For an intron event with explicit binding windows, resolution checks that the
+windows have executable constraints before region assembly. A single,
+unambiguous symmetric window and overlap rule in the user's instruction can
+populate missing donor and acceptor constraints. Conflicting widths, multiple
+unbound scopes or a missing overlap rule require clarification at intake.
+The two boundaries remain separate sites when enforcing a per-site minimum
+on the selected panel; a large pool at one boundary cannot fill the other.
+
 Neutral tests cover both strands, genomic steric and transcript gapmer
 coordinates, UTR and coding boundaries, alternative sites, exclusions and
 constraint-only scopes. They validate interval filtering, not biological

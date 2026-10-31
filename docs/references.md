@@ -51,6 +51,8 @@ Name the requested isoform and provide its SnapGene or GenBank path in the reque
 
 Whether the supplied sequence also defines a patient genetic background is a separate choice. The harness asks for clarification when that role is unresolved. Missing files or unresolved annotations stop reference preparation instead of silently removing the requested outcome.
 
+A quoted instruction about increasing or decreasing an isoform does not choose its genetic background. Free-text requests need explicit background or annotation-only intent; a model-inferred Boolean is insufficient. Ambiguous or negated quotes trigger the per-file question. A later clear answer is bound to the file's sequence identity, and a changed sequence requires a new choice.
+
 Verified external accessions retain their mapping provenance when joined to the physical sequence catalog. The resolved transcript version and exon structure must agree; matching a stable accession alone does not erase a version conflict.
 
 ## Check stored files

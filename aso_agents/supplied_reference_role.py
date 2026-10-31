@@ -16,6 +16,40 @@ def artifact_sha256(path):
     return digest.hexdigest()
 
 
+def _explicit_role(text):
+    """Conservative intent recognition; unclear free text gets the role question."""
+    text = re.sub(r"\s+", " ", str(text).casefold()).strip().rstrip(".! ")
+    if "?" in text or re.search(r"\b(?:not|never|without|whether|either|or|if|should|could|can|maybe|might)\b|n['’]t\b", text):
+        return None
+    background = (
+        text in {"design background", "patient background", "apply the differences"}
+        or bool(re.search(r"\b(?:use|treat|apply|design|model|predict)\b.*\b(?:design|patient|genetic)(?:[- ]specific)? background\b", text))
+        or bool(re.search(r"\b(?:apply|incorporate)\b.*\b(?:variants|mutations|differences)\b", text))
+    )
+    annotation = bool(re.search(r"\bannotations?[- ]only\b|\bannotations? alone\b", text))
+    if background == annotation:
+        return None
+    return "design_background" if background else "annotation_only"
+
+
+def _quoted_role_is_explicit(record, role, evidence, path, multiple_files):
+    quote = str(record.get("source_quote") or "").strip()
+    if not quote or quote not in evidence or _explicit_role(quote) != role:
+        return False
+    # A quotation must not remove negation or an unresolved choice from its
+    # surrounding user sentence. Accepted clarification answers are separate
+    # evidence lines, so they can resolve an earlier ambiguous request.
+    contexts = [line for line in evidence.splitlines() if quote in line]
+    if not any(_explicit_role(line) == role for line in contexts):
+        return False
+    # Short answers acquire this sequence binding only after the per-file
+    # clarification is applied. Free-form intake choices for several files must
+    # identify their own file in the quote rather than borrowing another's role.
+    if multiple_files and not record.get("sequence_sha256"):
+        return path in quote or Path(path).name in quote
+    return True
+
+
 def resolved_roles(goal, annotations, user_evidence=""):
     """Only quoted user choices or an explicit positive background request resolve a role."""
     records = goal.get("supplied_sequence_roles") or []
@@ -26,16 +60,19 @@ def resolved_roles(goal, annotations, user_evidence=""):
         for record in records:
             if not isinstance(record, dict) or _path(record.get("artifact_ref_path")) != path:
                 continue
-            quote = str(record.get("source_quote") or "").strip()
             role = record.get("role")
             if record.get("sequence_sha256") and record["sequence_sha256"] != annotation.get("sequence_sha256"):
                 continue
-            if quote and quote in user_evidence and role in {"design_background", "annotation_only"}:
+            if role in {"design_background", "annotation_only"} and _quoted_role_is_explicit(
+                record, role, user_evidence, path, len(annotations) > 1
+            ):
                 choices.add(role)
         if len(choices) == 1:
             roles[path] = choices.pop()
-        elif not choices and not records and goal.get("use_supplied_sequence_variants") is True:
-            # Existing explicit patient-background requests remain compatible.
+        elif not choices and not records and not user_evidence.strip() and goal.get("use_supplied_sequence_variants") is True:
+            # A direct structured caller may explicitly select this flag. In
+            # free-text intake the same flag can be inferred by the model and
+            # cannot substitute for evidence of the user's background choice.
             roles[path] = "design_background"
         else:
             roles[path] = None

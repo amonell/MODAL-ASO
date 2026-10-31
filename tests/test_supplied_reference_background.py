@@ -33,6 +33,58 @@ def test_legacy_explicit_positive_background_remains_supported(tmp_path):
     assert not role_question({"use_supplied_sequence_variants": True}, [annotation(tmp_path/"custom.gb")])
 
 
+@pytest.mark.parametrize("role", ["design_background", "annotation_only"])
+def test_actual_isoform_abundance_quote_cannot_resolve_background_role(tmp_path, role):
+    path = tmp_path/"custom.gb"
+    quote = f"increase the isoform defined by {path}"
+    goal = {"use_supplied_sequence_variants": True,
+            "supplied_sequence_roles": [{"artifact_ref_path": str(path), "role": role, "source_quote": quote}]}
+    question = role_question(goal, [annotation(path)], quote)
+    assert question["kind"] == "supplied_reference_background"
+
+
+def test_model_inferred_positive_flag_does_not_replace_free_text_choice(tmp_path):
+    goal = {"use_supplied_sequence_variants": True}
+    assert role_question(goal, [annotation(tmp_path/"custom.gb")], "Increase the supplied isoform")
+
+
+@pytest.mark.parametrize("evidence,quote,role", [
+    ("Do not use this file as the design background", "design background", "design_background"),
+    ("Do not use annotation only", "annotation only", "annotation_only"),
+    ("Should I use the design background?", "design background", "design_background"),
+    ("Use design background or annotation only", "design background", "design_background"),
+    ("Maybe use the file as design background", "design background", "design_background"),
+    ("Use the file as design background", "Use the file as design background", "annotation_only"),
+])
+def test_fragment_cannot_remove_negation_uncertainty_or_change_chosen_role(tmp_path, evidence, quote, role):
+    path = tmp_path/"custom.gb"
+    goal = {"supplied_sequence_roles": [{"artifact_ref_path": str(path), "role": role, "source_quote": quote}]}
+    assert role_question(goal, [annotation(path)], evidence)
+
+
+@pytest.mark.parametrize("quote", ["Use the supplied sequence as the design background.",
+                                  "Apply the detected variants from the supplied file."])
+def test_explicit_background_instruction_is_supported(tmp_path, quote):
+    path = tmp_path/"custom.gb"
+    goal = {"supplied_sequence_roles": [{"artifact_ref_path": str(path), "role": "design_background", "source_quote": quote}]}
+    assert role_question(goal, [annotation(path)], quote) is None
+
+
+def test_later_explicit_answer_resolves_earlier_ambiguous_request(tmp_path):
+    annotations = [annotation(tmp_path/"custom.gb")]
+    goal = {}
+    question = role_question(goal, annotations, "Should I use design background or annotation only?")
+    apply_role_answers(goal, [{"question": question["questions"][0], "answer": "design background"}])
+    assert role_question(goal, annotations, "Should I use design background or annotation only?\ndesign background") is None
+
+
+def test_multifile_intake_cannot_borrow_another_files_background_quote(tmp_path):
+    one, two = tmp_path/"one.gb", tmp_path/"two.gb"
+    quote = f"Use {one} as the design background"
+    goal = {"supplied_sequence_roles": [{"artifact_ref_path": str(two), "role": "design_background", "source_quote": quote}]}
+    assert len(role_question(goal, [annotation(one), annotation(two)], quote)["questions"]) == 2
+
+
 def test_multiple_files_keep_independent_roles_and_sequence_identity(tmp_path):
     annotations = [annotation(tmp_path/"one.gb"), annotation(tmp_path/"two.gb")]
     goal = {}

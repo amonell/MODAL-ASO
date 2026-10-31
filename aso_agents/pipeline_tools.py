@@ -46785,6 +46785,38 @@ def tool_resolve_isoforms_and_sites(
     for answer in _clarification_qa_history(state):
         if answer.get("answer_source") == "external_user":
             verified_user_evidence.append(str(answer.get("answer") or ""))
+    from .intron_window_requirements import bind_missing_intron_windows
+    overlap_from_request = getattr(runtime, "_infer_aso_overlap_requirement_from_request_text", None)
+    window_evidence = "\n".join(verified_user_evidence)
+    window_resolution = bind_missing_intron_windows(
+        structured_goal, window_evidence,
+        overlap_from_request(window_evidence) if callable(overlap_from_request) else None,
+    )
+    if window_resolution.get("changed"):
+        final_payload["structured_goal"] = structured_goal
+        _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+    elif window_resolution.get("status") == "needs_clarification":
+        _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+        clarification_request = {
+            "kind": "goal_intake", "restart_stage": "intake",
+            "questions": window_resolution["questions"],
+            "reason": window_resolution["reason"],
+            "context": "The intron event and the ASO binding windows are separate requirements.",
+            "why_this_matters": "A default search window could select ASOs outside the region you requested.",
+        }
+        state["pending_questions"] = list(clarification_request["questions"])
+        state["status"] = "needs_user_input"
+        state["phase"] = "awaiting_clarification"
+        state["last_error"] = None
+        _apply_clarification_request_to_state(state, clarification_request)
+        _mark_last_tool(state, "tool_resolve_isoforms_and_sites", "ok")
+        _event(state, "awaiting_clarification", "Clarification requested (intron binding windows).")
+        _save_state(state_path, state, snapshot_reason="intron_window_clarification_pending")
+        return {"status": "ok", "state_path": str(_state_path_to_obj(state_path)),
+                "run_dir": run_dir, "needs_user_input": True,
+                "clarification_kind": clarification_request["kind"],
+                **{key: clarification_request[key] for key in
+                   ("questions", "reason", "context", "why_this_matters")}}
     normalize_target_region = getattr(runtime, "_normalize_target_region", None)
     if callable(normalize_target_region):
         normalized_region = normalize_target_region(structured_goal.get("target_region"))
