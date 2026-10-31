@@ -89,7 +89,7 @@ def test_typed_artifact_outcome_is_ingested_without_model_guessing(tmp_path, mon
     final = {'snapgene_resolution_errors': {str(path): 'previous failure'}}
     result = native._prepare_snapgene_objectives(goal, final, str(tmp_path))
     assert result['preseeded_isoforms'] == ['custom']
-    assert calls == [(str(path), False)]
+    assert calls == [(str(path), True)]
     assert goal['splice_isoform_objectives'][0]['snapgene_path'] == str(path)
     assert 'patient_reference' not in goal
     assert 'snapgene_resolution_errors' not in goal

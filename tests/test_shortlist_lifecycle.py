@@ -71,15 +71,17 @@ def test_refseq_program_resolves_exact_xref_before_structure_fetch(monkeypatch):
     assert len(seen) == 1
 
 
-def test_parent_routes_count_to_only_the_question_owning_child(tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["shortlist_size", "supplied_reference_background"])
+def test_parent_routes_selection_answer_to_only_the_question_owning_child(tmp_path, monkeypatch, kind):
     from aso_agents.shortlist_clarification import size_question
-    question = size_question({},True)["questions"][0]
+    question = size_question({},True)["questions"][0] if kind == "shortlist_size" else "Use this file as design background or annotation only?"
+    answer = "6" if kind == "shortlist_size" else "design background"
     parent = {"run_dir":str(tmp_path), "current_task_id":"one", "status":"needs_user_input",
               "phase":"task_waiting_for_clarification", "task_artifacts":{},
               "task_validation":{},"task_statuses":{},"blocked_task_ids":["one","two"],
               "clarification_queue":[{"task_id":"one"},{"task_id":"two"}],
-              "clarification":{"kind":"shortlist_size","pending_apply":True,
-                               "last_answers":[{"question":question,"answer":"6"}]}}
+              "clarification":{"kind":kind,"pending_apply":True,
+                               "last_answers":[{"question":question,"answer":answer}]}}
     parent["request_envelope"] = {"request_mode":"multi_task", "response_mode":"composite",
         "tasks":[{"task_id":task,"task_type":"design_new_asos","label":task,
                   "context":{"structured_goal":{"gene_symbol":"TEST", "species":"human", "intent":"knockdown",
@@ -87,7 +89,7 @@ def test_parent_routes_count_to_only_the_question_owning_child(tmp_path, monkeyp
                  for task in ("one","two")]}
     for task in ("one","two"):
         path = tmp_path/f"{task}.json"
-        path.write_text(json.dumps({"clarification":{"kind":"shortlist_size"},"pending_questions":[question]}))
+        path.write_text(json.dumps({"clarification":{"kind":kind},"pending_questions":[question]}))
         parent["task_artifacts"][task] = {"child_state_path":str(path),"child_status":"needs_user_input",
                                           "child_pending_questions":[question]}
         parent["task_validation"][task] = {"status":"blocked","issues":["child_design_clarification_needed"]}
@@ -98,7 +100,7 @@ def test_parent_routes_count_to_only_the_question_owning_child(tmp_path, monkeyp
     result = pipeline.apply_clarification_to_goal(str(state_path))
     assert result["resumed_child_task_ids"] == ["one"]
     saved = pipeline._load_state(str(state_path))
-    assert saved["task_artifacts"]["one"]["child_resume_answers"][0]["answer"] == "6"
+    assert saved["task_artifacts"]["one"]["child_resume_answers"][0]["answer"] == answer
     assert saved["task_artifacts"]["two"] == parent["task_artifacts"]["two"]
     assert saved["blocked_task_ids"] == ["two"]
     assert saved["clarification_qa_history"][-1]["task_id"] == "one"

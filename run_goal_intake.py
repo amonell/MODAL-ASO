@@ -19288,10 +19288,8 @@ def _apply_patient_reference_from_snapgene_annotations(
     aggregated_fasta_path = patient_base_dir / "patient_reference.fa"
     patient_base_dir.mkdir(parents=True, exist_ok=True)
 
-    variant_list = sorted(
-        variant_map.values(),
-        key=lambda item: (str(item["chrom"]), int(item["pos"]), str(item["ref"]), str(item["alt"])),
-    )
+    from aso_agents.snapgene_ingestion import merge_substitution_variants
+    variant_list = merge_substitution_variants(list(variant_map.values()))
     sample_name = str(structured_goal.get("gene_symbol") or "patient")
     _write_patient_vcf(variant_list, reference_path, aggregated_vcf_path, sample_name=sample_name)
 
@@ -19465,7 +19463,9 @@ def _prepare_snapgene_objectives(
     expected_strand = _collect_expected_strand(structured_goal)
     species_key = normalize_species(structured_goal.get("species"))
     patient_reference_fasta = _resolve_patient_reference_fasta(structured_goal)
-    derive_patient_variants = _snapgene_patient_reference_requested(structured_goal)
+    # Discover differences independently of the decision to apply them. A default
+    # false intake flag must not hide a supplied non-reference background.
+    derive_patient_variants = True
     resolution_notes = final_payload.setdefault("isoform_resolution_notes", {}) if isinstance(final_payload, dict) else {}
     snapgene_errors: Dict[str, str] = {}
 
@@ -19476,8 +19476,12 @@ def _prepare_snapgene_objectives(
             continue
         used_labels.add(label)
 
+        from aso_agents.supplied_reference_role import artifact_sha256
+        input_sha256 = artifact_sha256(path)
         annotation = existing_annotations.get(label)
-        if not isinstance(annotation, dict) or str(annotation.get("snapgene_path") or "") != path:
+        if (not isinstance(annotation, dict) or str(annotation.get("snapgene_path") or "") != path
+                or not annotation.get("variant_derivation_attempted")
+                or annotation.get("input_file_sha256") != input_sha256):
             try:
                 annotation = ingest_snapgene_file(
                     path,
@@ -19492,6 +19496,7 @@ def _prepare_snapgene_objectives(
                 snapgene_errors[path] = f"snapgene_ingest_failed: {exc}"
                 continue
         annotation = deepcopy(annotation)
+        annotation["input_file_sha256"] = input_sha256
         annotation["snapgene_label"] = label
         prepared_annotations[label] = annotation
 
@@ -19530,12 +19535,22 @@ def _prepare_snapgene_objectives(
             if isinstance(final_payload, dict):
                 final_payload["snapgene_annotation"] = deepcopy(only_annotation)
                 final_payload["snapgene_label"] = only_label
-        if run_dir:
+        from aso_agents.supplied_reference_role import role_question, resolved_roles
+        if _snapgene_patient_reference_requested(structured_goal):
+            structured_goal["use_supplied_sequence_variants"] = True
+        question = role_question(structured_goal, list(prepared_annotations.values()), user_request or "")
+        roles = resolved_roles(structured_goal, list(prepared_annotations.values()), user_request or "")
+        background_annotations = [annotation for annotation in prepared_annotations.values()
+                                  if roles.get(str(Path(annotation["snapgene_path"]).resolve())) == "design_background"]
+        if isinstance(final_payload, dict):
+            final_payload["pending_supplied_reference_roles"] = deepcopy(structured_goal["pending_supplied_reference_roles"])
+        if run_dir and background_annotations and not question:
+            structured_goal["use_supplied_sequence_variants"] = True
             _apply_patient_reference_from_snapgene_annotations(
                 structured_goal,
                 final_payload,
                 run_dir,
-                list(prepared_annotations.values()),
+                background_annotations,
             )
 
     return {
@@ -19543,6 +19558,7 @@ def _prepare_snapgene_objectives(
         "snapgene_labels": sorted(prepared_annotations.keys()),
         "preseeded_isoforms": sorted(preseeded.keys()),
         "errors": snapgene_errors,
+        "clarification_request": question if prepared_annotations else None,
     }
 
 

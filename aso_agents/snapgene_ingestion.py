@@ -587,7 +587,9 @@ def _align_full_sequence(
         return None
     fasta_path = _write_sequence_fasta(sequence, read_id="FULL_SEQ")
     try:
-        mismatch_budget = max(int(max_mismatches), FULL_SEQUENCE_MAX_MISMATCHES)
+        # Bowtie 1 -v accepts only 0..3. Larger whole-record difference budgets
+        # are checked by the exon-anchored fallback below.
+        mismatch_budget = min(3, max(0, int(max_mismatches)))
         cmd = [
             "bowtie",
             "-f",
@@ -622,62 +624,54 @@ def _fallback_full_sequence_alignment(
     fasta: Fasta,
     *,
     window_padding: int = 500,
+    max_mismatches: int = FULL_SEQUENCE_MAX_MISMATCHES,
 ) -> Optional[SnapExonAlignment]:
     if not sequence or not chrom or not per_exon_records:
         return None
-    strand_val = strand if strand in {"+", "-"} else "+"
     chrom_norm = _normalize_chrom(chrom) or chrom
     if chrom_norm not in fasta:
         return None
-    starts: List[int] = []
-    ends: List[int] = []
+    # File-local exon positions anchor the *whole* supplied record, including
+    # long flanks. Scanning every offset near the first genomic exon both loses
+    # upstream sequence and costs O(record_length * genomic_window_length).
+    anchors = set()
+    seq_len = len(sequence)
     for record in per_exon_records:
         try:
             start = int(record.get("genomic_start"))
-            end = int(record.get("genomic_end"))
-        except Exception:
+            local_start = int(record["local_start"])
+            local_end = int(record["local_end"])
+            feature_strand = int(record.get("feature_strand") or 1)
+        except (KeyError, TypeError, ValueError):
             continue
-        starts.append(min(start, end))
-        ends.append(max(start, end))
-    if not starts or not ends:
+        if (_normalize_chrom(record.get("chrom")) != chrom_norm
+                or not 0 <= local_start < local_end <= seq_len):
+            continue
+        exon_sign = -1 if record.get("strand") == "-" else 1
+        full_strand = "+" if exon_sign * feature_strand > 0 else "-"
+        offset = local_start if full_strand == "+" else seq_len - local_end
+        anchors.add((start - offset, full_strand))
+    candidates = []
+    for align_start, full_strand in sorted(anchors):
+        if align_start < 1:
+            continue
+        ref = str(fasta[chrom_norm][align_start - 1:align_start - 1 + seq_len]).upper()
+        query = sequence.upper() if full_strand == "+" else str(Seq(sequence).reverse_complement()).upper()
+        if len(ref) != seq_len or set(ref + query) - set("ACGT"):
+            continue
+        mismatches = sum(a != b for a, b in zip(ref, query))
+        if mismatches <= max_mismatches:
+            candidates.append((mismatches, align_start, full_strand))
+    if not candidates:
         return None
-    min_start = min(starts)
-    max_end = max(ends)
-    seq_len = len(sequence)
-    window_start = max(1, min_start - window_padding)
-    window_end = max_end + window_padding + seq_len
-    try:
-        reference_slice = str(fasta[chrom_norm][window_start - 1 : window_end]).upper()
-    except Exception:
-        return None
-    if not reference_slice:
-        return None
-    query_seq = sequence.upper()
-    if strand_val == "-":
-        query_seq = str(Seq(query_seq).reverse_complement()).upper()
-    ref_len = len(reference_slice)
-    if ref_len < seq_len:
-        return None
-    best_offset: Optional[int] = None
-    best_mismatches: Optional[int] = None
-    for offset in range(ref_len - seq_len + 1):
-        mismatches = 0
-        for idx in range(seq_len):
-            if reference_slice[offset + idx] != query_seq[idx]:
-                mismatches += 1
-        if best_mismatches is None or mismatches < best_mismatches:
-            best_mismatches = mismatches
-            best_offset = offset
-            if mismatches == 0:
-                break
-    if best_offset is None:
-        return None
-    align_start = window_start + best_offset
-    align_end = align_start + seq_len - 1
+    candidates.sort()
+    if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+        return None  # Equally supported placements do not establish a background.
+    _, align_start, strand_val = candidates[0]
     return SnapExonAlignment(
         chrom=chrom_norm,
         start=align_start,
-        end=align_end,
+        end=align_start + seq_len - 1,
         strand=strand_val,
         mapq=255,
         cigar=f"{seq_len}M",
@@ -703,13 +697,13 @@ def _variants_from_aligned_sequence(
     alt_seq = sequence.upper()
     if alignment.strand == "-":
         alt_seq = str(Seq(alt_seq).reverse_complement()).upper()
-    return _call_variants_for_sequence(
-        chrom,
-        start,
-        ref_seq,
-        alt_seq,
-        fasta,
-    )
+    # This is a verified ungapped placement. Positionwise substitutions are
+    # linear in record length and cannot invent indels in repetitive sequence.
+    if len(ref_seq) != len(alt_seq):
+        return []
+    return [{"chrom": chrom, "pos": start + i, "ref": ref, "alt": alt}
+            for i, (ref, alt) in enumerate(zip(ref_seq, alt_seq))
+            if ref != alt and ref in "ACGT" and alt in "ACGT"]
 
 
 def ingest_snapgene_file(
@@ -842,7 +836,9 @@ def ingest_snapgene_file(
             "read_id": read_id,
             "alignment_count": alignment_count,
             "alignments": annotated_matches,
-            "chosen_alignment": annotated_matches[0] if best else None,
+            "chosen_alignment": ({"chrom": _normalize_chrom(best.chrom) or best.chrom,
+                                  "start": best.start, "end": best.end, "strand": best.strand,
+                                  "mapq": best.mapq, "cigar": best.cigar} if best else None),
             "chrom": chrom_val,
             "genomic_start": best.start if best else None,
             "genomic_end": best.end if best else None,
@@ -873,6 +869,14 @@ def ingest_snapgene_file(
             "strand": preferred_context[1] if preferred_context else None,
         },
         "species": species_key,
+        "variant_derivation_attempted": bool(derive_patient_variants),
+        "full_sequence_alignment_scope": {
+            "method": "bowtie_ungapped" if full_alignment else None,
+            "coordinate_system": "1-based inclusive genomic",
+            "bowtie_substitution_budget": min(3, max(0, int(max_mismatches))),
+            "exon_anchored_substitution_budget": max(int(max_mismatches), FULL_SEQUENCE_MAX_MISMATCHES),
+            "indels": "not resolved by whole-record mapping",
+        },
         "full_sequence_alignment": {
             "chrom": _normalize_chrom(full_alignment.chrom) if full_alignment else None,
             "start": full_alignment.start if full_alignment else None,
@@ -913,8 +917,10 @@ def ingest_snapgene_file(
                 chrom_ctx,
                 strand_ctx,
                 fasta_obj,
+                max_mismatches=max(int(max_mismatches), FULL_SEQUENCE_MAX_MISMATCHES),
             )
             if active_alignment:
+                summary["full_sequence_alignment_scope"]["method"] = "exon_anchors_verified_ungapped"
                 summary["full_sequence_alignment"] = {
                     "chrom": active_alignment.chrom,
                     "start": active_alignment.start,
@@ -924,14 +930,9 @@ def ingest_snapgene_file(
                 }
         if fasta_obj and active_alignment:
             full_sequence_variants = _variants_from_aligned_sequence(active_alignment, full_sequence, fasta_obj)
-        variant_map: Dict[Tuple[str, int, str, str], Dict[str, object]] = {}
-        for var in variants:
-            key = (var["chrom"], var["pos"], var["ref"], var["alt"])
-            variant_map[key] = var
-        for var in full_sequence_variants:
-            key = (var["chrom"], var["pos"], var["ref"], var["alt"])
-            variant_map[key] = var
-        variants = sorted(variant_map.values(), key=lambda item: (item["chrom"], item["pos"]))
+        elif fasta_obj:
+            warnings.append("Full supplied sequence could not be placed within the declared ungapped difference budget; variant evidence covers aligned exons only, not the complete file background.")
+        variants = merge_substitution_variants(variants + full_sequence_variants)
         summary["patient_variants"] = variants
         summary["reference_fasta_path"] = str(reference_path)
         summary["patient_reference"] = None
@@ -947,6 +948,25 @@ def ingest_snapgene_file(
         summary["patient_reference"] = None
 
     return summary
+
+
+def merge_substitution_variants(variants):
+    """Unify overlapping exon/whole-record evidence without applying a base twice."""
+    bases = {}
+    for variant in variants:
+        chrom = _normalize_chrom(str(variant["chrom"]))
+        pos = int(variant["pos"])
+        ref, alt = str(variant["ref"]).upper(), str(variant["alt"]).upper()
+        if pos < 1 or not ref or len(ref) != len(alt) or set(ref + alt) - set("ACGT"):
+            raise ValueError("supplied_reference_requires_verified_substitutions")
+        for offset, (reference_base, alternate_base) in enumerate(zip(ref, alt)):
+            key = (chrom, pos + offset)
+            pair = (reference_base, alternate_base)
+            if key in bases and bases[key] != pair:
+                raise ValueError(f"supplied_reference_variant_conflict: {chrom}:{pos + offset}")
+            bases[key] = pair
+    return [{"chrom":chrom, "pos":pos, "ref":ref, "alt":alt}
+            for (chrom,pos),(ref,alt) in sorted(bases.items()) if ref != alt]
 
 
 def _collect_patient_variants(

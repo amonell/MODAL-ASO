@@ -12359,7 +12359,7 @@ def test_snapgene_patient_variant_request_can_generate_patient_reference(
     assert annotations[0]["patient_reference"] == result
 
 
-def test_prepare_snapgene_objectives_skips_patient_variant_derivation_for_isoform_reference(
+def test_prepare_snapgene_objectives_discovers_variants_and_clarifies_isoform_reference_role(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -12417,7 +12417,8 @@ def test_prepare_snapgene_objectives_skips_patient_variant_derivation_for_isofor
         user_request=f"Design ASOs using {snapgene_path} as an isoform reference.",
     )
 
-    assert derive_values == [False]
+    assert derive_values == [True]
+    assert result["clarification_request"]["kind"] == "supplied_reference_background"
     assert result["preseeded_isoforms"] == ["SnapGene isoform (reference.gb)"]
     assert "patient_reference" not in structured_goal
 

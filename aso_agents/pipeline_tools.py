@@ -35597,6 +35597,11 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
         for item in raw:
             if not isinstance(item, dict):
                 continue
+            if isinstance(item.get("splice_event"), dict):
+                # A typed intron event is not abundance of its reference
+                # transcript. Its independent isoform goals have their own
+                # explicit objective records.
+                continue
             expanded_conversion = _conversion_transcript_objectives(item)
             if expanded_conversion and not (
                 str(item.get("transcript_id") or "").strip()
@@ -35734,6 +35739,8 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
             nested_objectives = _normalize_isoform_objectives(program.get("objectives"))
             if nested_objectives:
                 objectives.extend(nested_objectives)
+                continue
+            if isinstance(program.get("splice_event"), dict):
                 continue
             text = " ".join(
                 str(program.get(key) or "")
@@ -46976,11 +46983,11 @@ def tool_resolve_isoforms_and_sites(
     prepare_snapgene = getattr(runtime, "_prepare_snapgene_objectives", None)
     if callable(prepare_snapgene):
         try:
-            prepare_snapgene(
+            supplied_reference_result = prepare_snapgene(
                 structured_goal,
                 final_payload,
                 run_dir,
-                user_request=str(state.get("request") or ""),
+                user_request="\n".join(verified_user_evidence),
             )
         except Exception as exc:
             return _tool_failure(
@@ -46993,6 +47000,20 @@ def tool_resolve_isoforms_and_sites(
                 error_message=f"snapgene_preparation_failed: {exc}",
                 details=_ensembl_resolution_failure_details(exc, run_dir),
             )
+
+        reference_question = (supplied_reference_result or {}).get("clarification_request")
+        if reference_question:
+            _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+            _apply_clarification_request_to_state(state, reference_question)
+            state.update(pending_questions=reference_question["questions"],
+                         status="needs_user_input", phase="awaiting_clarification")
+            _mark_last_tool(state, "tool_resolve_isoforms_and_sites", "ok")
+            _save_state(state_path, state, snapshot_reason="supplied_reference_background_requested")
+            return {"status": "needs_user_input", "needs_user_input": True,
+                    "state_path": state_path, "run_dir": run_dir,
+                    "questions": reference_question["questions"],
+                    "clarification_kind": reference_question["kind"],
+                    "clarification_request": reference_question}
 
     explicit_coordinate_resolution = _seed_explicit_coordinate_splice_resolution(
         structured_goal,
@@ -57423,14 +57444,16 @@ def apply_clarification_to_goal(
     if not pending_apply and not normalized_answers:
         return {"status": "fatal_error", "error": "no_pending_clarification_application"}
 
-    if clarification.get("kind") == "shortlist_size":
+    selection_kind = clarification.get("kind")
+    if selection_kind in {"shortlist_size", "supplied_reference_background"}:
+        resume_stage = "report" if selection_kind == "shortlist_size" else "resolution"
         if not pending_apply and clarification.get("applied_at") and not state.get("pending_questions"):
             return {"status":"ok", "state_path":state_path, "run_dir":run_dir,
-                    "restart_stage":"report", "scientific_recomputation":False,
+                    "restart_stage":resume_stage, "scientific_recomputation":selection_kind != "shortlist_size",
                     "applied_answers":0, "already_applied":True}
         from .shortlist_clarification import parse_size_answer
         try:
-            preference = parse_size_answer(normalized_answers)
+            preference = parse_size_answer(normalized_answers) if selection_kind == "shortlist_size" else {}
         except ValueError as exc:
             clarification["pending_apply"] = False
             state["pending_questions"] = [str(exc)]
@@ -57440,13 +57463,13 @@ def apply_clarification_to_goal(
                     "state_path":state_path,"questions":state["pending_questions"]}
         child = _child_task_clarification_request_from_state(
             state, preferred_task_id=str(state.get("current_task_id") or ""))
-        if child and child.get("kind") == "shortlist_size":
+        if child and child.get("kind") == selection_kind:
             if [item.get("question") for item in normalized_answers] != child.get("questions"):
-                return {"status":"fatal_error", "error":"shortlist_answer_child_question_mismatch"}
+                return {"status":"fatal_error", "error":f"{selection_kind}_answer_child_question_mismatch"}
             task_id = child["task_id"]
             artifact = state["task_artifacts"][task_id]
             artifact.update(child_resume_answers=deepcopy(normalized_answers),
-                child_resume_summary="Apply the requested shortlist size to this design only; reuse computed science.",
+                child_resume_summary=f"Apply the {selection_kind} clarification to this design only.",
                 child_pending_questions=[], child_status="resume_requested")
             validation = state.setdefault("task_validation", {}).setdefault(task_id, {})
             validation.update(status="runnable", issues=[], questions=[], reason="")
@@ -57454,7 +57477,7 @@ def apply_clarification_to_goal(
             state["blocked_task_ids"] = [item for item in state.get("blocked_task_ids", []) if item != task_id]
             state["clarification_queue"] = [item for item in state.get("clarification_queue", []) if item.get("task_id") != task_id]
             state.setdefault("clarification_qa_history", []).extend({**deepcopy(item),
-                "kind":"shortlist_size", "task_id":task_id, "request_effect":"augment",
+                "kind":selection_kind, "task_id":task_id, "request_effect":"augment",
                 "ts":_timestamp(), "answer_source":clarification.get("answer_source", "controller")}
                 for item in normalized_answers)
             clarification.update(pending_apply=False, applied_at=_timestamp(), applied_restart_stage="")
@@ -57463,32 +57486,51 @@ def apply_clarification_to_goal(
             state.update(pending_questions=[], status="request_parsed_ready",
                 phase="clarification_applied_task_resume", last_error=None)
             _mark_last_tool(state, "apply_clarification_to_goal", "ok")
-            _save_state(state_path, state, snapshot_reason="shortlist_size_child_resume")
+            _save_state(state_path, state, snapshot_reason=f"{selection_kind}_child_resume")
             return {"status":"ok", "state_path":state_path, "run_dir":run_dir,
-                    "restart_stage":"", "scientific_recomputation":False,
+                    "restart_stage":"", "scientific_recomputation":selection_kind != "shortlist_size",
                     "applied_answers":len(normalized_answers), "resumed_child_task_ids":[task_id]}
         context = _load_goal_context_from_run_dir(run_dir)
         goal, final = context["structured_goal"], context["final_payload"]
+        if selection_kind == "supplied_reference_background":
+            from .supplied_reference_role import apply_role_answers
+            try:
+                apply_role_answers(goal, normalized_answers)
+            except ValueError as exc:
+                clarification["pending_apply"] = False
+                clarification["reason"] = str(exc)
+                state["pending_questions"] = [p["question"] for p in goal.get("pending_supplied_reference_roles") or []]
+                state.update(status="needs_user_input", phase="awaiting_clarification")
+                _save_state(state_path, state, snapshot_reason="supplied_reference_background_unresolved")
+                return {"status": "needs_user_input", "needs_user_input": True,
+                        "state_path": state_path, "questions": state["pending_questions"], "reason": str(exc)}
+            final["supplied_sequence_roles"] = deepcopy(goal["supplied_sequence_roles"])
+            final.pop("pending_supplied_reference_roles", None)
         goal.update(preference)
         final.update(preference)
         final.pop("report_payload", None)
         for item in normalized_answers:
             state.setdefault("clarification_qa_history", []).append({
-                **deepcopy(item), "kind":"shortlist_size", "ts":_timestamp(),
+                **deepcopy(item), "kind":selection_kind, "ts":_timestamp(),
                 "request_effect":"augment",
                 "answer_source":clarification.get("answer_source", "controller")})
         context["payload"]["qa_history"] = deepcopy(state["clarification_qa_history"])
         _save_goal_payload(run_dir, context["payload"], goal, final)
-        clarification.update(pending_apply=False, applied_at=_timestamp(), applied_restart_stage="report")
+        clarification.update(pending_apply=False, applied_at=_timestamp(), applied_restart_stage=resume_stage)
         state.pop("pending_clarification_restart_stage", None)
         state.pop("pending_clarification_issue_summary", None)
         state["pending_questions"] = []
-        state["status"], state["phase"] = "shortlist_size_ready", "shortlist_size_ready"
+        if selection_kind == "shortlist_size":
+            state["status"], state["phase"] = "shortlist_size_ready", "shortlist_size_ready"
+        else:
+            state["status"], state["phase"] = "intake_ready", "restart_resolution_pending"
+            state["pending_clarification_restart_stage"] = "resolution"
+            _append_unique_force_stage(state, "resolution")
         state["last_error"] = None
         _mark_last_tool(state, "apply_clarification_to_goal", "ok")
-        _save_state(state_path, state, snapshot_reason="shortlist_size_applied")
+        _save_state(state_path, state, snapshot_reason=f"{selection_kind}_applied")
         return {"status":"ok", "state_path":state_path, "run_dir":run_dir,
-                "restart_stage":"report", "scientific_recomputation":False,
+                "restart_stage":resume_stage, "scientific_recomputation":selection_kind != "shortlist_size",
                 "applied_answers":len(normalized_answers)}
 
     scope_payload = {

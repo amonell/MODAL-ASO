@@ -58,3 +58,32 @@ def test_noncoding_intron_sites_retain_shared_transcript_membership():
     bound,_ = bind_intron_events([],[],{"design_programs":[program]},catalog)
     assert all(set(row["present_in"]) == {"ref","other"} for row in bound)
     assert all(row["uniqueness"] == "shared" and row["covers_all_isoforms"] for row in bound)
+
+
+@pytest.mark.parametrize("kind,word", [("intron_retention", "promote retention"), ("intron_excision", "increase excision")])
+def test_event_direction_cannot_be_inferred_as_reference_isoform_abundance(kind, word):
+    from aso_agents.pipeline_tools import _normalized_design_objective_preseed
+    import run_goal_intake as native
+    program,catalog = inputs()
+    program.update(transcript_id="ENST00000000001.2", desired_delta="increase", exon_labels=[1,2],
+                   objective=word+" of the requested intron", label=word)
+    program["splice_event"]["event_type"] = kind
+    goal = {"gene_symbol":"NEUTRAL", "intent":"splice_modulation", "design_programs":[program]}
+    assert not _normalized_design_objective_preseed(goal).get("splice_isoform_objectives")
+    assert not _normalized_design_objective_preseed([program]).get("splice_isoform_objectives")
+    plan,_ = native._compute_splice_site_plan([],catalog,goal)
+    sites = program_intron_sites(program,catalog,plan)
+    assert {site["delta_direction"] for site in sites} == {"decrease" if kind == "intron_retention" else "increase"}
+    assert len(sites) == 2
+
+
+def test_independent_isoform_objective_is_not_erased_by_intron_event():
+    from aso_agents.pipeline_tools import _normalized_design_objective_preseed
+    program,catalog = inputs()
+    objective = {"isoform_label":"other", "transcript_id":"ENST00000000002.1", "desired_abundance":"decrease"}
+    program["objectives"] = [objective]
+    normalized = _normalized_design_objective_preseed({"design_programs":[program]})
+    assert normalized["splice_isoform_objectives"][0]["isoform_label"] == "other"
+    plan = [{"chrom":"chr7", "strand":"+", "site":"donor", "position":150, "delta_direction":"increase"}]
+    with pytest.raises(ValueError,match="conflicts_with_existing"):
+        bind_intron_events(plan,[],{"design_programs":[program]},catalog)

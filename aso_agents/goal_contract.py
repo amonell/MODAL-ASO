@@ -202,6 +202,7 @@ CANONICAL_STRUCTURED_GOAL_FIELDS = frozenset(
         "off_target_species",
         "patient_variant",
         "use_supplied_sequence_variants",
+        "supplied_sequence_roles",
         "preservation_targets",
         "rbp_binding",
         "region_constraints",
@@ -972,6 +973,11 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     "off_target_species": {"type": "array", "items": {"type": "string"}},
     "patient_variant": _PATIENT_VARIANT_SCHEMA,
     "use_supplied_sequence_variants": {"type":"boolean", "description":"True only when a supplied genomic sequence defines the intended patient/custom genetic background: derive verified differences against the declared assembly and apply them for prediction. False for annotation/reference-only files. Never infer this from the presence of a DNA file alone; clarify an unresolved role."},
+    "supplied_sequence_roles": {"type": "array", "items": {"type": "object", "properties": {
+        "artifact_ref_path": {"type": "string"},
+        "role": {"type": "string", "enum": ["design_background", "annotation_only"]},
+        "source_quote": {"type": "string", "description": "Exact user-authored passage establishing this file's background role; do not invent a default or quote model prose."}
+    }, "required": ["artifact_ref_path", "role", "source_quote"], "additionalProperties": False}},
     "position": {"type": "integer", "minimum": 0},
     "preservation_target_type": {
         "type": "string",
@@ -1090,6 +1096,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "thermodynamic_reference_conditions": "Optional temperature and strand concentration for the unmodified RNA/DNA reference at 1 M sodium. No validated modified-ASO parameters are implied.",
     "splice_event": "Intron retention or excision with the exact transcript reference and 1-based intron ordinal. Separate from exon inclusion/skipping; flanking splice-site effects are only mechanistic proxies.",
     "use_supplied_sequence_variants": "Whether a supplied genomic sequence defines the design's genetic background, distinct from its additional isoform annotation role.",
+    "supplied_sequence_roles": "Per-file genetic-background decisions grounded in exact user quotes. Annotation-only means preserve isoform annotation without applying sequence differences. Omit unresolved roles so verified differences can trigger a clarification before prediction.",
     "candidate_limit_per_site": "Maximum selected eligible molecules independently retained for each requested target site. An enumeration window is not a separate requested selection site, and the complete library size never sets this limit.",
     "candidate_minimum": "Minimum number of distinct eligible oligonucleotide sequences required in the final selected panel; paired with candidate_limit for an acceptable selection count range. The total number of enumerated or reported windows, including failed windows, is not a selection minimum. Omission requires at least one. Set zero only when the user permits a documented empty selection after the requested search; unavailable evidence must remain a limitation, never a claim of biological absence.",
     "candidate_selection_policy": "ranked retains the best individual candidates; diverse_target_sites is a soft preference for separated targets and may add overlapping alternatives to meet a count. nonoverlapping_target_sites is required when the user makes mutual target nonoverlap a hard condition: choose distinct physical molecules jointly, preserve all count constraints, never fill with overlapping targets, and report unmet counts only for the verified eligible pool. Keep exact requested counts in candidate_minimum and candidate_limit; separate program labels do not guarantee different molecules.",
