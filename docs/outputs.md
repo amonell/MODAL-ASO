@@ -10,6 +10,8 @@ Keep the whole run folder together when moving it. Report links use paths within
 
 The `artifacts/candidates/` directory includes `candidate_assessments.json` (the complete assessed eligible pool) and `recommended_shortlist.json`, `.csv`, and `.md` (distinct selected molecules and their evidence). Explicit panel/role objectives and hard requirements take precedence. Otherwise selection uses scientific direction, comparable off-target evidence, applicable motif flags and the native ranking. Missing or incomplete screens remain visible.
 
+An exact requested count sets both a minimum and a maximum; a minimum-only request does not cap the panel. Global totals and independently requested per-site bounds retain their own scope. When no upper bound or all-eligible preference is supplied, the final shortlist-size question remains available after scoring, with existing minimums and scientific artifacts preserved.
+
 Genomic tiling evidence identifies the configured reference indexes by their contents, the searched substitution budget and the counting unit. Its genomic search does not cover spliced transcript junctions. A censored search retains unknown higher-mismatch counts; it cannot be treated as a complete clean screen. Mature-transcript searches retain their separate mapping provenance.
 
 Reference accessions are joined to the resolved transcript only through verified identities. A preservation constraint keeps that same reference binding. An intron objective remains one program with two flanking junctions when the run resumes; those exon references do not create extra design objectives.

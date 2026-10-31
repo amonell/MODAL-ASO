@@ -1358,7 +1358,7 @@ def test_request_envelope_shortcut_uses_binding_constraint_repair(monkeypatch: A
     )
     goal = envelope["tasks"][0]["context"]["structured_goal"]
 
-    assert goal["candidate_limit_per_site"] == 3
+    assert not goal.get("candidate_limit_per_site")
     assert goal["min_asos_per_site"] == 3
     assert goal["rbp_binding"]["rbp"] == "RBFOX2"
     assert goal["mirna_binding"]["source"] == "TargetScan"

@@ -13211,10 +13211,9 @@ def test_generated_artifacts_apply_candidate_limit_per_site_for_split_programs(t
     } == {("site_a", 3, 2, 0), ("site_b", 3, 2, 0), ("site_c", 0, 0, 2)}
 
 
-def test_request_text_per_site_candidate_count_populates_exact_keys() -> None:
-    state = {"request": "Design SMN2 exon 7 ASOs and return at least 20 candidates per site."}
+def test_request_text_per_site_minimum_does_not_add_a_selection_cap() -> None:
+    state = {"request": "Design ASOs and return at least 20 candidates per site."}
     structured_goal = {
-        "gene_symbol": "SMN2",
         "design_programs": [
             {
                 "program_id": "steric_acceptor",
@@ -13239,10 +13238,10 @@ def test_request_text_per_site_candidate_count_populates_exact_keys() -> None:
     )
 
     assert changed is True
-    assert structured_goal["candidate_limit_per_site"] == 20
+    assert "candidate_limit_per_site" not in structured_goal
     assert structured_goal["min_asos_per_site"] == 20
     assert "candidate_limit" not in structured_goal
-    assert all(program["candidate_limit"] == 20 for program in structured_goal["design_programs"])
+    assert all("candidate_limit" not in program for program in structured_goal["design_programs"])
 
 
 def test_generated_artifacts_apply_candidate_limit_per_route_for_single_exploratory_job(tmp_path: Path) -> None:

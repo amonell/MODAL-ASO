@@ -28547,35 +28547,42 @@ def _optional_int(value: Any) -> Optional[int]:
 
 
 def _candidate_count_request_from_text(text: Any) -> Tuple[Optional[int], str]:
+    count, scope, _ = _candidate_count_bound_from_text(text)
+    return count, scope
+
+
+def _candidate_count_bound_from_text(text: Any) -> Tuple[Optional[int], str, str]:
+    """Retain the bound attached to a literal count, not unrelated qualifiers."""
     request_text = str(text or "")
     if not request_text.strip():
-        return None, ""
+        return None, "", ""
+    qualifier = (r"(?:(?P<qualifier>at\s+least|at\s+most|up\s+to|no\s+more\s+than|"
+                 r"no\s+fewer\s+than|exactly|top|best|final|ranked)\s+)?")
     per_site_patterns = [
         r"\b(?:return|provide|select|rank|show|list|generate|design)?\s*"
-        r"(?:(?:at\s+least|up\s+to|no\s+more\s+than|top|best|final|ranked)\s+)?"
+        + qualifier +
         r"(?P<count>\d+)\s*(?:ASOs?|candidates?|oligos?|oligonucleotides?)\s*"
         r"(?:per|for\s+each)\s*(?:target\s+)?(?:site|region|window|route)s?\b",
         r"\b(?:per|for\s+each)\s*(?:target\s+)?(?:site|region|window|route)s?"
-        r"[^.;\n]{0,40}\b(?P<count>\d+)\s*(?:ASOs?|candidates?|oligos?|oligonucleotides?)\b",
+        r"(?:\s*[:,]?\s*(?:return|provide|select|rank|show|list|generate|design))?\s*[:,]?\s*"
+        + qualifier + r"(?P<count>\d+)\s*(?:ASOs?|candidates?|oligos?|oligonucleotides?)\b",
     ]
-    for pattern in per_site_patterns:
-        match = re.search(pattern, request_text, flags=re.IGNORECASE)
-        if match:
-            count = _coerce_positive_int(match.group("count"))
-            if count:
-                return count, "per_site"
     global_patterns = [
         r"\b(?:return|provide|select|rank|show|list|generate|design)\s+"
-        r"(?:(?:at\s+least|up\s+to|no\s+more\s+than|top|best|final|ranked)\s+)?"
+        + qualifier +
         r"(?P<count>\d+)\s*(?:final\s+|ranked\s+)?(?:ASOs?|candidates?|oligos?|oligonucleotides?)\b",
     ]
-    for pattern in global_patterns:
-        match = re.search(pattern, request_text, flags=re.IGNORECASE)
-        if match:
-            count = _coerce_positive_int(match.group("count"))
-            if count:
-                return count, "global"
-    return None, ""
+    for scope, patterns in (("per_site", per_site_patterns), ("global", global_patterns)):
+        for pattern in patterns:
+            match = re.search(pattern, request_text, flags=re.IGNORECASE)
+            if match:
+                count = _coerce_positive_int(match.group("count"))
+                bound = " ".join((match.group("qualifier") or "").lower().split())
+                kind = ("minimum" if bound in {"at least", "no fewer than"} else
+                        "maximum" if bound in {"at most", "up to", "no more than"} else "exact")
+                if count:
+                    return count, scope, kind
+    return None, "", ""
 
 
 def _structured_candidate_limit(structured_goal: Any) -> Optional[int]:
@@ -31420,6 +31427,13 @@ def _is_markdown_table_row(line: str) -> bool:
 def _is_markdown_table_separator(line: str) -> bool:
     if not _is_markdown_table_row(line):
         return False
+    audit = final_payload.get("request_obligation_audit")
+    if isinstance(audit, dict) and audit.get("status") == "accepted":
+        # Quoted, scoped obligations were already applied to the canonical
+        # goal. A legacy prose fallback cannot reintroduce a removed bound.
+        if any(isinstance(audit.get(key), dict)
+               for key in ("candidate_count", "per_site_count")):
+            return False
     cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
     return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
 
@@ -41392,7 +41406,7 @@ def _apply_candidate_count_from_request_text_to_goal(
         user_authored_only=True,
         include_questions=False,
     )
-    count, scope = _candidate_count_request_from_text(request_text)
+    count, scope, kind = _candidate_count_bound_from_text(request_text)
     if not count or not scope:
         return False
 
@@ -41406,8 +41420,9 @@ def _apply_candidate_count_from_request_text_to_goal(
         changed = True
 
     if scope == "per_site":
-        set_if_missing_or_different(structured_goal, "candidate_limit_per_site", count)
-        if re.search(r"\bat\s+least\b", request_text, flags=re.IGNORECASE):
+        if kind != "minimum":
+            set_if_missing_or_different(structured_goal, "candidate_limit_per_site", count)
+        if kind != "maximum":
             set_if_missing_or_different(structured_goal, "min_asos_per_site", count)
         programs = structured_goal.get("design_programs")
         if isinstance(programs, list):
@@ -41416,15 +41431,19 @@ def _apply_candidate_count_from_request_text_to_goal(
                     continue
                 if str(program.get("modality") or "").strip().lower() != "steric":
                     continue
-                if _site_program_has_scope(program) and _coerce_positive_int(program.get("candidate_limit")) != count:
+                if (kind != "minimum" and _site_program_has_scope(program)
+                        and _coerce_positive_int(program.get("candidate_limit")) != count):
                     program["candidate_limit"] = int(count)
                     changed = True
     elif scope == "global":
-        set_if_missing_or_different(structured_goal, "candidate_limit", count)
+        if kind != "minimum":
+            set_if_missing_or_different(structured_goal, "candidate_limit", count)
+        if kind != "maximum":
+            set_if_missing_or_different(structured_goal, "candidate_minimum", count)
 
     if changed:
         final_payload["structured_goal"] = structured_goal
-        for key in ("candidate_limit", "candidate_limit_per_site", "min_asos_per_site"):
+        for key in ("candidate_limit", "candidate_minimum", "candidate_limit_per_site", "min_asos_per_site"):
             if key in structured_goal:
                 final_payload[key] = deepcopy(structured_goal[key])
         if isinstance(structured_goal.get("design_programs"), list):
