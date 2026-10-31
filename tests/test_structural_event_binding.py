@@ -125,3 +125,18 @@ def test_changed_conversion_does_not_reuse_prior_event():
     assert runtime._resolve_authoritative_transcript_exon_ordinal(entry, 5, goal) == 3
     goal['splice_isoform_objectives'][1]['desired_abundance'] = 'decrease'
     assert runtime._resolve_authoritative_transcript_exon_ordinal(entry, 5, goal) == 5
+
+
+def test_replanning_explicit_windows_preserves_only_current_conversion_evidence(monkeypatch):
+    goal, _ = conversion_fixture()
+    entry = goal['isoform_transcripts']['included']
+    runtime._resolve_authoritative_transcript_exon_ordinal(entry, 5, goal)
+    original = deepcopy(goal['exon_conversion_bindings'])
+    # Explicit, already-derived windows need no further ordinal lookup inside
+    # the native planner. Their original physical-event evidence is still valid.
+    monkeypatch.setattr(runtime, '_compute_native_splice_site_plan', lambda *a: ([], []))
+    runtime._compute_splice_site_plan(goal['splice_isoform_objectives'], goal['isoform_transcripts'], goal)
+    assert goal['exon_conversion_bindings'] == original
+    goal['splice_isoform_objectives'][1]['desired_abundance'] = 'decrease'
+    runtime._compute_splice_site_plan(goal['splice_isoform_objectives'], goal['isoform_transcripts'], goal)
+    assert goal['exon_conversion_bindings'] == []

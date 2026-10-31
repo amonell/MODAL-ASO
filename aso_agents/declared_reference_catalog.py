@@ -4,6 +4,15 @@ from copy import deepcopy
 from .gapmer_selectivity import resolve_catalog_label
 
 
+def _verified_accession(entry, reference):
+    metadata = entry.get('metadata') or {}
+    receipts = [metadata.get('reference_accession_resolution'),
+                *(metadata.get('reference_accession_resolutions') or [])]
+    return any(isinstance(receipt, dict) and receipt.get('exact_accession_verified') is True
+               and str(receipt.get('requested_accession') or '').casefold() == reference.casefold()
+               for receipt in receipts)
+
+
 def _declared_structure(runtime, reference, goal):
     """Resolve external accessions before using the Ensembl structure endpoint."""
     physical_id, provenance = reference, {}
@@ -103,7 +112,14 @@ def complete_target_references(runtime, goal, final_payload=None):
                              "species": next(iter(foreign[reference]))})
             continue
         label = resolve_catalog_label(reference, catalog, catalog)
-        if label is None:
+        # A human-facing catalog label is not an accession attestation. Intake
+        # may already have selected the right physical transcript but retained
+        # only a prose match rationale; verify that mapping through the normal
+        # resolver before downstream feature selectors rely on it.
+        previous_label = label
+        needs_attestation = (label is not None and runtime._looks_like_refseq_transcript_accession(reference)
+                             and not _verified_accession(catalog[label], reference))
+        if label is None or needs_attestation:
             structure, physical_id, provenance = _declared_structure(runtime, reference, goal)
             _check_context(runtime, structure, goal, reference)
             exons = structure.get("exons_tx") or []
@@ -114,7 +130,7 @@ def complete_target_references(runtime, goal, final_payload=None):
                    for exon in exons):
                 raise ValueError("declared_target_reference_structure_incomplete: " + reference)
             # Do not replace a conflicting existing identity or its provenance.
-            if reference in catalog:
+            if reference in catalog and previous_label is None:
                 raise ValueError("declared_target_reference_catalog_conflict: " + reference)
             structure = {**structure, "strand": -1 if str(structure["strand"]) in {"-", "-1"} else 1}
             entry = {
@@ -131,13 +147,26 @@ def complete_target_references(runtime, goal, final_payload=None):
             # receipt; a new alias must not erase an earlier verified one.
             physical_entry = deepcopy(entry)
             physical_entry["metadata"].pop("reference_accession_resolution", None)
-            existing = resolve_catalog_label(physical_id, catalog, {physical_id: physical_entry})
+            if previous_label is not None:
+                existing = resolve_catalog_label(physical_id, {previous_label: catalog[previous_label]},
+                                                 {physical_id: physical_entry})
+                if existing is None:
+                    raise ValueError("declared_target_reference_catalog_conflict: " + reference)
+            else:
+                existing = resolve_catalog_label(physical_id, catalog, {physical_id: physical_entry})
             if existing is not None and provenance:
                 metadata = catalog[existing].setdefault("metadata", {})
                 receipts = metadata.setdefault("reference_accession_resolutions", [])
                 if provenance not in receipts:
                     receipts.append(provenance)
-                metadata.setdefault("reference_accession_resolution", provenance)
+                if not isinstance(metadata.get("reference_accession_resolution"), dict):
+                    metadata["reference_accession_resolution"] = provenance
+                elif not metadata["reference_accession_resolution"].get("exact_accession_verified"):
+                    # Retain the earlier unresolved record in provenance.
+                    earlier = metadata["reference_accession_resolution"]
+                    if earlier not in receipts:
+                        receipts.append(earlier)
+                    metadata["reference_accession_resolution"] = provenance
             else:
                 catalog[reference] = entry
             label = resolve_catalog_label(reference, catalog, catalog)

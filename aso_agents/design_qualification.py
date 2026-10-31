@@ -37,7 +37,9 @@ def strategy_contract(program):
         strategy = 'translation_start_blockade'
         required += ['annotated_start_codon_overlap']
         limit = 'Annotated start-site overlap does not establish translational inhibition or protein reduction.'
-    elif program.get('rbp_binding') or program.get('mirna_binding'):
+    elif (program.get('rbp_binding') or program.get('mirna_binding')
+          or any(rule.get('source_type') in {'rbp_binding', 'mirna_binding'}
+                 for rule in constraints if isinstance(rule, dict))):
         strategy = 'regulatory_site_blockade'
         required += ['reference_bound_regulatory_feature', 'requested_site_overlap']
         limit = 'Feature overlap is not proof of occupancy or a downstream expression effect in the requested tissue.'

@@ -13688,10 +13688,22 @@ def _compute_splice_site_plan(
     from aso_agents.design_event_consistency import validate_reference_sites
     validate_reference_sites(isoform_transcripts)
     planning_goal = structured_goal
+    previous_bindings = []
     if isinstance(structured_goal, dict):
+        previous_bindings = structured_goal.get("exon_conversion_bindings") or []
         structured_goal["exon_conversion_bindings"] = []
         planning_goal = {**structured_goal, "isoform_transcripts": isoform_transcripts}
     plan, comparisons = _compute_native_splice_site_plan(isoform_objectives, isoform_transcripts, planning_goal)
+    # A subsequent plan may already contain explicit windows, so it need not
+    # look up ordinals again. Revalidate any prior event against the current
+    # objectives and structures before carrying its evidence into that plan.
+    from aso_agents.design_event_consistency import structural_exon_resolution
+    from aso_agents.gapmer_selectivity import resolve_catalog_label
+    for binding in previous_bindings:
+        label = resolve_catalog_label(binding.get("reference_transcript_id"), isoform_transcripts, isoform_transcripts)
+        requested = binding.get("requested_exon_label")
+        if label is not None and structural_exon_resolution(isoform_transcripts[label], requested, planning_goal):
+            _resolve_authoritative_transcript_exon_ordinal(isoform_transcripts[label], requested, planning_goal)
     from aso_agents.intron_events import bind_intron_events
     return bind_intron_events(plan, comparisons, structured_goal or {}, isoform_transcripts)
 
@@ -18524,10 +18536,13 @@ def _select_isoform_for_utr(
                 if not tid:
                     continue
                 tid_text = str(tid).strip()
-                accession_resolution = (entry.get("metadata") or {}).get("reference_accession_resolution") or {}
-                if (accession_resolution.get("reference_accession") == lock_text
-                        or (accession_resolution.get("requested_accession") == lock_text
-                            and accession_resolution.get("exact_accession_verified") is True)):
+                metadata = entry.get("metadata") or {}
+                receipts = [metadata.get("reference_accession_resolution"),
+                            *(metadata.get("reference_accession_resolutions") or [])]
+                if any(isinstance(receipt, dict) and (
+                        receipt.get("reference_accession") == lock_text
+                        or (receipt.get("requested_accession") == lock_text
+                            and receipt.get("exact_accession_verified") is True)) for receipt in receipts):
                     return label, entry
                 identity = {**(entry.get("metadata") or {}), "id": tid_text}
                 if (tid_text == lock_text or tid_text.split(".", 1)[0] == lock_base) and _source_identifier_matches(identity, lock_text):

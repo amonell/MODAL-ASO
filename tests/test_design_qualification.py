@@ -11,6 +11,8 @@ from aso_agents.design_qualification import strategy_contract, qualify_panel
     ({'splice_event': {'event_type': 'intron_excision'}}, 'intron_excision'),
     ({'rbp_binding': {'rbp': 'neutral'}}, 'regulatory_site_blockade'),
     ({'mirna_binding': {'mirnas': ['neutral']}}, 'regulatory_site_blockade'),
+    ({'region_constraints': [{'source_type': 'rbp_binding', 'rbp_binding': {'rbp': 'neutral'}}]}, 'regulatory_site_blockade'),
+    ({'region_constraints': [{'source_type': 'mirna_binding', 'mirna_binding': {'mirnas': ['neutral']}}]}, 'regulatory_site_blockade'),
     ({'region_constraints': [{'source_type': 'transcript_feature', 'feature_name': 'start_codon'}]}, 'translation_start_blockade'),
 ])
 def test_typed_mechanisms_have_distinct_requirements(program, expected):

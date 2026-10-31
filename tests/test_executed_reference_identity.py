@@ -60,3 +60,15 @@ def test_multiple_executed_references_have_no_false_global_template():
     assert merged['transcript_id'] is merged['primary_isoform'] is None
     results['target'].pop('executed_reference')
     assert merged_executed_references(jobs, results)['reference_scope'] == 'unresolved'
+
+
+def test_feature_selection_honors_each_verified_alias_without_replacing_earlier_receipts():
+    goal = reference_goal()
+    goal['transcript_policy'] = 'user_locked'
+    entry = goal['isoform_transcripts']['target']
+    receipt = entry['metadata'].pop('reference_accession_resolution')
+    entry['metadata']['reference_accession_resolution'] = {**receipt, 'requested_accession': 'NM_999123.4'}
+    entry['metadata']['reference_accession_resolutions'] = [receipt]
+    assert runtime._select_isoform_for_utr(goal['isoform_transcripts'], goal) == ('target', entry)
+    receipt['exact_accession_verified'] = False
+    assert runtime._select_isoform_for_utr(goal['isoform_transcripts'], goal) == (None, None)

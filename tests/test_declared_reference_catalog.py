@@ -33,6 +33,44 @@ def goal():
                                 "transcript_ids": ["ENST00000000001.2", "ENST00000000002.3"]}]}
 
 
+@pytest.mark.parametrize('fault', [None, 'structure', 'unverified_accession'])
+def test_existing_accession_label_still_needs_attestation_before_feature_selection(monkeypatch, fault):
+    import importlib
+    chooser = importlib.import_module('aso_agents.transcript_chooser_agent')
+    accession = 'NM_123456.7'
+    physical = 'ENST00000000001.2'
+    g = goal()
+    record = entry(physical)
+    record['exons_tx'][0].update(contains_coding=True, coding_start_genomic=120, coding_end_genomic=150)
+    record['exons_tx'][1].update(contains_coding=True, coding_start_genomic=301, coding_end_genomic=350)
+    g.update(target_region='utr3', transcript_lock={'kind': 'reference_accession', 'value': accession},
+             isoform_transcripts={accession: record},
+             design_programs=[{'program_id': 'sites', 'modality': 'steric', 'intent': 'binding', 'transcript_id': accession, 'target_region': 'utr3'}])
+    before = deepcopy(g)
+    fetched = structure(physical)
+    if fault == 'structure':
+        fetched['exons_tx'][1]['end'] += 1
+    calls = []
+    def resolve(reference, **kwargs):
+        calls.append(reference)
+        return {'transcript_id': physical, 'method': 'local_gencode_refseq_xref' if fault != 'unverified_accession' else 'other',
+                'requested_accession': accession}
+    monkeypatch.setattr(chooser, 'resolve_external_transcript_accession', resolve)
+    monkeypatch.setattr(chooser, '_get_ensembl_json', lambda *args: (None, []))
+    monkeypatch.setattr(native, '_fetch_transcript_structure', lambda *_: fetched)
+    if fault:
+        with pytest.raises(ValueError, match='declared_target_reference'):
+            complete_target_references(native, g)
+        assert g == before
+    else:
+        assert complete_target_references(native, g)
+        assert native._build_utr_bed_rows(g, 'utr3') == [['chr7', 350, 400, 'utr3_nm_123456_7_exon2', 0, '+']]
+        metadata = g['isoform_transcripts'][accession]['metadata']
+        assert metadata['reference_accession_resolution']['exact_accession_verified'] is True
+        complete_target_references(native, g)
+        assert calls == [accession]
+
+
 @pytest.mark.parametrize("feature", ["translation_start", "utr3", "utr5", "utrs", "cds"])
 def test_native_feature_resolution_completes_cohort_without_replacing_anchor(monkeypatch, feature):
     g = goal()
