@@ -19,9 +19,12 @@ def _aliases(label, entry):
     aliases = {str(value).strip().casefold() for value in
             (label, entry.get('transcript_id'), entry.get('id'), entry.get('versioned_id'),
              meta.get('id'), meta.get('versioned_id')) if value}
-    resolution = meta.get('reference_accession_resolution') or {}
-    if resolution.get('exact_accession_verified') is True and resolution.get('requested_accession'):
-        aliases.add(str(resolution['requested_accession']).casefold())
+    receipts = [meta.get('reference_accession_resolution') or {},
+                *(meta.get('reference_accession_resolutions') or [])]
+    for resolution in receipts:
+        if (isinstance(resolution, dict) and resolution.get('exact_accession_verified') is True
+                and resolution.get('requested_accession')):
+            aliases.add(str(resolution['requested_accession']).casefold())
     for record in (entry, meta):
         version = record.get('version')
         if isinstance(version, bool) or not str(version or '').isdecimal():

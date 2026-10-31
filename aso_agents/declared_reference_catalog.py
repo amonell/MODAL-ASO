@@ -68,6 +68,11 @@ def complete_target_references(runtime, goal, final_payload=None):
                 identifiers = requests.setdefault(value.strip(), [])
                 if program.get("program_id") not in identifiers:
                     identifiers.append(program.get("program_id"))
+    from .preservation_context import preservation_resolution_objectives
+    for objective in preservation_resolution_objectives(goal):
+        reference = objective.get("transcript_id")
+        if isinstance(reference, str) and reference.strip():
+            requests.setdefault(reference.strip(), [])
     for scope in [goal, *programs]:
         for constraint in scope.get("region_constraints") or []:
             if not isinstance(constraint, dict) or constraint.get("source_type") != "transcript_feature":
@@ -112,7 +117,7 @@ def complete_target_references(runtime, goal, final_payload=None):
             if reference in catalog:
                 raise ValueError("declared_target_reference_catalog_conflict: " + reference)
             structure = {**structure, "strand": -1 if str(structure["strand"]) in {"-", "-1"} else 1}
-            catalog[reference] = {
+            entry = {
                 "transcript_id": physical_id,
                 "metadata": {**runtime.resolved_transcript_metadata(structure, {}),
                     **({"reference_accession_resolution":provenance} if provenance else {})},
@@ -121,6 +126,20 @@ def complete_target_references(runtime, goal, final_payload=None):
                 "chrom": structure["seq_region_name"],
                 "strand": "-" if str(structure["strand"]) in {"-", "-1"} else "+",
             }
+            # Keep existing biological labels when the accession resolves to
+            # exactly their attested structure. Preserve every accession
+            # receipt; a new alias must not erase an earlier verified one.
+            physical_entry = deepcopy(entry)
+            physical_entry["metadata"].pop("reference_accession_resolution", None)
+            existing = resolve_catalog_label(physical_id, catalog, {physical_id: physical_entry})
+            if existing is not None and provenance:
+                metadata = catalog[existing].setdefault("metadata", {})
+                receipts = metadata.setdefault("reference_accession_resolutions", [])
+                if provenance not in receipts:
+                    receipts.append(provenance)
+                metadata.setdefault("reference_accession_resolution", provenance)
+            else:
+                catalog[reference] = entry
             label = resolve_catalog_label(reference, catalog, catalog)
             if label is None:
                 raise ValueError("declared_target_reference_catalog_ambiguous: " + reference)

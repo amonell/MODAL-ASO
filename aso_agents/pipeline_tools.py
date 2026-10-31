@@ -11418,6 +11418,15 @@ def _request_contract_program_exon_targets(
     program: Dict[str, Any],
     fallback_targets: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
+    explicit_exon = _coerce_exon_label_int(program.get("exon_label"))
+    if explicit_exon is not None and not program.get("exon_labels"):
+        # Binding constraints can mention other exons without requesting their
+        # outcomes. In particular, do not split an already scoped child again.
+        target = {"exon_label":explicit_exon}
+        effect = _normalized_splice_effect(program.get("desired_effect"))
+        if effect:
+            target["desired_effect"] = effect
+        return [target]
     program_targets = _request_contract_exon_targets(program, {})
     if program_targets:
         return program_targets
@@ -11439,7 +11448,10 @@ def _request_contract_split_steric_programs_by_exon(
             continue
         program_copy = deepcopy(program)
         modality = _program_modality(program_copy) or _request_contract_goal_modality(goal, context)
-        if modality != "steric":
+        if modality != "steric" or program_copy.get("splice_event"):
+            # A typed intron event is one joint objective at two flanking sites.
+            # Its exon references locate those sites; they are not independent
+            # exon-inclusion/skipping requests and must remain in one program.
             expanded.append(program_copy)
             continue
         targets = _request_contract_program_exon_targets(program_copy, exon_targets)
@@ -49589,6 +49601,12 @@ def tool_build_gapmer_regions(
     if callable(ensure_isoforms):
         try:
             ensure_isoforms(structured_goal)
+        except Exception as exc:
+            isoform_resolution_error = f"{exc.__class__.__name__}: {exc}"
+    ensure_declared = getattr(runtime, "_ensure_isoform_transcripts_for_target_region", None)
+    if not isoform_resolution_error and callable(ensure_declared):
+        try:
+            ensure_declared(structured_goal, final_payload)
         except Exception as exc:
             isoform_resolution_error = f"{exc.__class__.__name__}: {exc}"
     isoform_transcripts = structured_goal.get("isoform_transcripts")

@@ -1078,6 +1078,8 @@ def collect_results_json(
         payload["schema"]["columns"]["Times_mapped"] = "string"
     if "Overflow" in payload["schema"]["columns"]:
         payload["schema"]["columns"]["Overflow"] = "boolean"
+    from .tiling_screen_evidence import bind_tiling_screen
+    bind_tiling_screen(payload, output_dir, normalize_species(species) if species else None)
     try:
         json_path = os.path.join(output_dir, "tiles.json")
         with open(json_path, "w", encoding="utf-8") as f:

@@ -29,6 +29,7 @@ def preservation_resolution_objectives(goal):
 
 def preservation_reference_context(goal, catalog):
     """Match only attested catalog aliases, preserving unresolved/version conflicts."""
+    from .gapmer_selectivity import resolve_catalog_label
     references = []
     gene = str(goal.get('gene_symbol') or '').casefold()
     for target in goal.get('preservation_targets') or []:
@@ -38,12 +39,9 @@ def preservation_reference_context(goal, catalog):
         matches = []
         target_gene = str(target.get('gene_symbol') or '').casefold()
         same_gene = not (gene and target_gene and gene != target_gene)
-        for label, entry in catalog.items() if same_gene else []:
-            metadata = entry.get('metadata') or {}
-            aliases = {str(v).casefold() for v in (label, entry.get('transcript_id'), entry.get('versioned_id'),
-                       metadata.get('id'), metadata.get('versioned_id')) if v}
-            if identities and all(identity in aliases for identity in identities):
-                matches.append(label)
+        resolved = [resolve_catalog_label(identity, catalog, catalog) for identity in identities] if same_gene else []
+        if resolved and None not in resolved and len(set(resolved)) == 1:
+            matches = [resolved[0]]
         references.append({'requested_target': deepcopy(target), 'resolved_labels': matches,
                            'resolution_status': 'resolved' if len(matches) == 1 else 'unresolved',
                            'interpretation': 'Preservation is a constraint, not a request to increase abundance. Shared sequence/site geometry requires a comparative mechanism assessment; it does not prove activity or harm.'})

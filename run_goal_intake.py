@@ -18491,7 +18491,9 @@ def _select_isoform_for_utr(
                     continue
                 tid_text = str(tid).strip()
                 accession_resolution = (entry.get("metadata") or {}).get("reference_accession_resolution") or {}
-                if accession_resolution.get("reference_accession") == lock_text:
+                if (accession_resolution.get("reference_accession") == lock_text
+                        or (accession_resolution.get("requested_accession") == lock_text
+                            and accession_resolution.get("exact_accession_verified") is True)):
                     return label, entry
                 identity = {**(entry.get("metadata") or {}), "id": tid_text}
                 if (tid_text == lock_text or tid_text.split(".", 1)[0] == lock_base) and _source_identifier_matches(identity, lock_text):
@@ -22694,12 +22696,14 @@ def _materialize_region_constraints(
     goal_constraints = _goal_region_constraints(structured_goal)
     programs = _iter_design_programs(structured_goal)
     program_constraints_present = any(_program_region_constraints(program) for program in programs)
+    # A typed target identity needs verification even when there are no
+    # additional region predicates (for example a whole-transcript gapmer).
+    _ensure_isoform_transcripts_for_target_region(structured_goal, final_payload)
     if not goal_constraints and not program_constraints_present:
         structured_goal.pop("materialized_region_constraints", None)
         final_payload.pop("materialized_region_constraints", None)
         return {"constraint_count": 0, "status": "skipped"}
 
-    _ensure_isoform_transcripts_for_target_region(structured_goal, final_payload)
     iso_label_primary, isoform_transcripts = _select_constraint_primary_isoform(structured_goal)
     materialized: Dict[str, Any] = {
         "version": 1,
@@ -23481,7 +23485,7 @@ def _constraints_can_seed_without_base(constraint_entries: List[Dict[str, Any]])
         if source_type in {"explicit_rows", "splice_relative_window"} or source == "user_provided_intervals":
             usable = True
             continue
-        if source_type in {"rbp_binding", "mirna_binding"} and constraint.get("materialized_rows"):
+        if source_type in {"rbp_binding", "mirna_binding", "transcript_feature"} and constraint.get("materialized_rows"):
             usable = True
             continue
         return False
@@ -25123,6 +25127,16 @@ def _build_program_target_region_rows(
         _normalize_target_region(program.get("target_region"))
         or _normalize_target_region(structured_goal.get("target_region"))
     )
+    if not target_region and isinstance(program.get("flanks"), dict):
+        # A named feature with an explicit flank window is a typed region,
+        # even if intake omitted the redundant target_region field. Keep
+        # multiple or conflicting feature scopes unresolved.
+        features = {constraint.get("feature_name") for constraint in
+                    _program_region_constraints(program)
+                    if constraint.get("source_type") == "transcript_feature"
+                    and constraint.get("operator") != "exclude"}
+        if features in ({"start_codon"}, {"translation_start"}):
+            target_region = "translation_start"
     if not target_region:
         return [], meta
 

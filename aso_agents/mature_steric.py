@@ -162,6 +162,14 @@ def build_tiles(runtime, goal, job, chemistry, output_dir):
         scope = exact_gene_count_scope(runtime.get_species_config(runtime.normalize_species(goal.get('species'))),
                                        goal.get('gene_id'), mapping)
         _enrich_exact_off_target_bins_for_tiles(result['json_path'], scope)
+        screened = json.loads(Path(result['json_path']).read_text())
+        species = runtime.normalize_species(goal.get('species'))
+        provenance = mapping.get('search_provenance')
+        if provenance:
+            for row in screened.get('rows') or []:
+                row['off_target_search_provenance_by_species'] = {species: provenance}
+            screened.setdefault('schema', {}).setdefault('columns', {})['off_target_search_provenance_by_species'] = 'object'
+            Path(result['json_path']).write_text(json.dumps(screened, indent=2))
         result['off_target_mapping'] = mapping
         result['off_target_count_scope'] = scope
     result['row_count'] = len(rows)

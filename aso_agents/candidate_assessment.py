@@ -127,7 +127,11 @@ def off_target_evidence(row):
     values = {**(row.get("source_annotations") or {}), **row}
     budget = number(values.get("Off_target_mismatch_budget"))
     bins = [number(values.get("Off_target_" + label + "_count")) for label in ("exact","1mm","2mm","3mm")]
-    complete = (values.get("off_target_count_status") == "complete_within_declared_scope"
+    count_status = values.get("off_target_count_status")
+    complete_status = (count_status == "complete_within_declared_scope"
+                       or (not count_status and values.get("off_target_search_status") == "complete"))
+    complete = (complete_status and values.get("off_target_search_status") not in
+                {"incomplete_or_censored", "incomplete", "failed", "unavailable", "not_run"}
                 and not values.get("off_target_mapping_capped") and budget in {0,1,2,3}
                 and all(value is not None and value >= 0 and value.is_integer() for value in bins[:int(budget)+1]))
     return {"status":"complete_within_declared_scope" if complete else "incomplete_or_unavailable",
