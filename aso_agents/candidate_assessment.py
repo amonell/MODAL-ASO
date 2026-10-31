@@ -4,6 +4,7 @@ These are computational triage annotations, never safety or potency predictions.
 All sequence operations use the attested synthesized antisense strand, 5' to 3'.
 """
 from copy import deepcopy
+from .artifact_io import file_sha256, write_json
 import csv
 import hashlib
 import json
@@ -273,7 +274,7 @@ def write_assessment_artifacts(pool, selected, goal, directory):
     payload = {"version":VERSION,"pool_row_count":len(pool),"pool_molecule_count":len({molecule_key(r) for r in pool}),
         "scope":"native_hard_eligible_pool_before_final_panel_selection_and_explicit_motif_exclusions",
         "rows":pool}
-    pool_path.write_text(json.dumps(payload, indent=2) + "\n")
+    write_json(pool_path, payload)
     records = []
     for rank, row in enumerate(shortlisted, 1):
         a = row.get("candidate_assessment") or {}
@@ -304,9 +305,9 @@ def write_assessment_artifacts(pool, selected, goal, directory):
             "duplex_reference":"Descriptive reference proxy; never maximized as a potency score",
             "cryptic_splice_evidence":"Review flags with exact genomic scope; no validated biological cutoff is assumed"},
         "selection_policy":"hard_constraints_then_evidence_triage_with_explicit_objective_precedence",
-        "pool_artifact":str(pool_path),"pool_sha256":hashlib.sha256(pool_path.read_bytes()).hexdigest(),
+        "pool_artifact":str(pool_path),"pool_sha256":file_sha256(pool_path),
         "count":len(records),"requested_count":goal.get("candidate_limit"),"minimum_count_shortfall":shortfall,"records":records}
-    shortlist_path.write_text(json.dumps(shortlist,indent=2) + "\n")
+    write_json(shortlist_path, shortlist)
     fields = ["recommendation_order","antisense_5to3","native_rank","recommendation_status","off_target_status",
               "off_target_counts","motif_flags","cryptic_splice_evidence","reference_tm_c","reference_delta_g_kcal_mol","thermodynamic_status","reason"]
     with csv_path.open("w", newline="") as handle:

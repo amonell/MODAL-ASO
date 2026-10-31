@@ -7247,6 +7247,7 @@ def _merge_design_job_jsons(
             source_annotations.append({key: value for key, value in {
                 "job_id": job_id, "program_id": job.get("program_id"),
                 "job_label": job.get("label"), "source_modality": modality,
+                "executed_reference": job_result.get("executed_reference"),
             }.items() if value not in (None, "")})
     if not source_paths:
         return {"error": f"no_{modality}_job_paths_for_{result_key}"}
@@ -27488,8 +27489,7 @@ def _strategy_route_source_metadata(path: Path, row: Optional[Dict[str, Any]] = 
     return {key: value for key, value in metadata.items() if value not in (None, "", [], {})}
 
 
-def _collect_generated_stage_sets(run_dir: str) -> Dict[str, Any]:
-    from .dependency_references import sequence_inventory_available
+def _generated_stage_source_paths(run_dir: str, *, include_delivered: bool = True) -> Dict[str, Any]:
     root = Path(run_dir)
     canonical_gapmer_path = _canonical_gapmer_candidate_path(run_dir)
     route_candidate_paths = _strategy_route_candidate_paths(root)
@@ -27549,8 +27549,14 @@ def _collect_generated_stage_sets(run_dir: str) -> Dict[str, Any]:
                 stage_sources["final_output"].extend(sorted(job_dir.glob("*gapmer_uniqueness_ranked.csv")))
                 stage_sources["final_output"].extend(sorted(job_dir.glob("*uniqueness_ranked.csv")))
     delivered_candidates = _run_path(root, 'generated_aso_set.json')
-    if delivered_candidates.is_file():
+    if include_delivered and delivered_candidates.is_file():
         stage_sources['final_output'] = [delivered_candidates]
+    return stage_sources
+
+
+def _collect_generated_stage_sets(run_dir: str) -> Dict[str, Any]:
+    from .dependency_references import sequence_inventory_available
+    stage_sources = _generated_stage_source_paths(run_dir)
     stage_sets: Dict[str, Set[str]] = {}
     source_manifest: Dict[str, List[str]] = {}
     for stage, paths in stage_sources.items():
@@ -27596,7 +27602,7 @@ def _load_candidate_rows_from_json(path: Path) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
-def _collect_generated_candidate_rows(
+def _generated_candidate_sources(
     run_dir: str, structured_goal: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     root = Path(run_dir)
@@ -27652,6 +27658,14 @@ def _collect_generated_candidate_rows(
             _run_path(root, "tiling", "steric_uniqueness_ranked.csv"),
             *([canonical_gapmer_path] if canonical_gapmer_path is not None else []),
         ]
+    return candidate_paths, job_source_meta, route_candidate_paths, ordered_roles
+
+
+def _collect_generated_candidate_rows(
+    run_dir: str, structured_goal: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    root = Path(run_dir)
+    candidate_paths, job_source_meta, route_candidate_paths, ordered_roles = _generated_candidate_sources(run_dir, structured_goal)
     rows: List[Dict[str, Any]] = []
     # A splice route is a selection view. Its compact CSV can omit screening
     # fields already measured in the scored-tile table. Rejoin only on the full
@@ -29677,6 +29691,41 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
+    from .report_build import build_identity, read_receipt, verified_artifacts, write_receipt
+    context = _goal_payload_context(run_dir)
+    goal = context.get("structured_goal") or {}
+    # The optional model-based OligoAI path has additional runtime dependencies;
+    # retain its native execution semantics rather than memoizing them here.
+    if (goal.get("intent") == "knockdown"
+            or any(program.get("modality") == "gapmer" for program in goal.get("design_programs") or [])):
+        return _build_v2_generated_design_artifacts(run_dir)
+    candidates, _, _, _ = _generated_candidate_sources(run_dir, goal)
+    stage_sources = _generated_stage_source_paths(run_dir, include_delivered=False)
+    output = _write_run_path(run_dir, "generated_aso_set.json")
+    dependencies = {path for paths in stage_sources.values() for path in paths
+                    if path != _run_path(run_dir, "generated_aso_set.json") and path != output}
+    dependencies.update(candidates)
+    dependencies.add(_run_path(run_dir, "tiling", "scored_tiles.json"))
+    for results_name in ("gapmer_tiling_results", "tiling_results"):
+        filtering = ((context.get("final_payload") or {}).get(results_name) or {}).get("required_evidence_filtering") or {}
+        if filtering.get("input_path"):
+            dependencies.add(Path(filtering["input_path"]))
+    receipt_path = output.with_name("generated_export_receipt.json")
+    prior = read_receipt(receipt_path)
+    identity = build_identity(context, dependencies, _repo_root(), prior)
+    reused = verified_artifacts(prior, identity)
+    if reused is not None:
+        return reused
+    artifacts = _build_v2_generated_design_artifacts(run_dir)
+    # Remove the new output fields from the identity too, making publication of
+    # these same artifact paths idempotent at the next reporting stage.
+    completed_identity = build_identity(context, dependencies, _repo_root(), {"artifacts": artifacts})
+    if identity and completed_identity and all(identity[key] == completed_identity[key] for key in ("inputs", "source_sha256")):
+        write_receipt(receipt_path, completed_identity, artifacts)
+    return artifacts
+
+
+def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     stage_payload = _collect_generated_stage_sets(run_dir)
     stage_sets = stage_payload.get("stage_sets") if isinstance(stage_payload.get("stage_sets"), dict) else {}
     context = _goal_payload_context(run_dir)
@@ -29997,10 +30046,13 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
             }
     generated_set_payload["distinct_molecule_count"] = len({molecule_key(row) for row in eligible_rows})
     ensure_run_parent(generated_set_path)
-    generated_set_path.write_text(
-        json.dumps(generated_set_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    from .artifact_io import write_json
+    from .design_qualification import qualify_panel
+    qualification = qualify_panel(structured_goal, assessment_pool, eligible_rows, candidate_selection)
+    qualification_path = generated_set_path.with_name("design_qualification.json")
+    write_json(qualification_path, qualification)
+    generated_set_payload["design_qualification_json"] = str(qualification_path)
+    write_json(generated_set_path, generated_set_payload)
 
     # The delivered selected inventory is the authoritative final membership;
     # earlier scored pools can contain candidates that were not selected.
@@ -30043,10 +30095,7 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         "sources": stage_payload.get("sources") if isinstance(stage_payload.get("sources"), dict) else {},
     }
     ensure_run_parent(generated_trace_path)
-    generated_trace_path.write_text(
-        json.dumps(generated_trace_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    write_json(generated_trace_path, generated_trace_payload)
     from aso_agents.design_delivery import write_design_panel
     panel_artifacts = write_design_panel(generated_set_payload, structured_goal, generated_set_path.parent)
     chemistry_artifacts = write_native_chemistry_exports(eligible_rows, generated_set_path.parent)
@@ -30055,6 +30104,7 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     return {
         "generated_aso_set_json": str(generated_set_path),
         "generated_filter_trace_json": str(generated_trace_path),
+        "design_qualification_json": str(qualification_path),
         **({"role_selection_eligible_pool_json": candidate_selection["eligible_pool_path"]}
            if candidate_selection.get("eligible_pool_path") else {}),
         **panel_artifacts,
@@ -47123,6 +47173,19 @@ def tool_resolve_isoforms_and_sites(
             user_evidence_text="\n".join(verified_user_evidence),
         )
     except Exception as exc:
+        from .design_event_consistency import ExonConversionConflict
+        if isinstance(exc, ExonConversionConflict):
+            _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+            return request_clarification(
+                state_path=state_path,
+                questions=[exc.question()],
+                reason=exc.reason,
+                clarification_kind="goal_intake",
+                restart_stage="intake",
+                context="The resolved transcript structures do not support one consistent interpretation of the requested exon event.",
+                why_this_matters="The physical exon determines which junctions are tiled and scored.",
+                recommendation="Specify the intended exon interval or correct the reference/event definition.",
+            )
         if "isoform_resolution_failed" in str(exc):
             gene = str(structured_goal.get("gene_symbol") or structured_goal.get("gene_id") or "the target gene").strip()
             exon_label = structured_goal.get("exon_label")
@@ -52692,8 +52755,10 @@ def tool_run_splice_eval(
     actual_evaluated = 0
     reused_job_count = 0
     constraint_applied = False
-    splice_eval_cache: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
-    tiles_hash_cache: Dict[str, str] = {}
+    splice_eval_cache: Dict[str, Dict[str, Any]] = {}
+    from .splice_invocation_identity import InvocationIdentity, evaluation_assets
+    invocation_identity = InvocationIdentity()
+    identity_reference, identity_backend, identity_assets = evaluation_assets(structured_goal, patient_reference_fasta)
     for job in eligible_jobs:
         job_id = str(job.get("job_id") or "").strip()
         if not job_id:
@@ -52719,18 +52784,11 @@ def tool_run_splice_eval(
             job=job,
             splice_sites=splice_sites,
         )
-        tile_digest = tiles_hash_cache.get(initial_job_tiles_path)
-        if not tile_digest:
-            tile_digest = _file_sha256(initial_job_tiles_path)
-            tiles_hash_cache[initial_job_tiles_path] = tile_digest
-        cache_key = (
-            tile_digest,
-            str(transcript_id or ""),
-            str(patient_reference_fasta or ""),
-            str(job_goal.get("exon_label") or ""),
-            str(job.get("site_kind") or ""),
-        )
-        cached_eval = splice_eval_cache.get(cache_key)
+        cache_key = invocation_identity.key(tiles=initial_job_tiles_path, goal=job_goal,
+            transcript=transcript_id, sites=splice_sites_json, reference=identity_reference,
+            backend=identity_backend, assets=identity_assets)
+        cached_eval = splice_eval_cache.get(cache_key) if cache_key else None
+        job_result["splice_eval_input_sha256"] = cache_key
         if cached_eval:
             job_eval = _clone_splice_eval_result_for_job(cached_eval, job_result["output_dir"])
             reused_job_count += 1
@@ -52766,7 +52824,8 @@ def tool_run_splice_eval(
         if not cached_eval:
             cached_entry = dict(job_eval)
             cached_entry["source_job_id"] = job_id
-            splice_eval_cache[cache_key] = cached_entry
+            if cache_key:
+                splice_eval_cache[cache_key] = cached_entry
             actual_evaluated += int(job_eval.get("evaluated") or 0)
         scored_tiles_path = str(job_eval.get("scored_tiles_path") or "").strip()
         if not scored_tiles_path or not Path(scored_tiles_path).exists():
@@ -55706,6 +55765,8 @@ def tool_run_gapmer_tiling(
         job_result["output_dir"] = job_output_dir
         job_result["modality"] = "gapmer"
         job_result["isoform_label"] = job_iso_label
+        from .execution_references import executed_reference
+        job_result["executed_reference"] = executed_reference(job, job_iso_label, isoform_transcripts[job_iso_label])
         job_result["json_path"] = subset_result.get("path")
         job_result["json_path_row_count"] = int(subset_result.get("row_count") or 0)
         if source_json_path and source_json_path != subset_result.get("path"):
@@ -55729,24 +55790,26 @@ def tool_run_gapmer_tiling(
             error_message="gapmer_job_export_incomplete",
             details={"run_dir": run_dir, "merge_error": merged_gapmer_json.get("error")},
         )
+    from .execution_references import merged_executed_references
+    reference_summary = merged_executed_references(gapmer_jobs, gapmer_results_by_job)
     gapmer_results = {
         "json_path": str(merged_gapmer_json.get("path") or ""),
         "output_dir": str(_write_run_path(run_dir, "gapmer_tiling")),
         "row_count": int(merged_gapmer_json.get("row_count") or 0),
         "mode": "gapmer_cdna_merged",
         "job_count": len(gapmer_jobs),
-        "transcript_id": transcript_id,
-        "primary_isoform": iso_label_primary,
+        **reference_summary,
     }
 
     build_gapmer_bed_rows = getattr(runtime, "_build_gapmer_bed_rows", None)
     intersect_bed_rows = getattr(runtime, "_intersect_bed_rows", None)
     if callable(build_gapmer_bed_rows):
-        gapmer_bed_rows = build_gapmer_bed_rows(
-            isoform_transcripts,
-            iso_label_primary,
-            frequency_transcripts=all_transcripts_full if isinstance(all_transcripts_full, dict) else None,
-        )
+        gapmer_bed_rows = []
+        for executed_label in dict.fromkeys(record["isoform_label"] for record in reference_summary["executed_references"]):
+            gapmer_bed_rows.extend(build_gapmer_bed_rows(
+                isoform_transcripts, executed_label,
+                frequency_transcripts=all_transcripts_full if isinstance(all_transcripts_full, dict) else None,
+            ) or [])
         if (
             isinstance(gapmer_bed_rows, list)
             and gapmer_bed_rows
@@ -55758,8 +55821,8 @@ def tool_run_gapmer_tiling(
             final_payload["gapmer_bed"] = {"rows": gapmer_bed_rows}
             structured_goal["gapmer_bed"] = {"rows": gapmer_bed_rows}
 
-    final_payload["gapmer_primary_transcript_id"] = transcript_id
-    final_payload["gapmer_primary_iso_label"] = iso_label_primary
+    final_payload["gapmer_primary_transcript_id"] = reference_summary["transcript_id"]
+    final_payload["gapmer_primary_iso_label"] = reference_summary["primary_isoform"]
     final_payload["gapmer_tiling_results"] = gapmer_results
     structured_goal["gapmer_tiling_results"] = gapmer_results
     _save_goal_payload(run_dir, payload, structured_goal, final_payload)
@@ -55773,7 +55836,8 @@ def tool_run_gapmer_tiling(
         extra={
             "json_path": gapmer_results.get("json_path"),
             "row_count": gapmer_results.get("row_count"),
-            "primary_isoform": iso_label_primary,
+            "primary_isoform": reference_summary["primary_isoform"],
+            "reference_scope": reference_summary["reference_scope"],
         },
     )
 

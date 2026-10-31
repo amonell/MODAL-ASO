@@ -972,22 +972,17 @@ def evaluate_splice_shifts_on_tiles(
     except Exception:
         exon_index = None
 
-    # Load transcript structure to get junctions (supports synthetic SnapGene transcripts)
+    # Use the same attested structure as planning. Fresh resolution remains the
+    # fallback when no current-run record matches; no reference cache is required.
     isoform_transcripts = goal.get("isoform_transcripts")
     snapgene_entry: Optional[Dict[str, Any]] = None
     if isinstance(isoform_transcripts, dict):
-        for iso_label, details in isoform_transcripts.items():
-            if not isinstance(details, dict):
-                continue
-            tid = details.get("transcript_id") or details.get("id")
-            if tid == transcript_id:
-                snapgene_entry = details
-                break
+        from .gapmer_selectivity import resolve_catalog_label
+        label = resolve_catalog_label(transcript_id, isoform_transcripts, isoform_transcripts)
+        if label is not None:
+            snapgene_entry = isoform_transcripts[label]
 
-    if snapgene_entry and (
-        transcript_id.startswith("SNAPGENE::")
-        or "snapgene" in str((snapgene_entry.get("metadata") or {}).get("source") or "").lower()
-    ):
+    if snapgene_entry and snapgene_entry.get("exons_tx"):
         exons_tx_entry = snapgene_entry.get("exons_tx") or []
         if not exons_tx_entry:
             return {"error": f"snapgene_transcript_missing_exons: {transcript_id}"}

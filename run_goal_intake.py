@@ -13617,11 +13617,38 @@ def _cached_authoritative_exon_nomenclature_mapping(
 def _resolve_authoritative_transcript_exon_ordinal(
     transcript_entry: Dict[str, Any],
     requested_exon_label: int,
+    structured_goal: Optional[Dict[str, Any]] = None,
 ) -> int:
+    from aso_agents.design_event_consistency import (
+        ExonConversionConflict, record_event_binding, structural_exon_resolution,
+    )
+    event = structural_exon_resolution(transcript_entry, requested_exon_label, structured_goal)
+    known = ((transcript_entry.get("metadata") or {}).get("exon_nomenclature_resolutions") or {}).get(
+        str(requested_exon_label), {})
+    known = known if isinstance(known, dict) else {}
+    if event and event["status"] == "verified_structural_event":
+        resolved = event["resolved_transcript_ordinal"]
+        if event["explicit_transcript_ordinals"] and event["explicit_transcript_ordinals"] != [resolved]:
+            raise ExonConversionConflict(event["reference_transcript_id"], requested_exon_label,
+                event["candidates"], "explicit transcript ordinal disagrees with the requested structural conversion")
+        if (known.get("status") == "verified_alternate_mapping"
+                and known.get("resolved_transcript_ordinal") != resolved):
+            raise ExonConversionConflict(event["reference_transcript_id"], requested_exon_label,
+                event["candidates"], "verified exon naming disagrees with the requested structural conversion")
+        record_event_binding(structured_goal, event)
+        return resolved
     resolution = _cached_authoritative_exon_nomenclature_mapping(
         transcript_entry,
         requested_exon_label,
     )
+    if event and event["status"] == "ambiguous_structural_events":
+        resolved = resolution.get("resolved_transcript_ordinal")
+        if (resolution.get("status") != "verified_alternate_mapping"
+                or resolved not in {row["resolved_transcript_ordinal"] for row in event["candidates"]}):
+            raise ExonConversionConflict(event["reference_transcript_id"], requested_exon_label,
+                event["candidates"], "more than one internal cassette event fits the transcript conversion")
+        record_event_binding(structured_goal, {**event, "status": "verified_nomenclature_disambiguated_event",
+                                              "resolved_transcript_ordinal": resolved})
     if str(resolution.get("status") or "").strip().lower() != (
         "verified_alternate_mapping"
     ):
@@ -13658,7 +13685,13 @@ def _compute_splice_site_plan(
     isoform_transcripts: Dict[str, Dict[str, Any]],
     structured_goal: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    plan, comparisons = _compute_native_splice_site_plan(isoform_objectives, isoform_transcripts, structured_goal)
+    from aso_agents.design_event_consistency import validate_reference_sites
+    validate_reference_sites(isoform_transcripts)
+    planning_goal = structured_goal
+    if isinstance(structured_goal, dict):
+        structured_goal["exon_conversion_bindings"] = []
+        planning_goal = {**structured_goal, "isoform_transcripts": isoform_transcripts}
+    plan, comparisons = _compute_native_splice_site_plan(isoform_objectives, isoform_transcripts, planning_goal)
     from aso_agents.intron_events import bind_intron_events
     return bind_intron_events(plan, comparisons, structured_goal or {}, isoform_transcripts)
 
@@ -13711,7 +13744,7 @@ def _compute_native_splice_site_plan(
         label = resolved_label(target.get("transcript_id") or target.get("isoform_label"))
         exon = target.get("requested_exon_label", target.get("exon_label"))
         if label in isoform_transcripts and isinstance(exon, int):
-            _cached_authoritative_exon_nomenclature_mapping(isoform_transcripts[label], exon)
+            _resolve_authoritative_transcript_exon_ordinal(isoform_transcripts[label], exon, structured_goal)
 
     isoform_objectives = [{**obj, "isoform_label": resolved_label(obj.get("isoform_label"))}
                          for obj in isoform_objectives if isinstance(obj, dict)]
@@ -13883,6 +13916,7 @@ def _compute_native_splice_site_plan(
             resolved_label = _resolve_authoritative_transcript_exon_ordinal(
                 transcript_entry,
                 requested_label,
+                structured_goal,
             )
             if resolved_label in available:
                 resolved_labels.add(int(resolved_label))
@@ -16856,7 +16890,7 @@ def _compute_steric_regions(
         focus_exon_idx = int(structured_goal["exon_label"])
         if single_iso_focus:
             focus_exon_idx = _resolve_authoritative_transcript_exon_ordinal(
-                next(iter(isoform_transcripts.values())), focus_exon_idx)
+                next(iter(isoform_transcripts.values())), focus_exon_idx, structured_goal)
 
     for entry in splice_plan:
         added_isoforms: Set[str] = set()
@@ -25351,7 +25385,7 @@ def _collect_program_splice_plan_entries(
     if not has_reference and len(isoforms) == 1:
         reference_labels = set(isoforms)
     resolved_exons = {
-        label: _resolve_authoritative_transcript_exon_ordinal(isoforms[label], desired_exon)
+        label: _resolve_authoritative_transcript_exon_ordinal(isoforms[label], desired_exon, structured_goal)
         for label in reference_labels
     } if isinstance(desired_exon, int) else {}
 
@@ -30038,8 +30072,8 @@ def _select_primary_transcript(
     """Choose the primary transcript for gapmer tiling.
 
     Priority:
-    1) transcript_lock (exact match)
-    2) Single requested isoform label (isoform-specific knockdown)
+    1) transcript_lock through an attested exact alias (unresolved stays explicit)
+    2) Single declared program reference or requested isoform label
     3) Canonical/MANE from full transcript set
     4) First non-SnapGene entry with transcript_id
     5) First entry with transcript_id
@@ -30048,6 +30082,38 @@ def _select_primary_transcript(
     isoform_transcripts = structured_goal.get("isoform_transcripts")
     lock_value = structured_goal.get("transcript_lock", {}).get("value") if isinstance(structured_goal.get("transcript_lock"), dict) else None
     normalized_lock = _normalize_transcript_id(lock_value)
+    from aso_agents.gapmer_selectivity import resolve_catalog_label
+    catalog = isoform_transcripts if isinstance(isoform_transcripts, dict) else {}
+
+    def attested_reference(reference):
+        label = resolve_catalog_label(reference, catalog, catalog)
+        if label is not None:
+            entry = catalog[label]
+            return entry.get("transcript_id") or entry.get("id") or reference, label
+        return None
+
+    if lock_value:
+        matched = attested_reference(lock_value)
+        if matched:
+            return matched
+        lock = structured_goal.get("transcript_lock") or {}
+        if lock.get("kind") in {"explicit_id", "reference_accession"} or _looks_like_refseq_transcript_accession(lock_value):
+            # An unresolved explicit identifier is not permission to substitute
+            # a canonical (possibly protected) transcript. Resolution owns it.
+            return lock_value, None
+
+    references = set()
+    for program in structured_goal.get("design_programs") or []:
+        if isinstance(program, dict):
+            cohort = program.get("transcript_ids") or []
+            references.update(str(value) for value in
+                [program.get("transcript_id"), *(cohort if isinstance(cohort, list) else [cohort])] if value)
+    resolved_references = [attested_reference(value) for value in references]
+    if resolved_references and all(value is not None for value in resolved_references):
+        if len({value[0] for value in resolved_references}) == 1:
+            return resolved_references[0]
+    elif len(references) == 1:
+        return next(iter(references)), None
 
     entries: List[Tuple[str, Optional[str], Dict[str, Any]]] = []
     if isinstance(isoform_transcripts, dict):
