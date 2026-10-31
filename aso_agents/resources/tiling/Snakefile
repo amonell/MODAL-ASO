@@ -122,6 +122,7 @@ rule map:
         tempfile=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam.tmp")),
         mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam"),
         overflow=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.overflow.fasta")),
+        unaligned=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.exact_unaligned.fasta"),
     params:
         bowtie_index=BOWTIE_INDEX,
         num_mismatches=0,
@@ -136,8 +137,9 @@ rule map:
     shell:
         """
         
-        bowtie -a -f -v {params.num_mismatches} -y -m {params.multi_limit} -l {params.seed_length} --sam --sam-nohead --no-unal --seed 1 --max {output.overflow:q} {params.bowtie_index:q} {input.tiles:q} {output.tempfile:q};
+        bowtie -a -f -v {params.num_mismatches} -y -m {params.multi_limit} -l {params.seed_length} --sam --sam-nohead --no-unal --seed 1 --max {output.overflow:q} --un {output.unaligned:q} {params.bowtie_index:q} {input.tiles:q} {output.tempfile:q};
         touch {output.overflow:q};
+        touch {output.unaligned:q};
         sort {output.tempfile:q} | uniq > {output.mapped:q};
         """
 
@@ -151,6 +153,7 @@ rule map_secondary:
         mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam"),
         sam=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_near.sam"),
         overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_overflow.fasta"),
+        unaligned=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_unaligned.fasta"),
     params:
         bowtie_index=SECONDARY_INDEX,
         num_mismatches=NUM_MISMATCHES,
@@ -164,8 +167,9 @@ rule map_secondary:
     shell:
         """
         
-        bowtie -a -f -v {params.num_mismatches} -y -m 2000 -l {params.tile_len} --sam --no-unal --seed 1 --max {output.overflow:q} {params.bowtie_index:q} {input.tiles:q} {output.sam:q}
+        bowtie -a -f -v {params.num_mismatches} -y -m 2000 -l {params.tile_len} --sam --no-unal --seed 1 --max {output.overflow:q} --un {output.unaligned:q} {params.bowtie_index:q} {input.tiles:q} {output.sam:q}
         touch {output.overflow:q}
+        touch {output.unaligned:q}
         samtools view -bS {output.sam:q} -o {output.mapped:q}
         """
 
@@ -200,8 +204,11 @@ rule convert_to_seq:
     maps sequences
     """
     input:
+        queries=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"),
         mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.sam"),
+        exact_unaligned=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.exact_unaligned.fasta"),
         near_mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_near.sam"),
+        near_unaligned=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_unaligned.fasta"),
         near_overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_overflow.fasta"),
         overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.overflow.fasta"),
         assignments=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam.featureCounts"),
@@ -220,7 +227,7 @@ rule convert_to_seq:
     shell:
         """
         
-        python {params.script:q} -s {input.mapped:q} -f {input.assignments:q} -o {output.fasta:q} --overflow {input.overflow:q} --near-sam {input.near_mapped:q} --near-overflow {input.near_overflow:q} --max-mismatches {params.max_mismatches} {params.same_reference}
+        python {params.script:q} -s {input.mapped:q} -f {input.assignments:q} -o {output.fasta:q} --query-fasta {input.queries:q} --exact-unaligned {input.exact_unaligned:q} --near-unaligned {input.near_unaligned:q} --overflow {input.overflow:q} --near-sam {input.near_mapped:q} --near-overflow {input.near_overflow:q} --max-mismatches {params.max_mismatches} {params.same_reference}
         """
 
 rule fold:

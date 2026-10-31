@@ -112,7 +112,7 @@ def load_sam_alignments(sam_path: str, noalt: bool = False, norandom: bool = Fal
                 continue
             if norandom and rname.endswith("_random"):
                 continue
-            qseq = fix_strand_values(flag, seq)
+            qseq = fix_strand_values(flag, seq).upper()
             end_pos = pos + len(qseq) - 1
             rows.append(
                 {
@@ -174,10 +174,18 @@ def build_mismatch_metadata(
 
 
 def reconcile_mapping_metadata(exact_df, near_df, query_keys, max_mismatches,
-                               *, near_available, near_overflow=(), exact_overflow=(), same_reference=True):
+                               *, near_available, near_overflow=(), exact_overflow=(), same_reference=True,
+                               exact_unaligned=(), near_unaligned=()):
     """Keep censored/unsearched bins unknown, preserving independently known exact hits."""
     near = build_mismatch_metadata(near_df, max_mismatches)
     exact = build_mismatch_metadata(exact_df, 0) if same_reference else {}
+    # Absence from a SAM is not proof of zero hits: Bowtie also suppresses
+    # overflowing queries. Only its explicit --un records establish no hits.
+    for key in near_unaligned:
+        near[key] = zero_mismatch_metadata(max_mismatches)
+    if same_reference:
+        for key in exact_unaligned:
+            exact[key] = zero_mismatch_metadata(0)
     near_overflow, exact_overflow = set(near_overflow), set(exact_overflow)
     result = {}
     for key in query_keys:
@@ -203,6 +211,61 @@ def reconcile_mapping_metadata(exact_df, near_df, query_keys, max_mismatches,
         values['off_target_position_convention'] = '1based_inclusive'
         result[key] = values
     return result
+
+
+def zero_mismatch_metadata(max_mismatches):
+    values = {}
+    for mm in range(max(3, max_mismatches) + 1):
+        label = 'exact' if mm == 0 else f'{mm}mm'
+        values[f'off_target_{label}_count'] = '0' if mm <= max_mismatches else 'NA'
+        values[f'off_target_{mm}mm_positions'] = 'None' if mm <= max_mismatches else 'NA'
+    values[f'off_target_total_upto_{max_mismatches}mm_count'] = '0'
+    values['off_target_weighted_risk_score'] = '0'
+    return values
+
+
+def read_query_inventory(path):
+    """Read immutable query identities, allowing repeated identical records."""
+    if not path:
+        return {}
+    opener = gzip.open if str(path).endswith('.gz') else open
+    records = {}
+    with opener(path, 'rt') as handle:
+        for record in SeqIO.parse(handle, 'fasta'):
+            sequence = str(record.seq).upper()
+            if record.id in records and records[record.id] != sequence:
+                raise ValueError('Conflicting sequences for query identity: ' + record.id)
+            records[record.id] = sequence
+    return records
+
+
+def validate_query_evidence(queries, alignments, unaligned, overflow):
+    """Reject contradictory aligner evidence without inferring missing results."""
+    aligned = set() if alignments.empty else set(zip(alignments.qname, alignments.qseq))
+    no_hits, censored = set(unaligned.items()), set(overflow.items())
+    if aligned & no_hits or aligned & censored or no_hits & censored:
+        raise ValueError('Conflicting aligned, unaligned or censored query evidence')
+    if queries is not None:
+        expected = set(queries.items())
+        if (aligned | no_hits | censored) - expected:
+            raise ValueError('Alignment evidence does not match the supplied query inventory')
+
+
+def restore_query_inventory(collapsed, queries, unaligned, overflow):
+    """Retain each original query even when the search reference lacks its allele."""
+    if queries is None:
+        return collapsed
+    inventory = pd.DataFrame(list(queries.items()), columns=['qname', 'qseq'])
+    restored = inventory.merge(collapsed, on=['qname', 'qseq'], how='left', validate='one_to_one')
+    if restored.empty:
+        return restored
+    restored['position'] = restored['position'].apply(lambda x: x if isinstance(x, list) else [])
+    # Missing search evidence stays unknown, including for newly preserved
+    # queries. Censored records are added separately with their original bound.
+    restored['mappednum'] = restored.apply(
+        lambda row: f'mappednum={len(row.position)}' if row.position else
+        'mappednum=0' if unaligned.get(row.qname) == row.qseq else 'mappednum=NA', axis=1)
+    return restored[~restored.qname.isin(overflow)].copy()
 
 
 def dataframe_to_fasta(df, output_file):
@@ -323,6 +386,9 @@ def main(argv=None):  # IGNORE:C0111
     )
     parser.add_argument('--near-overflow', help='Queries suppressed by the near-match Bowtie hit cap.')
     parser.add_argument('--same-reference', action='store_true', help='Exact and near alignments use the same reference index.')
+    parser.add_argument('--query-fasta', help='Original tiled FASTA (plain or gzip); preserves queries without exact alignments.')
+    parser.add_argument('--exact-unaligned', help='Explicit zero-hit query FASTA from exact Bowtie --un.')
+    parser.add_argument('--near-unaligned', help='Explicit zero-hit query FASTA from near-match Bowtie --un.')
     
     print("Begin at:", datetime.now().strftime("%H:%M:%S"))
     args = parser.parse_args()
@@ -348,7 +414,15 @@ def main(argv=None):  # IGNORE:C0111
         near_df = load_sam_alignments(near_sam, noalt=noalt, norandom=norandom)
 
     collapsed['mappednum'] = collapsed['position'].apply(lambda positions: f"mappednum={len(positions)}")
-    collapsed['position'] = collapsed['position'].apply(lambda positions: 'mappedto=' + ','.join(positions))
+    queries = read_query_inventory(args.query_fasta) if args.query_fasta else None
+    exact_unaligned = read_query_inventory(args.exact_unaligned)
+    near_unaligned = read_query_inventory(args.near_unaligned)
+    exact_overflow = read_query_inventory(overflow_path)
+    near_overflow = read_query_inventory(args.near_overflow)
+    validate_query_evidence(queries, df, exact_unaligned, exact_overflow)
+    validate_query_evidence(queries, near_df, near_unaligned, near_overflow)
+    collapsed = restore_query_inventory(collapsed, queries, exact_unaligned, exact_overflow)
+    collapsed['position'] = collapsed['position'].apply(lambda positions: 'mappedto=' + (','.join(positions) or 'None'))
     sfeatures = pd.read_csv(featuretab, sep='\t', names=['qname', 'assigned', 'is_assigned', 'secondary_gene_name'])
     sfeatures = sfeatures[sfeatures['is_assigned']==1][['qname', 'secondary_gene_name']]
     sfeatures = sfeatures.groupby("qname", as_index=False).agg({
@@ -357,18 +431,15 @@ def main(argv=None):  # IGNORE:C0111
     merged = pd.merge(collapsed, sfeatures, how='left', left_on=['qname'], right_on=['qname'])
 
     overflow_records = []
-    if overflow_path and os.path.exists(overflow_path) and os.path.getsize(overflow_path) > 0:
-        with open(overflow_path, "r", encoding="utf-8") as overflow_handle:
-            for record in SeqIO.parse(overflow_handle, "fasta"):
-                qname = record.id
-                overflow_records.append({
+    for qname, sequence in exact_overflow.items():
+        overflow_records.append({
                     "qname": qname,
-                    "qseq": str(record.seq),
+                    "qseq": sequence,
                     "mappednum": "mappednum=>2000",
                     "position": "mappedto=overflow",
                     "secondary_gene_name": "None",
                     "overflow_flag": "overflow=TRUE",
-                })
+        })
     if overflow_records:
         overflow_df = pd.DataFrame(overflow_records)
         merged = pd.concat([merged, overflow_df], ignore_index=True, sort=False)
@@ -378,24 +449,19 @@ def main(argv=None):  # IGNORE:C0111
 
     merged.fillna("None", inplace=True)
 
-    # With no mapped or overflow records, pandas returns a DataFrame from
-    # row-wise apply rather than the Series expected by the header assignment.
-    # An empty FASTA is the truthful downstream result for this input.
+    # A legacy caller without an inventory may have no records. Native tiling
+    # supplies the full query inventory, independently of mapping success.
     if merged.empty:
         dataframe_to_fasta(merged, output_file=outfile)
         print("Finished at:", datetime.now().strftime("%H:%M:%S"))
         return 0
 
-    def overflow_names(path):
-        if not path or not os.path.isfile(path):
-            return set()
-        with open(path) as handle:
-            return {record.id for record in SeqIO.parse(handle, 'fasta')}
     mismatch_metadata = reconcile_mapping_metadata(
         df, near_df, [(str(row.qname), str(row.qseq)) for row in merged.itertuples()], max_mismatches,
         near_available=bool(near_sam and os.path.isfile(near_sam)),
-        near_overflow=overflow_names(args.near_overflow), exact_overflow=overflow_names(overflow_path),
-        same_reference=args.same_reference)
+        near_overflow=near_overflow, exact_overflow=exact_overflow,
+        same_reference=args.same_reference, exact_unaligned=exact_unaligned.items(),
+        near_unaligned=near_unaligned.items())
 
     merged['header'] = merged['qname'] + '|' + merged["mappednum"] + '|' + merged["position"] + '|secondary_hit=' + merged['secondary_gene_name']
     def append_mismatch_metadata(row):
