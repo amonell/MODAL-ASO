@@ -152,6 +152,36 @@ def resolve_catalog_label(label, catalog, resolved):
     return next(iter(matches)) if len(matches) == 1 else None
 
 
+def exon_label_is_outcome_context(goal, program, resolved, primary):
+    """Distinguish an isoform's exon nomenclature from a binding restriction.
+
+    Explicit physical targeting takes priority. Legacy exon-only programs keep
+    their scope; an identified RNA abundance outcome alone does not restrict
+    tiling to an exon that happens to have the same annotation ordinal.
+    """
+    policy = program.get('targeting_policy')
+    if policy == 'explicit_user_region':
+        return False
+    if policy == 'default_exploratory':
+        return True
+    outcomes = {'isoform', 'transcript', 'isoform_cohort', 'transcript_cohort'}
+    if program.get('target_type') in outcomes:
+        return True
+    if program.get('target_type') in {'exon', 'interval', 'splice_junction'}:
+        return False
+    identity = program.get('transcript_id') or program.get('isoform_label') or primary
+    target = resolve_catalog_label(identity, resolved, resolved)
+    if target is None:
+        return False
+    for outcome in goal.get('evaluation_targets') or []:
+        if not isinstance(outcome, dict) or outcome.get('target_type') not in outcomes:
+            continue
+        identity = outcome.get('transcript_id') or outcome.get('isoform_label')
+        if resolve_catalog_label(identity, resolved, resolved) == target:
+            return True
+    return False
+
+
 def resolve_uniqueness_roles(target, beneficial, pathogenic, catalog, resolved):
     """Keep sequence hits usable even when an auxiliary role cannot be assigned."""
     result = {}

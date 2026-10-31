@@ -25598,7 +25598,7 @@ def _build_gapmer_program_region_rows(
     if iso_label:
         meta["isoform_label"] = iso_label
 
-    from aso_agents.gapmer_selectivity import explicit_junction_region
+    from aso_agents.gapmer_selectivity import explicit_junction_region, exon_label_is_outcome_context
     junction = explicit_junction_region(structured_goal, program, isoform_transcripts, iso_label)
     if junction is not None:
         meta.update({key: value for key, value in junction.items() if key != "rows"})
@@ -25621,7 +25621,13 @@ def _build_gapmer_program_region_rows(
                 break
         if exon_focus is not None:
             break
-    if exon_focus is not None and "junction" not in text and iso_label and iso_label in isoform_transcripts:
+    outcome_context = exon_label_is_outcome_context(structured_goal, program, isoform_transcripts, iso_label)
+    if exon_focus is not None and outcome_context:
+        meta['exon_scope'] = {'requested_exon_label': exon_focus, 'role': 'isoform_outcome_context',
+            'interpretation': 'The outcome exon label does not restrict physical binding. '
+                'Explicit junctions, features and region constraints retain their own scope.'}
+    if (exon_focus is not None and not outcome_context and "junction" not in text
+            and iso_label and iso_label in isoform_transcripts):
         _genomic_rows, cdna_rows, exon_summary = _build_exon_constraint_rows(
             constraint={"exon_label": exon_focus, "label": label},
             iso_label=iso_label,
@@ -25646,7 +25652,7 @@ def _build_gapmer_program_region_rows(
         meta.update(target_region_meta)
         return _relabel_region_rows(target_region_rows, label), meta
 
-    if "junction" in text:
+    if "junction" in text and not outcome_context:
         if not iso_label or iso_label not in isoform_transcripts:
             return [], meta
         entry = isoform_transcripts.get(iso_label) or {}
