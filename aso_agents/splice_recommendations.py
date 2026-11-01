@@ -93,6 +93,7 @@ def resolve_routing_exon_objectives(goal):
             'exon_label', 'exon_index', 'transcript_id', 'reference_transcript_id',
             'exon_numbering_reference_transcript_id', 'exon_numbering_transcript_id',
             'program_id', 'parent_program_id', 'modality', 'exon_ordinal',
+            'chrom', 'start', 'end', 'strand',
         ) if key in source}
         target['desired_effect'] = effect
         targets.append(target)
@@ -105,13 +106,17 @@ def resolve_routing_exon_objectives(goal):
         identity = target.get('exon_identity_resolution') or {}
         from .design_event_consistency import routing_event_identity
         event_identity = routing_event_identity(goal, target)
+        from .explicit_target_identity import routing_explicit_span_identity
+        explicit_identity = routing_explicit_span_identity(goal, target)
+        if explicit_identity is not None:
+            event_identity = explicit_identity
         if event_identity is not None:
             identity = event_identity
         definition = {'desired_effect': target['desired_effect'],
             'direction': 'increase' if target['desired_effect'] == 'inclusion' else 'decrease',
             'identity': identity, 'status': 'unresolved', 'requested_feature': target}
         if is_resolved_feature_identity(identity) or (event_identity is not None and identity.get('status') in {
-                'verified_structural_event', 'verified_nomenclature_disambiguated_event'}):
+                'verified_structural_event', 'verified_nomenclature_disambiguated_event', 'verified_explicit_span'}):
             reference = identity.get('reference_transcript_id')
             entries = [entry for label, entry in catalog.items() if isinstance(entry, dict)
                        and transcript_matches(reference, transcript_identifier(entry, label))]

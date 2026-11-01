@@ -199,3 +199,92 @@ def prediction_geometry_status(site, entry):
     elif index is not None:
         return 'unresolved'
     return 'consistent'
+
+
+def routing_explicit_span_identity(goal, requested):
+    """Bind a typed physical exon to its current evaluation model, not its name.
+
+    Constructed exons retain a distinct model identity and exact base-reference
+    version. This attests geometry only, not annotation, activity or translation.
+    """
+    from .design_event_consistency import _structure
+    import hashlib
+    import json
+
+    reference = str(requested.get('exon_numbering_reference_transcript_id')
+        or requested.get('exon_numbering_transcript_id') or requested.get('reference_transcript_id')
+        or requested.get('transcript_id') or '')
+    label = requested.get('exon_label')
+    direction = {'inclusion': 'increase', 'skipping': 'decrease'}.get(requested.get('desired_effect'))
+    if not reference or label is None or not direction:
+        return None
+    catalog = goal.get('isoform_transcripts') or {}
+    candidates = []
+    for target in goal.get('explicit_splice_targets') or []:
+        if not isinstance(target, dict):
+            continue
+        if str(target.get('requested_exon_label', target.get('exon_label'))).casefold() != str(label).casefold():
+            continue
+        model_label = target.get('isoform_label')
+        base_label = target.get('base_isoform_label') or model_label
+        model, base = catalog.get(model_label), catalog.get(base_label)
+        if not isinstance(model, dict) or not isinstance(base, dict):
+            continue
+        base_id = transcript_identifier(base, base_label)
+        if not transcript_matches(reference, base_id):
+            continue
+        # A second declaration for the same request must not disappear merely
+        # because its contradictory geometry failed a later validation.
+        candidates.append((target, model, base, base_id, model_label))
+    if not candidates:
+        return None
+    unresolved = {'status': 'unresolved_explicit_span', 'biological_label_verified': False,
+        'requested_exon_label': label, 'requested_reference_transcript_id': reference,
+        'reason': 'The explicit exon declaration conflicts with, or is ambiguous in, the current reference model.'}
+    signatures = {json.dumps(item[0], sort_keys=True) for item in candidates}
+    if len(signatures) != 1:
+        return unresolved
+    target, model, base, base_id, model_label = candidates[0]
+    structure, base_structure = _structure(model), _structure(base)
+    if not structure or not base_structure or structure[:2] != base_structure[:2]:
+        return unresolved
+    chrom, strand, exons = structure
+    start, end = target.get('start'), target.get('end')
+    if (type(start) is not int or type(end) is not int or not 0 < start < end
+            or chromosome(target.get('chrom')) != chromosome(chrom)
+            or strand_symbol(target.get('strand')) != strand or target.get('desired_delta') != direction):
+        return unresolved
+    for key, actual in [('start', start), ('end', end)]:
+        if key in requested and requested[key] != actual:
+            return unresolved
+    if requested.get('chrom') and chromosome(requested['chrom']) != chromosome(chrom):
+        return unresolved
+    if requested.get('strand') and strand_symbol(requested['strand']) != strand:
+        return unresolved
+    if target.get('program_id') and target['program_id'] not in {
+            requested.get('program_id'), requested.get('parent_program_id')}:
+        return unresolved
+    exact = [e for e in exons if (e['start'], e['end']) == (start, end)
+             and 1 < e['index'] < len(exons)]
+    if len(exact) != 1:
+        return unresolved
+    exon = exact[0]
+    for key in ('exon_index', 'exon_ordinal'):
+        if key in requested and requested[key] != exon['index']:
+            return unresolved
+    metadata = model.get('metadata') or {}
+    model_id = transcript_identifier(model, model_label)
+    if model is not base:
+        if (not metadata.get('explicit_target_modified')
+                or metadata.get('base_reference_transcript_id') != base_id
+                or metadata.get('base_isoform_label') != base_label
+                or model_id == base_id):
+            return unresolved
+    return {'status': 'verified_explicit_span', 'biological_label_verified': False,
+        'requested_exon_label': label, 'requested_reference_transcript_id': reference,
+        'reference_transcript_id': model_id, 'base_reference_transcript_id': base_id,
+        'resolved_transcript_ordinal': exon['index'], 'chrom': 'chr' + chrom,
+        'strand': strand, 'start': start, 'end': end,
+        'reference_structure_sha256': hashlib.sha256(json.dumps(
+            [model_id, structure, base_id, base_structure], sort_keys=True).encode()).hexdigest(),
+        'interpretation': 'Supplied complete exon coordinates checked against the current evaluation model and its base reference. Constructed features are not asserted to be annotated exons or productive transcripts.'}

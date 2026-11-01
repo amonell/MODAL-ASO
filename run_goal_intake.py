@@ -13103,6 +13103,7 @@ def _safeguard_candidate_has_objective_signal(entry: Optional[Dict[str, Any]]) -
         or entry.get("conflict_between_objectives")
         or entry.get("shared_with_beneficial")
         or entry.get("preserved_isoforms")
+        or entry.get("explicit_exon_objective_ids")
         or entry.get("objective_membership_complete") is False
         or entry.get("required")
         or entry.get("monitoring_purpose") == "splice_neighborhood"
@@ -13133,6 +13134,9 @@ def _classify_safeguard_candidate_for_target(
         return "keep", "objective_reference_membership_unresolved"
     if candidate_entry.get("monitoring_purpose") == "splice_neighborhood":
         return "keep", "nearby_reference_junction"
+    if (set(primary_entry.get("explicit_exon_objective_ids") or [])
+            & set(candidate_entry.get("explicit_exon_objective_ids") or [])):
+        return "keep", "explicit_exon_reciprocal_guard"
 
     primary_present = _safeguard_isoform_set(primary_entry, "present_in")
     candidate_present = _safeguard_isoform_set(candidate_entry, "present_in")
@@ -13323,6 +13327,9 @@ def _build_safeguard_candidates_by_target(
     full_plan = goal.get("splice_site_plan")
     full_plan = full_plan if isinstance(full_plan, list) else []
     from aso_agents.splice_safeguards import neighborhood_guard_sites, physical_site
+    from aso_agents.splice_recommendations import resolve_routing_exon_objectives
+    explicit_objectives = [o for o in resolve_routing_exon_objectives(goal)
+        if o.get("status") == "resolved" and (o.get("identity") or {}).get("status") == "verified_explicit_span"]
     context = neighborhood_guard_sites(goal, splice_plan)
     site_by_label = {_canonical_site_label(site): site for site in full_plan + context + splice_plan
                      if isinstance(site, dict) and _canonical_site_label(site)}
@@ -13333,6 +13340,7 @@ def _build_safeguard_candidates_by_target(
     def bind(candidate: Dict[str, Any]) -> Dict[str, Any]:
         site = site_by_label.get(_safeguard_entry_label(candidate), {})
         result = bind_safeguard_reference({**site, **candidate}, site, goal)
+        result.pop("explicit_exon_objective_ids", None)
         if result.get("objective_membership_scope") == "physically_inspected_transcript_catalog":
             suggestion, reason = _suggest_safeguard_direction(result)
             if suggestion != result.get("suggested_guard"):
@@ -13340,6 +13348,19 @@ def _build_safeguard_candidates_by_target(
                                        "previous": result.get("suggested_guard"), "reconciled": suggestion})
             result.update(suggested_guard=suggestion, suggested_guard_reason=reason,
                           guard_policy_source="reference_reconciled_objectives")
+        key = physical_site(site)
+        matching = [o for o in explicit_objectives if key and key[:2] ==
+                    (str(o["chrom"]).removeprefix("chr"), o["strand"])
+                    and key[3] == o[key[2] + "_position"]]
+        if matching:
+            result["explicit_exon_objective_ids"] = [o["objective_id"] for o in matching]
+            directions = {o["direction"] for o in matching}
+            if not any(result.get(k) for k in ("beneficial_isoforms", "pathogenic_isoforms", "preserved_isoforms")):
+                suggestion = ({"increase": "no_decrease", "decrease": "no_increase"}[next(iter(directions))]
+                              if len(directions) == 1 else "neutral")
+                result.update(suggested_guard=suggestion,
+                    suggested_guard_reason="checked_explicit_exon_objective",
+                    guard_policy_source="physical_explicit_exon_objective")
         return result
 
     for candidate in candidates:
@@ -13352,13 +13373,16 @@ def _build_safeguard_candidates_by_target(
             continue
         label = _canonical_site_label(site)
         is_context = site.get("monitoring_purpose") == "splice_neighborhood"
-        if not label or label in cached_labels or (not is_context and measured_site_labels is not None and label not in measured_site_labels):
+        if not label or label in cached_labels:
             continue
         candidate = bind({**site, "label": label})
+        if (not is_context and not candidate.get("explicit_exon_objective_ids")
+                and measured_site_labels is not None and label not in measured_site_labels):
+            continue
         # An unscoped or unrelated site must not become a guard by mere existence.
         if not is_context and not any(candidate.get(key) for key in ("beneficial_isoforms", "pathogenic_isoforms",
                                                   "preserved_isoforms", "conflict_between_objectives",
-                                                  "shared_with_beneficial")):
+                                                  "shared_with_beneficial", "explicit_exon_objective_ids")):
             if candidate.get("objective_membership_complete") is not False:
                 continue
         if not candidate.get("suggested_guard"):
@@ -13528,6 +13552,7 @@ def _default_safeguards_from_candidates(
             or beneficial
             or pathogenic
             or cand.get("preserved_isoforms")
+            or cand.get("explicit_exon_objective_ids")
             or cand.get("objective_membership_complete") is False
             or cand.get("required")
             or cand.get("monitoring_purpose") == "splice_neighborhood"
