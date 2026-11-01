@@ -92,6 +92,7 @@ def resolve_routing_exon_objectives(goal):
         target = {key: source[key] for key in (
             'exon_label', 'exon_index', 'transcript_id', 'reference_transcript_id',
             'exon_numbering_reference_transcript_id', 'exon_numbering_transcript_id',
+            'program_id', 'parent_program_id', 'modality', 'exon_ordinal',
         ) if key in source}
         target['desired_effect'] = effect
         targets.append(target)
@@ -102,10 +103,15 @@ def resolve_routing_exon_objectives(goal):
     objectives = []
     for target in resolved:
         identity = target.get('exon_identity_resolution') or {}
+        from .design_event_consistency import routing_event_identity
+        event_identity = routing_event_identity(goal, target)
+        if event_identity is not None:
+            identity = event_identity
         definition = {'desired_effect': target['desired_effect'],
             'direction': 'increase' if target['desired_effect'] == 'inclusion' else 'decrease',
             'identity': identity, 'status': 'unresolved', 'requested_feature': target}
-        if is_resolved_feature_identity(identity):
+        if is_resolved_feature_identity(identity) or (event_identity is not None and identity.get('status') in {
+                'verified_structural_event', 'verified_nomenclature_disambiguated_event'}):
             reference = identity.get('reference_transcript_id')
             entries = [entry for label, entry in catalog.items() if isinstance(entry, dict)
                        and transcript_matches(reference, transcript_identifier(entry, label))]
@@ -240,7 +246,27 @@ def objective_prediction_evidence(row, objective):
     return result
 
 
-def annotate_route_recommendation(row, primary_reports, objectives):
+def safeguard_priority(reports):
+    """Rank measured adherence before effect magnitude, without deleting rows."""
+    failed = sum(report.get('passes') is False for report in reports)
+    unknown = sum(report.get('passes') is not True and report.get('passes') is not False for report in reports)
+    worst_excess = 0.0
+    for report in reports:
+        for raw in report.get('values') or []:
+            value = finite_number(raw)
+            if value is None:
+                continue
+            for key, measured in [('max_abs_delta', abs(value)), ('max_increase', value), ('max_decrease', -value)]:
+                bound = finite_number(report.get(key))
+                if bound is not None:
+                    worst_excess = max(worst_excess, measured-bound)
+    status = 'failed' if failed else 'unmeasured' if unknown else 'passed' if reports else 'not_requested'
+    return {'status': status, 'guard_count': len(reports), 'failed_count': failed,
+            'unmeasured_count': unknown, 'maximum_bound_excess': worst_excess,
+            'rank_key': [0 if failed else 1 if unknown else 2, -worst_excess]}
+
+
+def annotate_route_recommendation(row, primary_reports, objectives, safeguard_reports=None):
     """Add reproducible priority and scope without excluding any candidate."""
     selected = []
     for report in primary_reports:
@@ -281,6 +307,10 @@ def annotate_route_recommendation(row, primary_reports, objectives):
     row.update(selected_effect_evidence=selected, exon_objective_evidence=paired,
         recommendation_basis=basis, recommendation_status=status, recommendation_note=note,
         recommendation_rank_key=[*primary_key, *site_key])
+    if safeguard_reports is not None:
+        priority = safeguard_priority(safeguard_reports)
+        row.update(safeguard_priority=priority,
+            recommendation_rank_key=[primary_key[0], *priority['rank_key'], primary_key[1], *site_key])
     return row
 
 
@@ -302,7 +332,7 @@ RECOMMENDATION_FIELDS = (
     'recommendation_status', 'recommendation_note', 'recommendation_rank_key',
     'reference_scope', 'selected_transcript_context', 'shared_with_beneficial',
     'conflict_between_objectives', 'route_interpretation',
-    'safeguard_report',
+    'safeguard_report', 'safeguard_priority',
 )
 
 
@@ -317,7 +347,7 @@ def report_recommendation_fields(row):
         if isinstance(value, str) and key in {
             'selected_effect_evidence', 'exon_objective_evidence', 'recommendation_rank_key',
             'reference_scope', 'selected_transcript_context',
-            'safeguard_report',
+            'safeguard_report', 'safeguard_priority',
         }:
             try:
                 value = json.loads(value)

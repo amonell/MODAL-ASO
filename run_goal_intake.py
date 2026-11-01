@@ -28,6 +28,7 @@ from aso_agents.reporting_contracts import generated_sequence_fields, exact_coun
 from aso_agents.ranking_contracts import gapmer_selection_key, gapmer_selection_order
 from aso_agents.splice_recommendations import recommendation_sort_key, report_recommendation_fields
 from aso_agents.transcript_metadata import resolved_transcript_metadata
+from aso_agents.splice_safeguards import DEFAULT_GUARD_TOLERANCE
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
@@ -13104,6 +13105,7 @@ def _safeguard_candidate_has_objective_signal(entry: Optional[Dict[str, Any]]) -
         or entry.get("preserved_isoforms")
         or entry.get("objective_membership_complete") is False
         or entry.get("required")
+        or entry.get("monitoring_purpose") == "splice_neighborhood"
         or any(entry.get(key) is not None for key in ("max_abs_delta", "max_increase", "max_decrease"))
     )
 
@@ -13129,6 +13131,8 @@ def _classify_safeguard_candidate_for_target(
         return "keep", "explicit_guard_policy"
     if candidate_entry.get("objective_membership_complete") is False:
         return "keep", "objective_reference_membership_unresolved"
+    if candidate_entry.get("monitoring_purpose") == "splice_neighborhood":
+        return "keep", "nearby_reference_junction"
 
     primary_present = _safeguard_isoform_set(primary_entry, "present_in")
     candidate_present = _safeguard_isoform_set(candidate_entry, "present_in")
@@ -13306,7 +13310,8 @@ def _build_safeguard_candidates_by_target(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Bind derived guards to reference objectives, not an optional cache.
 
-    Reconstruct missing candidates only for the supplied measured-site scope.
+    Reconstruct design-plan candidates within the supplied measured-site scope.
+    Nearby reference junctions remain guards even if measurement is unavailable.
     Existing guards remain visible even when their measurements are missing.
     Explicit numeric policy is carried through separately from derived direction.
     """
@@ -13317,14 +13322,17 @@ def _build_safeguard_candidates_by_target(
     goal = structured_goal if isinstance(structured_goal, dict) else {}
     full_plan = goal.get("splice_site_plan")
     full_plan = full_plan if isinstance(full_plan, list) else []
-    site_by_label = {_canonical_site_label(site): site for site in full_plan + splice_plan
+    from aso_agents.splice_safeguards import neighborhood_guard_sites, physical_site
+    context = neighborhood_guard_sites(goal, splice_plan)
+    site_by_label = {_canonical_site_label(site): site for site in full_plan + context + splice_plan
                      if isinstance(site, dict) and _canonical_site_label(site)}
     reconciled: List[Dict[str, Any]] = []
     policy_changes: List[Dict[str, Any]] = []
     sources = {"cached": 0, "reconstructed": 0}
 
     def bind(candidate: Dict[str, Any]) -> Dict[str, Any]:
-        result = bind_safeguard_reference(candidate, site_by_label.get(_safeguard_entry_label(candidate), {}), goal)
+        site = site_by_label.get(_safeguard_entry_label(candidate), {})
+        result = bind_safeguard_reference({**site, **candidate}, site, goal)
         if result.get("objective_membership_scope") == "physically_inspected_transcript_catalog":
             suggestion, reason = _suggest_safeguard_direction(result)
             if suggestion != result.get("suggested_guard"):
@@ -13339,15 +13347,16 @@ def _build_safeguard_candidates_by_target(
             reconciled.append(bind({**candidate, "label": _safeguard_entry_label(candidate)}))
             sources["cached"] += 1
     cached_labels = {_safeguard_entry_label(candidate) for candidate in reconciled}
-    for site in splice_plan:
+    for site in splice_plan + context:
         if not isinstance(site, dict):
             continue
         label = _canonical_site_label(site)
-        if not label or label in cached_labels or (measured_site_labels is not None and label not in measured_site_labels):
+        is_context = site.get("monitoring_purpose") == "splice_neighborhood"
+        if not label or label in cached_labels or (not is_context and measured_site_labels is not None and label not in measured_site_labels):
             continue
         candidate = bind({**site, "label": label})
         # An unscoped or unrelated site must not become a guard by mere existence.
-        if not any(candidate.get(key) for key in ("beneficial_isoforms", "pathogenic_isoforms",
+        if not is_context and not any(candidate.get(key) for key in ("beneficial_isoforms", "pathogenic_isoforms",
                                                   "preserved_isoforms", "conflict_between_objectives",
                                                   "shared_with_beneficial")):
             if candidate.get("objective_membership_complete") is not False:
@@ -13378,6 +13387,12 @@ def _build_safeguard_candidates_by_target(
         primary_entry = candidate_by_label.get(label) or site
         candidate_actions: List[Tuple[str, Dict[str, Any], str]] = []
         for cand in candidates:
+            if cand.get("monitoring_purpose") == "splice_neighborhood" and not (
+                    cand.get("required") or any(cand.get(k) is not None for k in ("max_abs_delta", "max_increase", "max_decrease"))):
+                primary_key, guard_key = physical_site(site), physical_site(cand)
+                if (not primary_key or not guard_key or primary_key[:2] != guard_key[:2]
+                        or abs(primary_key[3]-guard_key[3]) > cand["neighborhood_radius_bp"]):
+                    continue
             action, reason = _classify_safeguard_candidate_for_target(primary_entry, cand)
             if action == "keep":
                 candidate_actions.append((action, cand, reason))
@@ -13496,7 +13511,7 @@ def _format_safeguard_reason(candidate: Optional[Dict[str, Any]]) -> Optional[st
 
 def _default_safeguards_from_candidates(
     candidates: List[Dict[str, Any]],
-    default_max_abs_delta: float = 0.1,
+    default_max_abs_delta: float = DEFAULT_GUARD_TOLERANCE,
 ) -> List[Dict[str, Any]]:
     safeguards: List[Dict[str, Any]] = []
     for cand in candidates:
@@ -13515,6 +13530,7 @@ def _default_safeguards_from_candidates(
             or cand.get("preserved_isoforms")
             or cand.get("objective_membership_complete") is False
             or cand.get("required")
+            or cand.get("monitoring_purpose") == "splice_neighborhood"
             or any(cand.get(key) is not None for key in ("max_abs_delta", "max_increase", "max_decrease"))
         )
         if not include:
@@ -17940,7 +17956,7 @@ def _run_splice_strategy_routing(
 
         safeguards = _default_safeguards_from_candidates(
             safeguard_candidates_by_target.get(primary_label, []),
-            default_max_abs_delta=0.1,
+            default_max_abs_delta=DEFAULT_GUARD_TOLERANCE,
         )
         safeguards = required_routing_safeguards(safeguards, protected_labels)
         safeguards_json = json.dumps(safeguards, ensure_ascii=False)
@@ -17962,7 +17978,7 @@ def _run_splice_strategy_routing(
             "min_threshold": 0.01,
             "step": 0.04,
             "min_count": min_count,
-            "default_max_abs_delta": 0.1,
+            "default_max_abs_delta": DEFAULT_GUARD_TOLERANCE,
             "output_path": output_path,
         }
         if requested_binding_limit is not None:
@@ -30544,6 +30560,10 @@ def _sanitize_label(label: str) -> str:
 
 def _build_splice_sites_for_eval(structured_goal: Dict[str, Any], isoform_label: Optional[str], window_bp: int) -> List[Dict[str, Any]]:
     from aso_agents.preservation import include_preserved_exon_boundaries
+    from aso_agents.splice_safeguards import include_neighborhood_measurements
+    def with_monitoring(sites):
+        return include_neighborhood_measurements(structured_goal,
+            include_preserved_exon_boundaries(structured_goal, sites, window_bp=window_bp), window_bp=window_bp)
     explicit_targets = _normalize_explicit_splice_targets(structured_goal, structured_goal.get("isoform_transcripts") or {})
     if explicit_targets:
         sites: List[Dict[str, Any]] = []
@@ -30597,7 +30617,7 @@ def _build_splice_sites_for_eval(structured_goal: Dict[str, Any], isoform_label:
                     },
                 })
         if sites:
-            return include_preserved_exon_boundaries(structured_goal, sites, window_bp=window_bp)
+            return with_monitoring(sites)
     plan = structured_goal.get("splice_site_plan") or []
     if not isinstance(plan, list) or not plan:
         return []
@@ -30757,7 +30777,7 @@ def _build_splice_sites_for_eval(structured_goal: Dict[str, Any], isoform_label:
             }
         )
 
-    return include_preserved_exon_boundaries(structured_goal, sites, window_bp=window_bp)
+    return with_monitoring(sites)
 
 
 def _build_strategy_label_aliases(structured_goal: Dict[str, Any]) -> Dict[str, str]:

@@ -195,9 +195,16 @@ def assess_candidates(rows, goal):
         if not isinstance(accessibility, dict) or accessibility.get("status") != "measured":
             missing.append("target_RNA_accessibility")
         native_status = row.get("recommendation_status")
+        guard_priority = row.get("safeguard_priority") or {}
+        guard_status = guard_priority.get("status", "not_requested")
+        if guard_status == "unmeasured":
+            missing.append("splice_safeguard_measurements")
         exploratory = native_status in {"opposing_predictions", "no_directional_support",
-            "mixed_or_partial_predictions", "incomplete_prediction_evidence"}
+            "mixed_or_partial_predictions", "incomplete_prediction_evidence"} or guard_status in {"failed", "unmeasured"}
         row["candidate_assessment"] = {"version":VERSION, "motifs":motifs,
+            "splice_safeguards":{"status":guard_status, "priority":deepcopy(guard_priority),
+                "reports":deepcopy(row.get("safeguard_report") or []),
+                "scope":"Recorded perturbation bounds; a pass is not proof of cellular neutrality."},
             "cryptic_splice_evidence":deepcopy(cryptic),
             "duplex_reference":thermo, "off_target":screen, "unavailable_evidence":missing,
             "selection_eligible":not motifs.get("excluded", False) and not (
@@ -222,8 +229,13 @@ def evidence_sort_key(row):
     screen = assessment.get("off_target") or {}
     native = row.get("recommendation_rank_key") or []
     tier = number(native[0]) if isinstance(native, (list,tuple)) and native else None
+    guard_key = (row.get("safeguard_priority") or {}).get("rank_key") or [2, 0]
+    guard_key = [number(v) for v in guard_key]
+    if len(guard_key) != 2 or any(v is None for v in guard_key):
+        guard_key = [1, 0]
     proximity = number(row.get("requested_exon_proximity_tier")) or 0
     return (not assessment.get("selection_eligible", True), proximity, -(tier if tier is not None else 0),
+            *(-v for v in guard_key),
             screen.get("status") != "complete_within_declared_scope")
 
 
@@ -286,6 +298,9 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         native = a.get("native_prediction") or {}
         if native.get("directional_status"):
             reasons.append("Native directional evidence: " + str(native["directional_status"]) + ".")
+        guards = a.get("splice_safeguards") or {}
+        if guards.get("status") not in {None, "not_requested"}:
+            reasons.append("Splice safeguards: " + str(guards["status"]) + ".")
         if a.get("unavailable_evidence"):
             reasons.append("Unavailable evidence: " + ", ".join(a["unavailable_evidence"]) + ".")
         records.append({"recommendation_order":rank,"antisense_5to3":row.get("synthesized_antisense_sequence"),
@@ -295,6 +310,7 @@ def write_assessment_artifacts(pool, selected, goal, directory):
             "off_target_status":screen.get("status"),"off_target_counts":screen.get("counts_by_mismatch"),
             "motif_flags":[flag["rule_id"] for flag in (a.get("motifs") or {}).get("flags",[])],
             "cryptic_splice_evidence":a.get("cryptic_splice_evidence"),
+            "safeguard_status":guards.get("status", "not_requested"), "safeguard_report":guards.get("reports", []),
             "reference_tm_c":thermo.get("tm_c"),"reference_delta_g_kcal_mol":thermo.get("delta_g_kcal_mol"),
             "thermodynamic_status":thermo.get("status"),"recommendation_status":a.get("recommendation_status")})
     minimum = goal.get("candidate_minimum")
@@ -309,7 +325,7 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         "count":len(records),"requested_count":goal.get("candidate_limit"),"minimum_count_shortfall":shortfall,"records":records}
     write_json(shortlist_path, shortlist)
     fields = ["recommendation_order","antisense_5to3","native_rank","recommendation_status","off_target_status",
-              "off_target_counts","motif_flags","cryptic_splice_evidence","reference_tm_c","reference_delta_g_kcal_mol","thermodynamic_status","reason"]
+              "off_target_counts","motif_flags","cryptic_splice_evidence","safeguard_status","safeguard_report","reference_tm_c","reference_delta_g_kcal_mol","thermodynamic_status","reason"]
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle,fieldnames=fields,extrasaction="ignore")
         writer.writeheader()
@@ -319,11 +335,11 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         "Recommendations combine recorded scientific ranking, comparable off-target screening, and chemistry-qualified motif flags under the requested hard constraints. Explicit joint panel and role objectives retain priority. Unavailable measurements remain visible. Thermodynamic proxies are reported for comparison and are not maximized as a potency score.", "",
         "Tm and ΔG are perfect-match, unmodified RNA/DNA references at 1 M sodium; they are not validated modified-ASO binding affinities. Motif flags are context-dependent and cannot certify safety.", "",
         "Where splice predictions were computed, the CSV/JSON includes the largest unannotated acceptor/donor score gains, genomic coordinates, baseline/perturbed scores and the exact search scope. These are review flags, not confirmed cryptic products; unavailable evidence is not a clean screen.", "",
-        "| Order | ASO (5′→3′) | Status | Off-target screen | Motif flags | Reference Tm (°C) | Reference ΔG (kcal/mol) |",
-        "|---|---|---|---|---|---|---|"]
+        "| Order | ASO (5′→3′) | Status | Splice safeguards | Off-target screen | Motif flags | Reference Tm (°C) | Reference ΔG (kcal/mol) |",
+        "|---|---|---|---|---|---|---|---|"]
     for record in records:
         lines.append("| " + " | ".join(str(record.get(k) if record.get(k) is not None else "unavailable") for k in
-            ("recommendation_order","antisense_5to3","recommendation_status","off_target_status","motif_flags","reference_tm_c","reference_delta_g_kcal_mol")) + " |")
+            ("recommendation_order","antisense_5to3","recommendation_status","safeguard_status","off_target_status","motif_flags","reference_tm_c","reference_delta_g_kcal_mol")) + " |")
     if pending:
         lines.extend(["", "Shortlist size has not been specified; the full assessed pool is preserved while awaiting the user's preference."])
     elif shortfall:

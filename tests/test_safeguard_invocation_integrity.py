@@ -21,7 +21,7 @@ def test_reference_reconciliation_rebuilds_stale_directional_policy(monkeypatch)
     monkeypatch.setattr(runtime,'resolve_ambiguous_safeguards',lambda *a,**k:{})
     value=goal();selected=runtime._build_safeguard_candidates_by_target(plans(),stale_candidates(),value)
     guards=runtime._default_safeguards_from_candidates(selected['acceptor@100'])
-    assert guards[0].get('max_abs_delta') == .1
+    assert guards[0].get('max_abs_delta') == .05
     assert guards[0].get('max_increase') is None
     assert 'reconciled' in selected['acceptor@100'][0]['guard_policy_source']
 
@@ -109,7 +109,7 @@ def test_incomplete_objective_reference_does_not_silently_discard_cached_guard(m
     selected=runtime._build_safeguard_candidates_by_target(plans(),stale_candidates(),value)
     guard=selected['acceptor@100'][0]
     assert guard['objective_membership_complete'] is False
-    assert runtime._default_safeguards_from_candidates([guard])[0]['max_abs_delta']==.1
+    assert runtime._default_safeguards_from_candidates([guard])[0]['max_abs_delta']==.05
 
 
 def test_catalog_missing_all_objective_references_keeps_guard_with_uncertainty(monkeypatch):
@@ -137,7 +137,7 @@ def test_no_inspectable_transcript_still_records_objective_uncertainty(monkeypat
     assert guard['objective_membership_complete'] is False
     assert len(guard['unresolved_objective_transcript_ids'])==2
     actual=runtime._default_safeguards_from_candidates([guard])[0]
-    assert actual['max_abs_delta']==.1 and 'unresolved' in actual['note']
+    assert actual['max_abs_delta']==.05 and 'unresolved' in actual['note']
 
 
 @pytest.mark.parametrize('bounds,observed,expected',[

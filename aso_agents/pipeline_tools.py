@@ -22,6 +22,7 @@ from aso_agents.reporting_contracts import generated_sequence_fields, exact_coun
 from aso_agents.sequence_orientation import SEQUENCE_ROLES, molecule_key, preferred_binding_hits, interpret_orientation
 from aso_agents.input_rows import assign_input_row_ids, reconcile_file_expansions, reconcile_file_row_references, assessment_row_lookup
 from aso_agents.feature_identity import exon_number
+from aso_agents.splice_safeguards import DEFAULT_GUARD_TOLERANCE, neighborhood_guard_sites
 from aso_agents.objective_roles import explicit_biological_role
 from aso_agents.evaluation_evidence import (
     reference_context as evaluation_reference_context, annotate_binding_evidence,
@@ -7393,6 +7394,8 @@ def _build_route_site_context_lookup(structured_goal: Dict[str, Any]) -> Dict[st
     sources.extend(
         [
             structured_goal.get("splice_site_plan"),
+            neighborhood_guard_sites(structured_goal,
+                (structured_goal.get("routing_local_splice_site_plan") or structured_goal.get("splice_site_plan") or [])),
         ]
     )
     for source in sources:
@@ -53052,7 +53055,7 @@ def _build_atomic_routing_plan(
             continue
         safeguards = runtime._default_safeguards_from_candidates(
             safeguard_candidates_by_target.get(primary_label, []),
-            default_max_abs_delta=0.1,
+            default_max_abs_delta=DEFAULT_GUARD_TOLERANCE,
         )
         safeguards = required_routing_safeguards(safeguards, protected_labels)
         primary_targets_json = json.dumps(
@@ -53076,7 +53079,7 @@ def _build_atomic_routing_plan(
             # The final selector uses off-target and chemistry evidence across
             # the entire route-eligible pool. Do not discard rows at a preview cap.
             "max_results": 0,
-            "default_max_abs_delta": 0.1,
+            "default_max_abs_delta": DEFAULT_GUARD_TOLERANCE,
             "output_path": output_path,
         }
         if exon_objectives:

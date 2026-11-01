@@ -14,8 +14,8 @@ def test_preservation_fills_only_unbounded_directions(guard):
     assert result['required'] is True
     assert all(result[k]==v for k,v in guard.items())
     if 'max_abs_delta' not in guard:
-        assert result['max_increase']==guard.get('max_increase',.1)
-        assert result['max_decrease']==guard.get('max_decrease',.1)
+        assert result['max_increase']==guard.get('max_increase',.05)
+        assert result['max_decrease']==guard.get('max_decrease',.05)
 
 
 def test_legacy_and_atomic_apply_same_resolved_preservation_policy(tmp_path,monkeypatch):

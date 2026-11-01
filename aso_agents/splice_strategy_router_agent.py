@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from agents import Agent, ModelSettings, Runner, function_tool
 from aso_agents.parameter_constraints import evaluate_row_against_constraints
 from aso_agents.splice_recommendations import annotate_route_recommendation, RECOMMENDATION_FIELDS
+from aso_agents.splice_safeguards import DEFAULT_GUARD_TOLERANCE
 
 
 SHARED_CONTEXT_ABS_LIMIT = 0.2
@@ -95,11 +96,16 @@ def _shared_context_blocked(
     *,
     shared_kind: Optional[str] = None,
     shared_covers_all: Optional[bool] = None,
+    configured_guard_labels: Optional[Set[str]] = None,
 ) -> bool:
     if not shared_label:
         return False
     label_norm = str(shared_label).strip().lower()
     if not label_norm:
+        return False
+    if configured_guard_labels and label_norm in {str(label).strip().lower() for label in configured_guard_labels}:
+        # The named guard controls both its bounds and advisory/required policy.
+        # A legacy scalar summary must not impose a second, hidden hard filter.
         return False
     if current_label and str(current_label).strip() and label_norm == str(current_label).strip().lower():
         return False
@@ -141,6 +147,42 @@ def _parse_site_metrics(row: Dict[str, Any]) -> List[Dict[str, Optional[float]]]
             "delta_deletion": del_val,
             "delta_replacement": rep_val,
         })
+    # Display columns can be rounded. Apply scientific bounds to the original
+    # physically identified observations whenever those records are available.
+    raw = row.get("splice_site_deltas") or []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = []
+    observations = {}
+    from aso_agents.splice_recommendations import finite_number
+    for site in raw if isinstance(raw, list) else []:
+        if not isinstance(site, dict):
+            continue
+        kind = site.get("site_kind")
+        point = site.get(kind) or {} if kind in {"acceptor", "donor"} else {}
+        position = point.get("position")
+        if kind not in {"acceptor", "donor"} or type(position) is not int:
+            continue
+        label = f"{kind}@{position}"
+        if site.get("canonical_label") not in (None, "", label):
+            continue
+        scope = (str(point.get("chrom") or "").removeprefix("chr"),
+                 {"+": "+", "1": "+", "-": "-", "-1": "-"}.get(str(point.get("strand"))),
+                 str(site.get("window_bp")))
+        valid = (scope[0] and scope[1] and site.get("evaluation_status") == "evaluated"
+                 and site.get("reference_binding_status") not in {"conflicting", "unresolved"})
+        values = tuple(finite_number(site.get(f"delta_{kind}_{perturbation}")) if valid else None
+                       for perturbation in ("deletion", "replacement"))
+        observations.setdefault(label, set()).add((scope, values))
+    by_label = {metric["label"]: metric for metric in metrics}
+    for label, variants in observations.items():
+        # Different windows or contradictory duplicate records are not silently
+        # pooled or resolved in favor of an apparent guard pass.
+        values = next(iter(variants))[1] if len(variants) == 1 else (None, None)
+        by_label[label] = {"label": label, "delta_deletion": values[0], "delta_replacement": values[1]}
+    metrics = list(by_label.values())
     return metrics
 
 
@@ -747,7 +789,7 @@ def auto_threshold_constrained_site_metrics(
     min_threshold: float = 0.02,
     step: float = 0.04,
     min_count: int = 5,
-    default_max_abs_delta: float = 0.1,
+    default_max_abs_delta: float = DEFAULT_GUARD_TOLERANCE,
     min_gc: Optional[float] = None,
     max_gc: Optional[float] = None,
     max_binding_sites: Optional[int] = None,
@@ -1120,6 +1162,7 @@ def auto_threshold_constrained_site_metrics(
     primary_reports: Dict[int, List[Dict[str, Any]]] = {}
     safeguard_reports: Dict[int, List[Dict[str, Any]]] = {}
     safeguard_status: Dict[int, bool] = {}
+    configured_guard_labels = {guard['label'] for guard in safeguards}
     threshold_pass_count = 0
     fallback_selection_used = False
     fallback_positive_count = 0
@@ -1148,6 +1191,7 @@ def auto_threshold_constrained_site_metrics(
                 target_labels=target_labels,
                 shared_kind=shared_kind,
                 shared_covers_all=bool(shared_covers),
+                configured_guard_labels=configured_guard_labels,
             ):
                 continue
 
@@ -1203,6 +1247,7 @@ def auto_threshold_constrained_site_metrics(
                 target_labels=target_labels,
                 shared_kind=shared_kind,
                 shared_covers_all=bool(shared_covers),
+                configured_guard_labels=configured_guard_labels,
             ):
                 continue
 
@@ -1271,6 +1316,7 @@ def auto_threshold_constrained_site_metrics(
                 target_labels=target_labels,
                 shared_kind=shared_kind,
                 shared_covers_all=bool(shared_covers),
+                configured_guard_labels=configured_guard_labels,
             ):
                 continue
 
@@ -1316,7 +1362,8 @@ def auto_threshold_constrained_site_metrics(
     safeguard_reports_map = safeguard_reports
     safeguard_status_map = safeguard_status
     recommendation_rows = {idx: annotate_route_recommendation(
-        dict(rows[idx]), primary_reports_map.get(idx, []), exon_objectives)
+        dict(rows[idx]), primary_reports_map.get(idx, []), exon_objectives,
+        safeguard_reports_map.get(idx, []))
         for idx in selected_indices}
 
     sorted_indices: List[int] = []
@@ -1325,6 +1372,7 @@ def auto_threshold_constrained_site_metrics(
             sorted_indices = sorted(
                 list(selected_indices),
                 key=lambda idx: (
+                    *(-value for value in recommendation_rows[idx]['safeguard_priority']['rank_key']),
                     _row_target_distance(idx),
                     -(_parse_float(rows[idx].get("Score")) or 0.0),
                     _parse_float(rows[idx].get("Off_target_exact_count")) or 0.0,
@@ -1445,7 +1493,7 @@ def auto_threshold_constrained_site_metrics(
     columns.setdefault("safeguards_status", "string")
     columns.setdefault("safeguards_failed_labels", "array")
     for field in RECOMMENDATION_FIELDS:
-        columns[field] = "array" if field in {
+        columns[field] = "object" if field in {"safeguard_priority", "reference_scope", "selected_transcript_context"} else "array" if field in {
             "selected_effect_evidence", "exon_objective_evidence", "recommendation_rank_key", "safeguard_report"
         } else "string"
     schema_copy["columns"] = columns
@@ -1568,7 +1616,7 @@ router_planner_agent = Agent(
         "- When the strategy requires keeping a junction neutral, encode it via safeguards_json. Example: '[{\"label\":\"acceptor@...\",\"max_abs_delta\":0.10}]'.\n"
         "- Only reference labels exactly as they appear in the context.\n"
         "- For every safeguard entry, include a short \"note\" rationale (<=120 chars) explaining why it is needed.\n"
-        "- Reasonable defaults (adjust as needed): start_threshold=0.6, min_threshold=0.01, step=0.04, min_count=5, default_max_abs_delta=0.10.\n\n"
+        "- Reasonable defaults (adjust as needed): start_threshold=0.6, min_threshold=0.01, step=0.04, min_count=5, default_max_abs_delta=0.05.\n\n"
         "Example (for illustration only; adapt to target labels):\n"
         "{\n"
         "  \"plan_summary\": \"Suppress donor X, boost donor Y with safeguards.\",\n"

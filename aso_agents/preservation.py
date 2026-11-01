@@ -1,8 +1,9 @@
 """Translate explicit transcript-preservation constraints into reference junctions."""
 from copy import deepcopy
+from .splice_safeguards import DEFAULT_GUARD_TOLERANCE
 
 
-def required_routing_safeguards(safeguards, protected_labels, *, default_tolerance=0.1):
+def required_routing_safeguards(safeguards, protected_labels, *, default_tolerance=DEFAULT_GUARD_TOLERANCE):
     """Complete both directions of explicit preservation without shrinking caps."""
     result = deepcopy(safeguards)
     for label in sorted(protected_labels):

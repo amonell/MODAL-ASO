@@ -329,6 +329,59 @@ def program_event_bindings(goal, program):
     return bindings
 
 
+def routing_event_identity(goal, target):
+    """Revalidate a scoped event receipt before using it as a scored objective.
+
+    A physical cassette is not proof of historical exon nomenclature. Explicit
+    ordinal conflicts and stale structures must not be rescued by that receipt.
+    """
+    from .evaluation_feature_identity import transcript_identifier, transcript_matches
+    requested_reference = (target.get('transcript_id') or target.get('reference_transcript_id')
+                           or target.get('exon_numbering_reference_transcript_id')
+                           or target.get('exon_numbering_transcript_id'))
+    bindings = program_event_bindings(goal, {**target, 'transcript_id': requested_reference})
+    if not bindings:
+        return None
+    unresolved = {'status': 'unresolved_structural_event', 'biological_label_verified': False,
+        'reason': 'Event receipt conflicts with the current reference, direction, or explicit ordinal.'}
+    catalog = goal.get('isoform_transcripts') or {}
+    verified = []
+    for binding in bindings:
+        reference = requested_reference
+        label = binding.get('catalog_label')
+        entry = catalog.get(label)
+        if not isinstance(entry, dict):
+            return unresolved
+        exact_reference = transcript_identifier(entry, label)
+        if reference and not transcript_matches(reference, exact_reference):
+            return unresolved
+        request = {'reference': exact_reference,
+            'exon_label': target.get('exon_label', goal.get('exon_label')),
+            'desired_effect': target.get('desired_effect'),
+            'exon_ordinal': target.get('exon_index', target.get('exon_ordinal'))}
+        _, fresh = _request_candidates(goal, request)
+        event = next((event for key, event in fresh if key == label), None)
+        ordinal = binding.get('resolved_transcript_ordinal')
+        if (not event or binding.get('status') not in {
+                'verified_structural_event', 'verified_nomenclature_disambiguated_event'}
+                or event['reference_structure_sha256'] != binding.get('reference_structure_sha256')
+                or request['exon_ordinal'] not in (None, ordinal)):
+            return unresolved
+        physical = [e for e in event['candidates'] if e['resolved_transcript_ordinal'] == ordinal]
+        if len(physical) != 1:
+            return unresolved
+        chosen = physical[0]
+        verified.append({'status': binding['status'], 'biological_label_verified': False,
+            'reference_transcript_id': exact_reference,
+            'requested_reference_transcript_id': reference,
+            'requested_exon_label': request['exon_label'], 'resolved_transcript_ordinal': ordinal,
+            'chrom': chosen['chrom'], 'strand': chosen['strand'],
+            'start': chosen['start_1based'], 'end': chosen['end_1based'],
+            'reference_structure_sha256': event['reference_structure_sha256'],
+            'interpretation': event['interpretation']})
+    return verified[0] if len(verified) == 1 else unresolved
+
+
 def requested_response_minimums(goal):
     """Derive expected response sites from requests and structures, never jobs.
 

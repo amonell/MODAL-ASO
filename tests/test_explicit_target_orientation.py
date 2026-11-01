@@ -45,6 +45,7 @@ def test_clarified_physical_feature_replaces_wrong_inferred_orientation(strand, 
     assert targets[0]['superseded_target_interpretations'][0]['strand'] == inferred['strand']
     assert set(payload['isoform_transcripts']) == {'TX_NEUTRAL'}
     sites = intake._build_splice_sites_for_eval(payload, None, 10)
+    sites = [s for s in sites if not s.get('monitoring_purpose')]
     assert len(sites) == 2
     pair = [sites[0][k]['position'] for k in ('acceptor', 'donor')]
     assert pair == ([201, 240] if strand == '+' else [240, 201])
@@ -125,7 +126,7 @@ def test_custom_model_keeps_its_own_identity_geometry_and_unknown_annotation(str
     sites = intake._build_splice_sites_for_eval(payload, None, 10)
     assert [sites[0][k]['position'] for k in ('acceptor', 'donor')] == ([207, 253] if strand == '+' else [253, 207])
     saved = preserve_splice_site_evidence({'splice_site_deltas': sites}, payload['isoform_transcripts'])
-    assert all(s['reference_transcript_id'] == model_id for s in saved)
+    assert all(s['reference_transcript_id'] == model_id for s in saved if not s.get('monitoring_purpose'))
     assert all(s['reference_binding_status'] == 'resolved_catalog_identity' for s in saved)
 
 

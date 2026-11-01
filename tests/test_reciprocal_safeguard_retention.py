@@ -35,7 +35,7 @@ def test_mapped_reciprocal_guard_retains_threshold_and_advisory_policy():
     plan=[{'site':'acceptor','position':100}, {'site':'donor','position':160}]
     selected=runtime._build_safeguard_candidates_by_target(plan,[first,second])
     guards=runtime._default_safeguards_from_candidates(selected['acceptor@100'])
-    assert guards == [{'label':'donor@160','max_increase':0.1}]
+    assert guards == [{'label':'donor@160','max_increase':0.05}]
     assert not guards[0].get('required',False)
 
 
