@@ -176,6 +176,9 @@ def requested_region_minimums(goal):
 
 
 def belongs_to_region(row, group, intervals_for_row):
+    if group.get("site_scope") == "splice_response":
+        from .design_event_consistency import matches_response_site
+        return matches_response_site(row, group)
     intervals = intervals_for_row(row, output_space="genomic")
     if not intervals:
         return False
@@ -263,9 +266,16 @@ def select_default_gc_supplements(passed, gc_only_rejected, constraints, groups,
 
 def region_minimum_delivery(goal, candidate_set, binding_sets, intervals_for_row):
     minimum = goal.get("min_asos_per_site")
-    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum <= 0:
+    from .design_event_consistency import requested_response_minimums
+    response_groups = requested_response_minimums(goal)
+    if not response_groups and (isinstance(minimum, bool) or not isinstance(minimum, int) or minimum <= 0):
         return {"status": "not_requested", "groups": [], "errors": []}
     groups = requested_region_minimums(goal)
+    if response_groups:
+        # Explicit binding-region constraints remain additional requirements.
+        # A job's aggregate count cannot replace an event's response-site count.
+        groups = [group for group in groups if group.get("site_scope") == "physical_constraint"]
+        groups.extend(response_groups)
     # When the user requested a bounded selected panel, its count must
     # stand on its own. A larger scored binding-set appendix cannot fill
     # missing entries in that panel. Other binding-set deliverables retain
@@ -287,7 +297,9 @@ def region_minimum_delivery(goal, candidate_set, binding_sets, intervals_for_row
                     and molecule_key(row)[0] != "unverified"}
             results.append({"group_id": group["group_id"], "label": group["label"],
                 "minimum": group["minimum"], "distinct_molecules": len(keys),
-                "shortfall": max(0, group["minimum"] - len(keys))})
+                "shortfall": max(0, group["minimum"] - len(keys)),
+                **{key: group[key] for key in ("site_scope", "site_kind", "chrom", "strand", "position", "reference_verified")
+                   if key in group}})
     else:
         # Non-physical-region designs retain their declared native grouping.
         selection = candidate_set.get("candidate_selection") or {}
@@ -304,5 +316,7 @@ def region_minimum_delivery(goal, candidate_set, binding_sets, intervals_for_row
     errors = (["requested_per_site_scope_unresolved"] if not results else
               ["requested_per_site_candidate_count_not_delivered"]
               if any(group["shortfall"] for group in results) else [])
+    if any(not group.get("reference_verified") for group in response_groups):
+        errors.append("requested_exon_event_reference_unresolved")
     return {"status": "unfulfilled" if errors else "fulfilled", "groups": results, "errors": errors,
             "count_scope": "selected_panel" if selected_panel_required and "rows" in candidate_set else "complete_binding_pool"}

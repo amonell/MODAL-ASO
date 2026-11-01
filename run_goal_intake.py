@@ -13692,7 +13692,8 @@ def _compute_splice_site_plan(
     if isinstance(structured_goal, dict):
         previous_bindings = structured_goal.get("exon_conversion_bindings") or []
         structured_goal["exon_conversion_bindings"] = []
-        planning_goal = {**structured_goal, "isoform_transcripts": isoform_transcripts}
+        planning_goal = {**structured_goal, "isoform_transcripts": isoform_transcripts,
+                         "_prior_exon_conversion_bindings": previous_bindings}
     plan, comparisons = _compute_native_splice_site_plan(isoform_objectives, isoform_transcripts, planning_goal)
     # A subsequent plan may already contain explicit windows, so it need not
     # look up ordinals again. Revalidate any prior event against the current
@@ -13735,6 +13736,9 @@ def _compute_native_splice_site_plan(
                 else objective
                 for objective in isoform_objectives
             ]
+    if isinstance(structured_goal, dict):
+        from aso_agents.design_event_consistency import bind_requested_exon_events
+        bind_requested_exon_events(structured_goal, _resolve_authoritative_transcript_exon_ordinal)
     # Objective labels may retain an exact reference version while the native
     # catalog is keyed by stable ID. Resolve only aliases supplied by the
     # reference metadata; never equate two different versions by stripping them.
@@ -13844,6 +13848,19 @@ def _compute_native_splice_site_plan(
                 primary_focus_exons.add(int(objective_exon))
                 _register_target(iso_label, int(objective_exon))
 
+    # The same conversion can be expressed globally, on a program, or on an
+    # objective. Bind its physical reference before ordinal focus or default
+    # coding filters can discard one of the requested cassette boundaries.
+    event_ordinals = {}
+    for binding in (structured_goal or {}).get("exon_conversion_bindings") or []:
+        if not binding.get("request_scopes"):
+            continue
+        label = binding["catalog_label"]
+        requested = binding["requested_exon_label"]
+        event_ordinals[(label, requested)] = binding["resolved_transcript_ordinal"]
+        _register_target(label, requested)
+        explicit_focus_requested = True
+
     if not desired_effect:
         objective_effects = {
             str(objective.get("desired_effect") or "").strip().lower()
@@ -13925,11 +13942,13 @@ def _compute_native_splice_site_plan(
         available = isoform_available_exon_indices.get(str(iso_label)) or set()
         resolved_labels: Set[int] = set()
         for requested_label in requested_labels:
-            resolved_label = _resolve_authoritative_transcript_exon_ordinal(
-                transcript_entry,
-                requested_label,
-                structured_goal,
-            )
+            resolved_label = event_ordinals.get((iso_label, requested_label))
+            if resolved_label is None:
+                resolved_label = _resolve_authoritative_transcript_exon_ordinal(
+                    transcript_entry,
+                    requested_label,
+                    structured_goal,
+                )
             if resolved_label in available:
                 resolved_labels.add(int(resolved_label))
                 resolved_focus_candidates.add(int(resolved_label))
@@ -25409,6 +25428,28 @@ def _collect_program_splice_plan_entries(
     reference_labels = _declared_reference_isoform_labels(isoforms, *references)
     if has_reference and len(reference_labels) != 1:
         return []  # A missing or ambiguous reference cannot select another exon.
+    from aso_agents.design_event_consistency import program_event_bindings
+    bindings = program_event_bindings(structured_goal, program)
+    if bindings:
+        expected = {}
+        for binding in bindings:
+            for event in binding["candidates"]:
+                if event["resolved_transcript_ordinal"] != binding["resolved_transcript_ordinal"]:
+                    continue
+                for kind in ("acceptor", "donor"):
+                    if desired_site_kind != "both" and kind != desired_site_kind:
+                        continue
+                    key = (event["chrom"], event["strand"], kind, event[kind + "_1based"])
+                    expected.setdefault(key, []).append(binding)
+        result = []
+        for entry in splice_plan:
+            key = (entry.get("chrom"), _strand_char(entry.get("strand"), default="+"),
+                   entry.get("site"), entry.get("position"))
+            if key in expected:
+                matched = expected[key]
+                result.append({**entry, "requested_exon_label": matched[0]["requested_exon_label"],
+                    "resolved_exon_ordinals": {b["catalog_label"]: b["resolved_transcript_ordinal"] for b in matched}})
+        return result
     if not has_reference and len(isoforms) == 1:
         reference_labels = set(isoforms)
     resolved_exons = {

@@ -29835,6 +29835,12 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     if (hard_nonoverlap or panel_objectives is not None) and candidate_limit_per_site and not physical_site_groups:
         from .candidate_minimums import requested_region_minimums
         physical_site_groups = requested_region_minimums(structured_goal)
+    from .design_event_consistency import requested_response_minimums
+    response_site_groups = requested_response_minimums(structured_goal)
+    if response_site_groups:
+        physical_site_groups = [group for group in physical_site_groups
+                                if group.get("site_scope") == "physical_constraint"]
+        physical_site_groups.extend(response_site_groups)
     if structured_goal.get("candidate_role_selection") is not None:
         from .role_selection import select_ordered_roles
         role_pool = list(eligible_rows)
@@ -29869,7 +29875,7 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
              else _goal_runtime_module()._tile_row_overlap_intervals),
             global_limit=_coerce_positive_int(structured_goal.get("candidate_limit")),
             per_site_limit=per_site_limit, program_limits=program_limits,
-            global_minimum=hard_minimum if hard_nonoverlap or panel_objectives is not None else 0,
+            global_minimum=hard_minimum if hard_nonoverlap or panel_objectives is not None or response_site_groups else 0,
             nonoverlap=hard_nonoverlap,
             minimum_genomic_gap_nt=structured_goal.get("candidate_minimum_genomic_gap_nt", 0),
             panel_objectives=panel_objectives,

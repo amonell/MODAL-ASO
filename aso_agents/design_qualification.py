@@ -80,6 +80,10 @@ def qualify_panel(goal, pool, selected, selection):
         references = list(dict.fromkeys(value for value in [scope.get('transcript_id'),
             (scope.get('splice_event') or {}).get('reference_transcript_id'),
             *(scope.get('transcript_ids') or [])] if value))
+        from .design_event_consistency import program_event_bindings
+        event_bindings = program_event_bindings(goal, program)
+        references.extend(binding['reference_transcript_id'] for binding in event_bindings
+                          if binding['reference_transcript_id'] not in references)
         resolved = [{'requested': value, 'catalog_label': resolve_catalog_label(value, catalog, catalog)}
                     for value in references]
         members = lambda rows: [row for row in rows if _program_id(row) == identifier
