@@ -24,12 +24,11 @@ MODEL_SHA256 = "a7f01653d3a2fb3f9dc59e5305642865aa54e06ce029dbb14d7a637a45ce04d9
 MODEL_FILE = "OligoAI_11_09_25.ckpt"
 METHODS = {"Electroporation": 0, "Gymnosis": 1, "Other": 2, "Lipofection": 3}
 SUGARS = {"DNA": "DNA", "2MOE": "MOE", "cET": "cET"}
-SCOPE = ("OligoAI predicts in vitro RNase H-mediated RNA inhibition conditional on "
-         "sequence, target RNA context, encoded sugars/bonds, dose and delivery method. "
-         "It does not measure efficacy, tissue delivery, toxicity, specificity or clinical response. "
-         "Base modifications, PS stereochemistry and cell identity are not model features. "
+SCOPE = ("OligoAI predicts RNA reduction through RNase H activity in vitro. Its inputs are "
+         "the ASO sequence, surrounding target RNA, sugar and backbone chemistry, dose and delivery method. "
+         "Base modifications, PS stereochemistry and cell type are outside the model's inputs. "
          "Non-human RNA contexts are extrapolations from the training data. "
-         "Predictions are raw, unconstrained percentages; values outside 0–100 are not clipped.")
+         "Predictions are reported as calculated and may fall outside 0–100%.")
 
 
 def reverse_complement(sequence):

@@ -70,5 +70,13 @@
   "mm39.phyloP35way.bw": {
     "bytes": 6119398278,
     "sha256": "8fa5441cde6267bff61a93e83c969b4ad8950a3497dd51054960809671e99ddf"
+  },
+  "gencode.vM35.transcripts.fa.gz": {
+    "bytes": 56151674,
+    "sha256": "cd1b4b90113de15a3d139ef6b7aa8a992f4405fe13073e47aa65d10b2b2072d2"
+  },
+  "gencode.v42.transcripts.fa.gz": {
+    "bytes": 82291356,
+    "sha256": "eeaefd7a7d867d16ef71d17c54e1404b2e5710f485c2ad6baac00409e4014f0a"
   }
 }

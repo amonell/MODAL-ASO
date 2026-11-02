@@ -114,6 +114,7 @@ def exact_gene_count_scope(config, target_gene_id, mapping_summary):
         "genomic_alignment_cap_per_query": mapping_summary.get("mapper_alignment_cap", 2000),
         "overmapped_query_count": mapping_summary.get("overmapped_queries"),
         "junction_search_summary": deepcopy(mapping_summary.get("junction_mapping") or {}),
+        "reference_gap_recovery": "Masked exon bases are recovered from checksum-verified, version-matched published transcripts; exon lengths and known genomic bases must agree. Recovered exon windows and adjacent junctions are screened at the same substitution budget.",
         "limitations": "Does not establish binding outside the recorded substitution budget, intronic/pre-mRNA or experimental selectivity. Exon and adjacent-junction screening is not an exhaustive full-transcriptome search. Same-gene isoform selectivity is outside this count. Inspect the per-row query sequence/role and completeness status before interpreting a zero.",
     }
 

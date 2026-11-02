@@ -190,7 +190,7 @@ def test_out_of_range_prediction_is_kept_raw(tmp_path):
 def test_reports_show_same_scores_and_scope_once(tmp_path):
     result=evaluate_candidates([row()],{},tmp_path,references=[reference()],predictor=predictor)
     md=markdown_section(result);ht=html_section(result)
-    for text in ("73.12", SEQ, "assumed reference scenario", "Mature-RNA", "Predictions are raw"):
+    for text in ("73.12", SEQ, "assumed reference scenario", "Mature-RNA", "Predictions are reported as calculated"):
         assert text in md and text in ht
     payload={"evaluation_summary":{"oligoai_evaluation":result},"components":[{"oligoai_evaluation":result}]}
     combined=append_report_evaluations("# Report",payload)

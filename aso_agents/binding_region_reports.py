@@ -13,6 +13,10 @@ from .candidate_minimums import genomic_regions_for_constraint
 from .region_projection import genomic_sources
 from .region_overlap import candidate_matches_region_groups
 
+BINDING_REGION_INTERPRETATION = ('Each group contains ASOs that meet its binding-region rule and sequence filters. '
+    'An ASO can belong to several groups. Binding coordinates locate the ASO on RNA; response coordinates identify the splice site evaluated by the model.')
+BINDING_REGION_RANKING = ('Within each group, ASOs follow selection_rank when available, then descending Score, '
+    'then source-file order when both are missing.')
 
 def recorded_screening_summary(goal, final):
     """Describe measured screens without confusing missing values with zeros."""
@@ -295,8 +299,8 @@ def build_binding_region_report(goal, final, run_dir, intervals_for_row, constra
             views[signature] = group
     sets = list(views.values())
     result = {'sets':sets,'source_tables':source_evidence,'source_errors':failures,
-        'interpretation':'Each set satisfies its own physical binding-region rule and the recorded parameter filters. A molecule may belong to multiple sets. Splice-response routes describe the junction being evaluated, not necessarily where the ASO binds. These site-specific candidates are computational design hypotheses, not experimentally validated activity or an assertion that every candidate passes a splice-response threshold.',
-        'ranking':'Recorded selection_rank when available, otherwise descending native Score; if neither field is recorded, retain source-file order. This is a within-pool computational ordering, not cross-gene potency or a direction-specific splice-efficacy ranking.'}
+        'interpretation': BINDING_REGION_INTERPRETATION,
+        'ranking': BINDING_REGION_RANKING}
     from .candidate_minimums import region_minimum_delivery
     result['minimum_delivery'] = region_minimum_delivery(goal, {}, result, intervals_for_row)
     from .region_interval_summary import nominated_region_interval_summary

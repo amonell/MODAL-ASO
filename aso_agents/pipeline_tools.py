@@ -29624,6 +29624,11 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "off_target_mapping_capped",
         "off_target_mapping_count_lower_bound",
         "off_target_count_status",
+        "off_target_search_status",
+        "off_target_reference_coverage",
+        "off_target_incomplete_reasons",
+        "off_target_query_sequence",
+        "off_target_query_role",
         "off_target_observed_gene_count",
         "Off_target_expression_sum",
         "Off_target_expression_sum_0mm",
@@ -29649,7 +29654,6 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "Off_target_1mm_positions",
         "Off_target_2mm_positions",
         "Off_target_3mm_positions",
-        "off_target_search_status",
         "off_target_position_convention",
         "screening_evidence_source",
         "repeat_hit_count_exact",
@@ -33453,6 +33457,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
     copied = {item["destination"] for item in native_exports}
     pending = [path for path in pending if str(path) not in copied]
     if not pending:
+        from .report_presentation import refresh_delivered_report_downloads
+        native_exports = refresh_delivered_report_downloads(run_dir, envelope.get("final_outputs"), native_exports)
         receipt = {"ok": True, "paths": [str(path) for path in requested],
                    "attempted_paths": [str(path) for path in attempted_paths],
                    "native_exports": native_exports, "execution_attempts": [], "validation_errors": []}
@@ -33639,6 +33645,9 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                               "content remains subject to scientific review.") if fallback_complete else None,
                "result_path": str(directory / "sandbox_result.json")}
     if receipt["ok"]:
+        from .report_presentation import refresh_delivered_report_downloads
+        receipt["native_exports"] = refresh_delivered_report_downloads(
+            run_dir, envelope.get("final_outputs"), receipt["native_exports"])
         receipt.update(contract_sha256=contract_sha256,
                        output_sha256={str(path): requested_artifact_sha256(path) for path in requested})
     (directory / "delivery.json").write_text(json.dumps(receipt, indent=2))
@@ -37446,6 +37455,9 @@ _PROVIDED_ASO_SCORED_TILE_FIELDS: Tuple[str, ...] = (
     "Off_target_3mm_count",
     "off_target_count_scope",
     "off_target_count_status",
+    "off_target_search_status",
+    "off_target_reference_coverage",
+    "off_target_incomplete_reasons",
     "off_target_query_sequence",
     "off_target_query_role",
     "off_target_observed_gene_count",
@@ -37649,7 +37661,7 @@ def _write_provided_aso_tiles_json(
 
 
 def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=None) -> Dict[str, Any]:
-    from .mismatch_screening import annotate_mismatch_bins
+    from .mismatch_screening import annotate_mismatch_bins, reference_incomplete_reasons
     path = Path(str(tiles_json_path or ""))
     if not path.exists():
         return {"status": "not_run", "error": "tiles_json_missing"}
@@ -37668,9 +37680,17 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
         gene_names = _normalize_text_list(row.get("Off_target_genes") or row.get("off_target_genes"))
         gene_count = _optional_int(row.get("off_target_gene_count"))
         junction = (count_scope or {}).get("junction_search_summary") or {}
-        incomplete = bool(row.get("off_target_mapping_capped") or row.get("off_target_unclassified_alignments")
-                          or junction.get("error") or junction.get("skipped_chrom")
-                          or junction.get("skipped_ambiguous_windows") or junction.get("skipped_unresolved_strand"))
+        reasons = list(row.get("off_target_incomplete_reasons") or [])
+        reasons.extend(reference_incomplete_reasons(junction, row.get("Sequence"), row.get("off_target_reference_coverage")))
+        if row.get("off_target_mapping_capped"):
+            reasons.append("alignment_limit_exceeded")
+        if row.get("off_target_unclassified_alignments"):
+            reasons.append("alignment_assignment_incomplete")
+        if not reasons and row.get("off_target_count_status") in {"incomplete", "unavailable", "not_run"}:
+            reasons.append("search_incomplete")
+        reasons = list(dict.fromkeys(reasons))
+        row["off_target_incomplete_reasons"] = reasons
+        incomplete = bool(reasons)
         budget = (count_scope or {}).get("mismatch_budget", 0)
         if budget:
             annotate_mismatch_bins(row, budget, incomplete)
@@ -37681,6 +37701,7 @@ def _enrich_exact_off_target_bins_for_tiles(tiles_json_path: str, count_scope=No
         if gene_count is not None or "off_target_observed_gene_count" not in row:
             row["off_target_observed_gene_count"] = gene_count
         row["off_target_count_status"] = "incomplete" if incomplete else "complete_within_declared_scope" if gene_count is not None else "unavailable"
+        row["off_target_search_status"] = "incomplete" if incomplete else "complete" if gene_count is not None else "unavailable"
         if incomplete:
             gene_count = None
             row["off_target_gene_count"] = None
@@ -37748,7 +37769,8 @@ def _merge_scored_tiles_into_provided_asos(
         if not scored:
             continue
         for field in _PROVIDED_ASO_SCORED_TILE_FIELDS:
-            if scored.get(field) not in (None, "", [], {}):
+            if (scored.get(field) not in (None, "", [], {}) or
+                    field in {"off_target_incomplete_reasons", "off_target_reference_coverage"} and field in scored):
                 entry[field] = deepcopy(scored[field])
         if scored.get("off_target_count_status") in {"incomplete", "unavailable", "not_run"}:
             for field in ("off_target_gene_count", "Off_target_exact_count", "Times_mapped_off_target_genes",
@@ -39728,6 +39750,8 @@ def _extract_pipeline_integrity(
                 summary["warnings"].append(f"design_evidence_missing:{task_id}")
             if outcome_status == "skipped":
                 continue
+            if scoped is None:
+                summary["blocking_errors"].append(f"scoped_design_screening_unverified:{task_id}")
             outcome_artifacts = outcome.get("artifacts") if isinstance(outcome.get("artifacts"), dict) else {}
             for artifact_key in ("generated_aso_set_json", "generated_filter_trace_json"):
                 artifact_path = str(outcome_artifacts.get(artifact_key) or "").strip()
@@ -39771,12 +39795,27 @@ def _extract_pipeline_integrity(
     if any(branch.get("requested") for branch in branches.values()):
         binding_path = Path(run_dir) / "requested_binding_site_sets.json"
         binding_sets = json.loads(binding_path.read_text()) if binding_path.is_file() else {}
+        candidate_set = _load_generated_set_payload(str(_run_path(run_dir, "generated_aso_set.json")))
         delivery = design_delivery(structured_goal,
-            _load_generated_set_payload(str(_run_path(run_dir, "generated_aso_set.json"))), branches,
+            candidate_set, branches,
             binding_sets=binding_sets,
             intervals_for_row=_goal_runtime_module()._tile_row_overlap_intervals)
         summary["design_delivery"] = delivery
         summary["blocking_errors"].extend(delivery["errors"])
+        from .screening_delivery import screening_delivery
+        from .tiling_agent import _resolve_num_mismatches
+        required_species = _requested_species_from_contexts(None, structured_goal)
+        if not required_species:
+            required_species = [normalize_species(structured_goal.get("species"))]
+        required_species = list(dict.fromkeys(required_species +
+            [normalize_species(key) for key in structured_goal.get("off_target_species") or []]))
+        delivered_rows = list(candidate_set.get("rows") or [])
+        for group in binding_sets.get("sets") or []:
+            delivered_rows.extend(group.get("rows") or [])
+        screening = screening_delivery(delivered_rows, required_species=required_species,
+            mismatch_budget=_resolve_num_mismatches(structured_goal, default=2))
+        summary["off_target_screening"] = screening
+        summary["blocking_errors"].extend(screening["errors"])
 
     summary["ok"] = bool(summary["report_exists"] and not summary["blocking_errors"])
     return summary
@@ -54110,6 +54149,9 @@ _SPECIES_OFFTARGET_FIELDS: Tuple[str, ...] = (
     "off_target_mapping_count_lower_bound",
     "off_target_unclassified_alignments",
     "off_target_count_status",
+    "off_target_search_status",
+    "off_target_reference_coverage",
+    "off_target_incomplete_reasons",
     "off_target_observed_gene_count",
     "off_target_observed_gene_ids_by_mismatch",
     "off_target_observed_genes_by_mismatch",

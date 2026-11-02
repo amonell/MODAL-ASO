@@ -308,7 +308,11 @@ def test_integrity_accepts_real_delivered_molecule_with_nested_goal(tmp_path):
                                'tiling_results': {'row_count': 1}}}
     (tmp_path / 'goal_intake.json').write_text(json.dumps(payload))
     (tmp_path / 'generated_aso_set.json').write_text(json.dumps({'rows': [
-        {'sequence': 'AACCGG', 'synthesized_antisense_sequence': 'CCGGTT'}]}))
+        {'sequence': 'AACCGG', 'synthesized_antisense_sequence': 'CCGGTT',
+         'off_target_count_status': 'complete_within_declared_scope', 'Off_target_mismatch_budget': 2,
+         'Off_target_exact_count': 0, 'Off_target_1mm_count': 0, 'Off_target_2mm_count': 0,
+         'off_target_exact_count_unit': 'loci',
+         'off_target_search_provenance_by_species': {'human': {'assembly': 'GRCh38'}}}]}))
     result = pipeline._extract_pipeline_integrity(str(tmp_path),
         {'exists': {'report_md': True, 'report_html': True}}, skip_router=True)
     assert result['ok'] and result['design_delivery']['distinct_oligos'] == 1
@@ -404,7 +408,11 @@ def test_single_delegated_design_checks_child_without_requiring_duplicate_parent
     (child / 'goal_intake.json').write_text(json.dumps({'final_payload': {
         'structured_goal': {'intent': 'binding', 'candidate_minimum': 1}, 'tiling_results': {'row_count': int(deliver)}}}))
     if deliver:
-        (child / 'generated_aso_set.json').write_text(json.dumps({'rows': [{'sequence': 'AACCGG', 'synthesized_antisense_sequence': 'CCGGTT'}]}))
+        (child / 'generated_aso_set.json').write_text(json.dumps({'rows': [{'sequence': 'AACCGG', 'synthesized_antisense_sequence': 'CCGGTT',
+         'off_target_count_status': 'complete_within_declared_scope', 'Off_target_mismatch_budget': 2,
+         'Off_target_exact_count': 0, 'Off_target_1mm_count': 0, 'Off_target_2mm_count': 0,
+         'off_target_exact_count_unit': 'loci',
+         'off_target_search_provenance_by_species': {'human': {'assembly': 'GRCh38'}}}]}))
     envelope = {'schema_version': 'v3', 'workflow_name': 'design_new_asos', 'tasks': [{'task_id': 'd', 'task_type': 'design_new_asos'}]}
     (tmp_path / 'goal_intake.json').write_text(json.dumps({'final_payload': {
         'request_envelope': envelope, 'structured_goal': {}}}))

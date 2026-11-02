@@ -118,6 +118,9 @@ def copy_native_export(source: Path, destination: Path, *, scope: dict | None = 
                     'row_count':len(selected),'source_row_count':len(rows)}
     if (source.resolve() != destination.resolve()
             and source.suffix.lower() in {'.md', '.markdown', '.html', '.htm'}):
+        if source.suffix.lower() in {'.html', '.htm'}:
+            from .standalone_report import export_standalone_html
+            return export_standalone_html(source, destination, source_root=source_root or source.parent)
         from .report_exports import export_native_report
         return export_native_report(source, destination, source_root=source_root or source.parent)
     destination.parent.mkdir(parents=True, exist_ok=True)

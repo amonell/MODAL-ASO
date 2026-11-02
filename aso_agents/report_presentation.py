@@ -39,7 +39,7 @@ def display_request(run_dir, envelope, raw_request):
 
 
 def append_requested_downloads(markdown, run_dir, requested_outputs=None, *, delivery_root=None):
-    """Bundle only declared, existing deliverables, preserving their bytes.
+    """Bundle declared deliverables with bounded report assets.
 
     This does not generate a missing result or validate its scientific quality.
     Missing files remain explicit. Copying the evidence into the run makes the
@@ -81,17 +81,27 @@ def append_requested_downloads(markdown, run_dir, requested_outputs=None, *, del
             digest = sha(path)
             destination = root/'artifacts'/'deliverables'/digest/path.name
             destination.parent.mkdir(parents=True, exist_ok=True)
-            if not destination.exists():
-                shutil.copyfile(path, destination)
-            if sha(destination) != digest:
-                raise ValueError('Bundled deliverable differs from its declared source.')
-            manifest[name] = {'path': destination.relative_to(root).as_posix(), 'sha256': digest}
             # Evaluation exports already package their evidence in a sibling
             # <filename>.assets directory. Keep that exact relative structure
             # when bringing the declared report into the recipient bundle.
             assets = path.with_name(path.name + '.assets')
             target_assets = destination.with_name(destination.name + '.assets')
-            if assets.is_dir():
+            from .report_exports import small_asset_tree, export_native_report
+            is_html = path.suffix.lower() in {'.html', '.htm'}
+            bounded_assets = not assets.exists() or small_asset_tree(assets)
+            if is_html and path.resolve() != destination.resolve():
+                from .standalone_report import export_standalone_html
+                export_standalone_html(path, destination, source_root=path.parent)
+            elif assets.exists() and not bounded_assets and path.resolve() != destination.resolve():
+                export_native_report(path, destination, source_root=path.parent)
+            else:
+                if not destination.exists():
+                    shutil.copyfile(path, destination)
+                if sha(destination) != digest:
+                    raise ValueError('Bundled deliverable differs from its declared source.')
+            manifest[name] = {'path': destination.relative_to(root).as_posix(),
+                              'sha256': sha(destination), 'source_sha256': digest}
+            if assets.is_dir() and bounded_assets and not is_html:
                 if assets.resolve() != target_assets.resolve():
                     shutil.copytree(assets, target_assets, dirs_exist_ok=True)
                 manifest[name]['assets'] = {}
@@ -109,6 +119,10 @@ def append_requested_downloads(markdown, run_dir, requested_outputs=None, *, del
             lines.append(f'- {label}: file unavailable in this report bundle.')
     heading = '## Requested output files'
     if not lines:
+        if '\n'+heading+'\n' in markdown:
+            prefix, _, old = markdown.partition('\n'+heading+'\n')
+            _, boundary, suffix = old.partition('\n## ')
+            return prefix.rstrip() + ('\n\n## '+suffix if boundary else '\n')
         return markdown
     if manifest != prior:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,6 +163,53 @@ def local_report_artifact(root, value):
         if candidate.is_relative_to(root) and candidate.exists() and candidate not in matches:
             matches.append(candidate)
     return matches[0] if len(matches) == 1 else None
+
+
+def refresh_delivered_report_downloads(run_dir, requested_outputs, exports):
+    """Refresh design-report downloads after delivery, then bind the new bytes.
+
+    Report aliases are copies of the page being read. Listing those aliases
+    inside the same report creates recursive bundles and premature warnings.
+    Scientific tables and conclusions come from the saved report payload.
+    """
+    from .requested_artifacts import copy_native_export
+    from .html_report import render_goal_intake_html
+    from .standalone_report import standalone_html
+    root = Path(run_dir).resolve()
+    downloads = [item for item in requested_outputs or [] if isinstance(item, dict)
+                 and item.get('source_artifact') not in {'report_html', 'report_md'}
+                 and item.get('kind') not in {'report', 'design_report', 'report_markdown', 'report_html', 'report_md'}]
+    sources = {Path(item['source']).resolve() for item in exports
+               if item.get('source') and Path(item['source']).resolve().is_relative_to(root)}
+    # The canonical design report can also be used without an explicitly named
+    # HTML export. Refresh it whenever its requested files are finalized.
+    sources.update(path for path in (root/'report.md', root/'report.html') if path.is_file())
+    changed = set()
+    for source in sorted(sources, key=lambda p: p.suffix.lower() in {'.html', '.htm'}):
+        if source.suffix.lower() not in {'.md', '.markdown', '.html', '.htm'}:
+            continue
+        text = source.read_text(encoding='utf-8')
+        if source.suffix.lower() in {'.md', '.markdown'}:
+            if '\n## Requested output files\n' not in text:
+                continue
+            refreshed = append_requested_downloads(text, root, downloads)
+        else:
+            match = re.search(r'<script id="report-data" type="application/json">(.*?)</script>', text, re.S)
+            if not match:
+                continue
+            payload = json.loads(match[1]); overview = payload.get('overview') or {}
+            markdown = overview.get('report_markdown') or ''
+            refreshed_md = append_requested_downloads(markdown, root, downloads)
+            overview['report_markdown'] = refreshed_md
+            inventory, separator, _ = str(payload.get('results_html') or '').partition('<h2>Report and interpretation</h2>')
+            if separator:
+                payload['results_html'] = inventory + separator + markdown_html(refreshed_md, root)
+            refreshed, _ = standalone_html(render_goal_intake_html(payload), source_path=source, source_root=root)
+        if refreshed != text:
+            source.write_text(refreshed, encoding='utf-8')
+            changed.add(source)
+    return [copy_native_export(Path(item['source']), Path(item['destination']), source_root=root)
+            if Path(item['source']).resolve() in changed else item for item in exports]
 
 
 def artifact_href(path, root):
@@ -356,10 +417,10 @@ def final_candidate_panel(run_dir, *, request_envelope=None):
         candidate = resolve_run_path(root, name)
         if candidate.is_file():
             links.append('<a href="' + artifact_href(candidate, root) + '">' + label + '</a>')
-    title = 'Native design-stage panel' if separate_panel else 'Final selected panel'
-    scope_note = ('The separately requested deliverables define the final selection. These native records are supporting evidence and may differ in membership or ordering. '
+    title = 'Design-stage ASOs' if separate_panel else 'Selected ASOs'
+    scope_note = ('The separately requested files contain the final selection. This design-stage panel may differ in membership or ordering. '
                   if separate_panel else '')
-    return ('<h2>' + title + '</h2><p>' + scope_note + str(len(rows)) + ' delivered native records. Recorded order and ranks are preserved; ranks apply within their recorded scope. These are computational results, not measured activity.</p>'
+    return ('<h2>' + title + '</h2><p>' + scope_note + 'Ranks compare ASOs within the named design group.</p>'
             + '<div class="table-scroll" tabindex="0" role="region" aria-label="Final selected ASOs"><table><thead><tr>'
             + ''.join('<th>' + h + '</th>' for h in headers) + '</tr></thead><tbody>' + ''.join(cells) + '</tbody></table></div>'
             + '<div class="downloads">' + ''.join(links) + '</div>')

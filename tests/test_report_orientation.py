@@ -29,7 +29,7 @@ def test_sequence_checks_explain_eligibility_without_claiming_biological_success
     assert summary['kind'] == 'sequence_checks'
     assert [fact['value'] for fact in summary['facts']] == [3, 1, 1]
     assert summary['notices'] == ['1 could not be classified.']
-    assert 'does not establish how well an ASO will work' in summary['meaning']
+    assert 'which sequences meet each rule' in summary['meaning']
     assert all(fact['source'] == 'reader-section-0' for fact in summary['facts'])
     assert sections == before
 
@@ -68,16 +68,16 @@ Selected candidate rows: {total}. Distinct molecules (antisense sequence plus ch
 
 def test_partial_candidate_preview_does_not_become_a_claim_of_complete_delivery():
     summary = build_orientation(_sections(candidate_text(7, 2)), {'kind': 'design', 'gene': 'GENE'})
-    assert summary['facts'][0]['value'] == 2
-    assert '2 are shown here out of 7' in summary['facts'][0]['note']
-    assert 'requested effect' in summary['meaning']
+    assert summary['title'] == '7 ASOs for GENE'
+    assert 'previews 2 of 7' in summary['meaning']
+    assert summary['facts'] == []
     assert 'successful' not in str(summary)
 
 
 def test_empty_main_panel_is_not_reported_as_no_asos_anywhere():
     text = candidate_text(0, 0) + '\n## Another candidate list\n| ASO (5′–3′) | score |\n|---|---|\n| CCGG | 0 |'
     summary = build_orientation(_sections(text), {'kind': 'design'})
-    assert summary['facts'][0]['value'] == 0
+    assert summary['title'] == '0 ASOs'
     assert 'Other tables contain ASO entries' in summary['notices'][0]
     assert 'failed' not in str(summary)
 
@@ -87,9 +87,8 @@ def test_activity_unavailable_remains_distinct_from_zero_activity():
                   'candidates': [{'status': 'error'}, {'status': 'not_predicted'}]}
     context = {'kind': 'design', 'evaluations': [evaluation]}; before = deepcopy(context)
     summary = build_orientation(_sections(candidate_text(2, 2)), context)
-    assert summary['facts'][1]['label'] == 'Activity estimates available'
-    assert summary['facts'][1]['value'] == '0 of 2'
-    assert 'do not mean zero activity' in summary['notices'][0]
+    assert summary['facts'] == []
+    assert summary['notices'] == ['OligoAI activity predictions are unavailable for 2 of 2 ASOs.']
     assert context == before
 
 
@@ -149,7 +148,7 @@ def test_evaluation_counts_entries_without_interpreting_scientific_assessments()
     assert summary['kind'] == 'evaluation'
     assert summary['facts'][0]['value'] == 2
     assert summary['facts'][0]['label'] == 'Entries assessed'
-    assert 'does not show that the ASO binds or works' in summary['meaning']
+    assert 'Off-targets are other sequences' in summary['meaning']
     assert 'No exact match' not in str(summary)
     ambiguous = build_orientation(_sections(text + text))
     assert ambiguous['facts'] == []
@@ -159,7 +158,7 @@ def test_combined_reports_count_reports_not_distinct_targets_or_a_shared_rank():
     summary = build_orientation([], {'kind': 'combined', 'design_labels': ['GENE · gapmer', 'GENE · splice']})
     assert summary['facts'][0]['value'] == 2
     assert summary['facts'][0]['label'] == 'Design reports available'
-    assert 'not a shared ranking' in summary['meaning']
+    assert 'sequences, predictions and checks' in summary['meaning']
 
 
 def test_orientation_escapes_source_labels_and_links_to_existing_sections():
@@ -167,7 +166,7 @@ def test_orientation_escapes_source_labels_and_links_to_existing_sections():
     summary = build_orientation(sections, {'kind': 'design', 'gene': '<script>alert(1)</script>'})
     page = orientation_html(summary, findings='reader-findings', downloads='reader-section-1')
     assert '<script>alert(1)</script>' not in page
-    assert 'href="#reader-section-0"' in page and 'href="#reader-findings"' in page
+    assert 'href="#reader-section-0"' in page and 'href="#reader-section-1"' in page
 
 
 def test_file_paths_move_to_details_without_hiding_scientific_context():
@@ -194,3 +193,87 @@ def test_identifier_and_unavailable_rank_are_not_reinterpreted_as_a_candidate_or
     assert 'No rank supplied · group details' in page
     assert 'data-recorded-value="unavailable / scope_a"' in page
     assert '<td>0</td>' in page
+
+
+def test_failures_and_unavailable_files_are_visible_before_folded_evidence():
+    text = '''## OligoAI gapmer efficacy prediction
+| Candidate | Predicted inhibition (%) | Status |
+|---|---|---|
+| a | — | error: runtime unavailable |
+| a | — | error: another context unavailable |
+## Requested output files
+- Candidate table: file unavailable in this report bundle.
+## Selected-Panel Off-Target Search Budget
+Selected panel: every retained candidate has a recorded off-target search budget of 0 mismatch(es), covering exact matches (0 mismatches) only; one- and higher-mismatch bins were not searched and are unknown.
+'''
+    summary = build_orientation(_sections(text))
+    assert len(summary['notices']) == 2
+    assert not summary['facts']  # two contexts are not two ASOs
+    page = readable_markdown_html(text)
+    assert page.index('Activity prediction failed for every entry') < page.index('<summary>Predicted gapmer activity')
+    assert '1 requested file is unavailable' in page
+    assert 'Off-target search limit:' not in page
+    assert 'exact matches (0 mismatches) only' in page
+
+
+def test_arbitrary_error_prose_and_configured_search_limits_do_not_become_status_claims():
+    text = '## Unfamiliar result\nAn error may occur. Search budget configured: 2.\n\n## Requested output files\n- [Available](panel.csv)'
+    assert not build_orientation(_sections(text))['notices']
+
+
+def test_native_evaluation_match_counts_describe_recorded_references_not_activity():
+    text = '''## Molecule overview
+| ASO | Evaluated molecule (5′→3′) | Exact antisense records | Screening status |
+|---|---|---|---|
+| A | ACGT | 1 | complete |
+| B | GGTT | 0 | unavailable |
+'''
+    summary = build_orientation(_sections(text))
+    assert summary['kind'] == 'evaluation'
+    assert [fact['value'] for fact in summary['facts']] == [2, '1 of 2']
+    assert '1 entry has no recorded exact match' in summary['notices'][0]
+    assert 'search status' in summary['notices'][0]
+    unknown = build_orientation(_sections(text.replace('| 0 |', '| NA |')))
+    assert len(unknown['facts']) == 1 and not unknown['notices']
+
+
+def test_design_summary_explains_intent_and_actual_incomplete_checks_without_boilerplate():
+    from aso_agents.report_orientation import design_reader_context
+    text = candidate_text(2, 2) + '''\n## Recommended shortlist
+2 distinct molecules selected; 17 in the assessed eligible pool.
+| Order | Off-target screen |
+|---|---|
+| 1 | incomplete_or_unavailable |
+| 2 | complete_within_declared_scope |
+'''
+    context = design_reader_context({'intent':'knockdown'})
+    summary = build_orientation(_sections(text), {**context,'kind':'design','gene':'GENE'})
+    assert summary['title'] == '2 ASOs for GENE'
+    assert summary['purpose'] == 'Designed to lower GENE RNA.'
+    assert summary['meaning'] == 'Selected from 17 designs that passed the filters.'
+    assert summary['notices'] == ['Off-targets are other sequences an ASO may also bind. The search is incomplete for 1 of 2 ASOs.']
+    page = orientation_html(summary, findings='reader-findings')
+    for phrase in ['not measurements', 'does not establish', 'Activity estimates available', 'Entries in the main candidate table']:
+        assert phrase not in page
+
+
+def test_low_confidence_splicing_remains_visible_and_exon_name_comes_from_typed_goal():
+    from aso_agents.report_orientation import design_reader_context
+    context = design_reader_context({'intent':'splice_modulation','desired_effect':'inclusion','exon_label':7},
+        {'goals':[{'rank':1,'ranking_confidence':'low'}]})
+    result = build_orientation(_sections(candidate_text(2, 2)),{**context,'kind':'design','gene':'GENE'})
+    assert result['purpose'] == 'Designed to help GENE RNA retain exon 7 during splicing.'
+    assert result['notices'][0] == 'Confidence in the leading splicing approach is low.'
+
+
+def test_splicing_summary_uses_the_recorded_direction_comparison_without_calling_it_exon_inclusion():
+    text = candidate_text(2, 2) + '''\n## Predicted Splice-Response Candidate Sets
+| rank | directional delta | opposite delta | confidence |
+|---|---|---|---|
+| 1 | 0.0259 | 0.9688 | low |
+'''
+    context = {'kind':'design','routes':[{'rank':1,'ranking_confidence':'low'}]}
+    result = build_orientation(_sections(text), context)
+    assert 'strongest splice-site prediction favors the opposite direction' in result['notices'][0]
+    for changed in [text.replace('0.9688','0.001'), text.replace('0.9688','unknown'), text + text]:
+        assert 'opposite direction' not in str(build_orientation(_sections(changed),context)['notices'])

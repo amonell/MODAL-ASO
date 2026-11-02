@@ -2,7 +2,8 @@
 
 Short explanations introduce verified saved counts and terms. Free scientific
 prose, table records, identifiers, units and sequences remain available intact.
-Unknown sections stay expanded.
+Unknown sections stay expanded. Known evidence sections open on demand, with
+their interpretation and limitations beside the entry point.
 This module deliberately has no model, prediction or selection dependencies.
 """
 from __future__ import annotations
@@ -66,7 +67,23 @@ body{margin:0;background:#f7f9f7;color:var(--reader-ink);font:16px/1.65 system-u
 .reader-actions .reader-action{background:var(--reader-accent);color:white;padding:9px 16px;border-radius:7px;text-decoration:none}
 .reader-content details.reader-basics{padding:0;border:0;margin:14px 0;font-size:.9rem}
 .reader-tools h2{margin:0;font-size:1.2rem}.reader-header{overflow-wrap:anywhere}
-@media(max-width:600px){.reader-facts{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.reader-fact{padding:12px}.reader-fact-value{font-size:1.6rem}.reader-fact-label{font-size:.9rem}.reader-orientation h2{font-size:1.35rem}}
+.reader-content .reader-evidence{padding:0;margin:12px 0;background:#fff}
+.reader-evidence>summary{padding:16px 18px;margin:0 0 0 20px!important;line-height:1.45}
+.reader-evidence>summary .reader-detail-hint{display:block;font-weight:400;font-size:.9rem;color:var(--reader-muted);margin-top:4px}
+.reader-evidence>div{padding:4px 20px 18px;border-top:1px solid var(--reader-line)}
+.reader-content .reader-nested{background:#f8faf8}.reader-nested>div{padding-top:8px}
+.reader-content .reader-limit-detail{border:0;padding:0;margin:6px 0;background:transparent}
+.reader-limit-detail>summary{font-weight:400!important;margin-left:0!important}.reader-limit-detail>div{padding:6px 0}
+.reader-orientation{padding-bottom:18px;margin-bottom:22px}
+.reader-facts{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0}
+.reader-fact{flex:1 1 180px;max-width:340px;padding:12px 16px}
+.reader-fact-value{font-size:1.5rem}.reader-fact-label{margin-top:4px;font-size:.92rem}
+.reader-fact-source{display:none}.reader-fact-note{margin-top:3px}
+.reader-orientation .reader-basics{color:var(--reader-muted)}
+.reader-limits ul{padding-left:20px}.reader-limits li+li{margin-top:8px}
+.reader-section h2{scroll-margin-top:16px}
+.reader-content .reader-reading-note{font-size:.9rem;color:var(--reader-muted);margin:0 0 14px}
+@media(max-width:600px){.reader-facts{gap:8px}.reader-fact{padding:12px;flex-basis:calc(50% - 4px);max-width:none}.reader-fact-value{font-size:1.6rem}.reader-fact-label{font-size:.9rem}.reader-orientation h2{font-size:1.35rem}}
 :focus-visible{outline:3px solid #23624e;outline-offset:3px}
 @media(max-width:600px){.reader-page{padding:20px 12px 40px}.reader-content{padding:18px 14px}.reader-header h1{font-size:1.6rem}.reader-glossary dl{display:block}.reader-glossary dd{margin:0 0 14px}.reader-content details{padding:10px}}
 @media print{body{background:white}.reader-page{max-width:none;padding:0}.reader-tools,.reader-nav{display:none}.reader-content{border:0;padding:0}.reader-content .table-scroll{overflow:visible}.reader-content table{width:100%;min-width:0}.reader-content td{overflow-wrap:anywhere}.reader-section{break-inside:avoid}}
@@ -107,6 +124,26 @@ HEADING_LABELS = {
     "recorded panel comparison": "Panel comparison",
     "lead records (recorded rank 1)": "Top-ranked candidates in each panel",
     "oligoai gapmer efficacy prediction": "Predicted gapmer activity (OligoAI)",
+    "molecule overview": "Supplied ASOs and sequence checks",
+    "reference context": "Reference sequences used",
+    "exact gene-screening count definition": "What the off-target count includes",
+    "top allele-specific candidates": "Candidates for the requested variant",
+    "target-rna accessibility and screening scope": "RNA accessibility and search coverage",
+    "how to read this run": "Where to start",
+    "what happened": "How the analysis was done",
+    "branch outcomes": "Results by analysis type",
+    "run metadata": "Run information",
+    "how to read the outputs": "Understanding the output files",
+    "aso-by-aso assessment": "Assessment of each ASO",
+    "original request": "Your full request",
+    "what needs attention": "What needs attention",
+    "supporting results and methods": "Evidence and methods",
+    "sequence orientation": "Which strand each sequence represents",
+    "assumptions": "Assumptions to review",
+    "suggested follow-up": "Suggested follow-up",
+    "original intervals and assembly conversion evidence": "Requested regions and genome coordinates",
+    "translation-start evidence for the selected panel": "Binding near the start codon",
+    "recommended shortlist": "Selection and checks",
 }
 
 # Fold only explicitly named methods/administration, never arbitrary prose or
@@ -116,19 +153,55 @@ DETAIL_HEADINGS = {
     "how to read the rankings", "where users should look to choose asos",
     "references and search scope", "off-target search references",
     "selected-panel off-target search budget", "selection and evidence",
+    "what happened", "key decisions", "how to read the outputs", "run metadata",
+    "reference context", "exact gene-screening count definition", "glossary",
+    "original request", "how to read this run", "original intervals and assembly conversion evidence",
+}
+# These are complete evidence blocks, not alternative summaries. Their contents
+# are never shortened, sampled, deduplicated, or interpreted by the renderer.
+EVIDENCE_HEADINGS = {
+    "selected physical panel": "Sequences, chemistry, positions and checks for the listed panel.",
+    "physical chemistry": "Sugar modifications and backbone chemistry for each ASO.",
+    "top normal-ranking candidates": "Search candidates in recorded rank order; this list can differ from the selected panel.",
+    "top allele-specific candidates": "Matches to the mutant and reference sequences.",
+    "predicted splice-response candidate sets": "Candidate groups for predicted splicing changes; the response site can differ from the binding site.",
+    "strongest raw splice-effect rows": "A check of model signals, separate from the selected panel.",
+    "requested binding-region candidate sets": "Candidates grouped by requested binding region; the same molecule may appear in several groups.",
+    "conditional exon-skipping sequence consequences": "Expected RNA sequence after the proposed exon skip.",
+    "target-rna accessibility and screening scope": "Predicted RNA accessibility and the recorded scope of screening.",
+    "oligoai gapmer efficacy prediction": "Activity predictions and unavailable results, with their reasons.",
+    "full observation membership": "Every supplied entry and the measures used in the comparison.",
+    "complete audit table": "Every sequence, calculated property and check outcome.",
+    "exclusion reasons": "Which stated rules each excluded sequence did not meet.",
+    "molecule overview": "Supplied sequences and matching RNA sites.",
+    "assessment": "The recorded interpretation for each supplied ASO.",
+    "aso-by-aso assessment": "Open an ASO for its interpretation, uncertainty and supporting evidence.",
+    "recorded panel comparison": "Compare each measure within its stated reference and search scope.",
+    "lead records (recorded rank 1)": "The first-ranked entry in each panel.",
+    "design runs": "The full findings for each target, including incomplete work.",
+    "aso set comparisons": "Detailed comparisons of the supplied panels.",
+    "detailed response": "The complete recorded analysis and supporting explanations.",
+    "supporting results": "The recorded results and details for individual entries.",
+    "supporting evidence": "The evidence supporting the finding above, with its stated scope.",
+    "supporting results and methods": "The recorded results and how they were calculated.",
+    "sequence orientation": "The supplied ASO strand and the complementary target RNA site are different sequences.",
+    "assumptions": "Conditions and input interpretations used in this analysis.",
+    "suggested follow-up": "The report's proposed next steps, with their original scope and qualifications.",
+    "recommended shortlist": "Selection order, off-target checks and sequence features to review.",
+    "translation-start evidence for the selected panel": "Where each ASO binds relative to the start of the coding sequence.",
 }
 RESULT_HEADINGS = {
     "outcome summary", "practical interpretation", "bottom line", "selected physical panel",
-    "design run status", "recorded panel comparison", "lead records (recorded rank 1)",
+    "design run status", "recorded panel comparison", "lead records (recorded rank 1)", "main finding",
 }
-LIMIT_HEADINGS = {"caveats", "limitations", "main uncertainty", "what remains uncertain"}
+LIMIT_HEADINGS = {"caveats", "limitations", "main uncertainty", "what remains uncertain", "what needs attention"}
 
 TABLE_LABELS = {
     'id': 'ID', 'set': 'Set', 'sequence': 'Sequence',
     'target_score': 'Target score', 'offtarget_hits': 'Off-target matches',
     'source_row': 'Input row', 'source_row_number': 'Input row',
-    'pooled_nondominated_frontier': 'Nondominated across all sets',
-    'dominated_by_ids': 'Candidates with better compared measures',
+    'pooled_nondominated_frontier': 'A trade-off option?',
+    'dominated_by_ids': 'Better alternatives on the compared measures',
     'dominated_by_count': 'Number with better compared measures',
     'set_total_count': 'Candidates in set', 'set_frontier_count': 'Set members on the comparison frontier',
     'set_dominated_count': 'Set members dominated in the comparison', 'set_unknown_count': 'Unknown in set',
@@ -148,6 +221,14 @@ TABLE_LABELS = {
     'unverified_retention_criteria': 'Criteria not checked',
     'native rank / scope': 'Rank within design group',
     'native score': 'Recorded score',
+    'claimed_length accuracy': 'Reported length correct?',
+    'claimed_gc accuracy': 'Reported GC correct?',
+    'retention': 'Meets the stated rules?',
+    'exclusion reasons': 'Reasons for exclusion',
+    'aso (5′–3′)': 'Recorded ASO / sequence role (5′→3′)',
+    'antisense oligo (5′→3′)': 'ASO sequence (5′→3′)',
+    'genomic screening': 'Genome search',
+    'source sequence / role (5′–3′)': 'ASO and target strands (5′→3′)',
 }
 # Redundant arithmetic and input-row bookkeeping can be opened on demand.
 # Unknown columns and all decision/result/limitation columns remain visible.
@@ -156,6 +237,9 @@ DETAIL_COLUMNS = {
     'recomputed_gc_fraction_exact', 'recomputed_gc_fraction_3dp',
     'longest_homopolymer_base', 'claimed_gc_rounded_3dp', 'exclusion_reason_count',
     'set_total_count', 'set_frontier_count', 'set_dominated_count', 'set_unknown_count',
+    'native rank / scope', 'physical binding interval(s), bed0', 'target genomic strand',
+    'physical splice element', 'predicted response site', 'reference tm (°c)',
+    'reference δg (kcal/mol)',
 }
 
 STATUS_LABELS = {
@@ -165,6 +249,10 @@ STATUS_LABELS = {
     'not_predicted': 'Prediction unavailable',
     'not_applicable': 'Not applicable',
     'inference_error': 'Prediction failed',
+    'not_requested': 'Outside this analysis',
+    'incomplete_or_unavailable': 'Incomplete',
+    'complete_within_declared_scope': 'Completed',
+    'provisional': 'Review needed',
 }
 
 
@@ -193,15 +281,27 @@ def friendly_tables(fragment):
                 index += 1
                 key = headers[index] if index < len(headers) else ''
                 raw = html.unescape(re.sub('<[^>]+>', '', cell_match[1]))
+                if key in {'antisense oligo (5′→3′)', 'source sequence / role (5′–3′)', 'aso (5′–3′)'}:
+                    strands = re.fullmatch(r'([ACGTUacgtu]+) \(transcript_oriented_target_binding_site\); synthesized ASO: ([ACGTUacgtu]+|unverified)', raw)
+                    if strands:
+                        # Both strings and their roles are explicitly recorded.
+                        # Never calculate a complement or guess an orderable ASO.
+                        aso = ('<span>Recorded ASO:</span> <code>' + html.escape(strands[2]) + '</code>'
+                               if strands[2] != 'unverified' else '<span>ASO strand not verified</span>')
+                        return ('<td data-recorded-value="' + html.escape(raw, quote=True) + '">'
+                                + aso + '<details class="reader-strands"><summary>Target RNA strand and original record</summary>'
+                                + '<p>Target RNA site (5′→3′): <code>' + html.escape(strands[1]) + '</code></p>'
+                                + '<p>This is the RNA sequence the ASO is designed to pair with. Sugar and backbone modifications are listed under ASO chemistry.</p>'
+                                + '<p>Original record: <code>' + html.escape(raw) + '</code></p></details></td>')
                 if key == 'native rank / scope' and (rank := re.fullmatch(r'(\d+|unavailable|not recorded)\s+/\s+(.+)', raw)):
                     rank_label = rank[1] if rank[1].isdigit() else 'No rank supplied'
                     return ('<td data-recorded-value="' + html.escape(raw, quote=True)
                             + '"><details class="reader-rank"><summary>' + rank_label
                             + ' · group details</summary><p>Design group: <code>'
                             + html.escape(rank[2]) + '</code></p></details></td>')
-                if key in {'status', 'outcome', 'retention_status'}:
+                if key in {'status', 'outcome', 'retention_status', 'off-target screen', 'splice safeguards'}:
                     label = STATUS_LABELS.get(raw, raw)
-                elif key in {'exclusion reason', 'exclusion_reasons'}:
+                elif key in {'exclusion reason', 'exclusion reasons', 'exclusion_reasons'}:
                     label = _reason_label(raw)
                 else:
                     label = raw
@@ -214,26 +314,34 @@ def friendly_tables(fragment):
         return re.sub(r'<tr>.*?</tr>', row, table, flags=re.S)
     fragment = re.sub(r'<table>.*?</table>', values, fragment, flags=re.S)
     def header(match):
-        value = html.unescape(match[1]); key = value.strip('`').casefold()
-        if key not in TABLE_LABELS:
+        # Writers sometimes use inline code around a known field name. Strip
+        # only that formatting, never links or arbitrary header markup.
+        value = html.unescape(re.sub(r'</?code>', '', match[1])); key = value.strip('`').casefold()
+        if key not in TABLE_LABELS and key not in DETAIL_COLUMNS:
             return match[0]
         css = ' class="reader-detail-column"' if key in DETAIL_COLUMNS else ''
-        return '<th' + css + ' title="' + html.escape(value, quote=True) + '">' + html.escape(TABLE_LABELS[key]) + '</th>'
-    return re.sub(r'<th>([^<]*)</th>', header, fragment)
+        return '<th' + css + ' title="' + html.escape(value, quote=True) + '">' + html.escape(TABLE_LABELS.get(key, value)) + '</th>'
+    return re.sub(r'<th>(.*?)</th>', header, fragment, flags=re.S)
 
 TERMS = (
     (r"\bASOs?\b|antisense", "ASO", "A short synthetic strand designed to bind RNA. A candidate ASO is a proposed option for further study."),
     (r"\bRNA\b|transcript", "RNA / transcript", "RNA carries or helps use genetic instructions. A transcript is one RNA product of a gene; different versions can contain different regions."),
     (r"splic", "Splicing", "How pieces of RNA are joined. Changes in splicing can change which RNA version is produced."),
-    (r"predict|estimate", "Prediction", "A result calculated by a model. It is different from an effect measured in an experiment."),
-    (r"\bisoform\w*\b", "Isoform", "A version of an RNA transcript. Coverage of one version does not necessarily mean coverage of all versions."),
-    (r"off[-_ ]target", "Off-target match", "A sequence match outside the intended target. The reference and mismatch settings limit which matches were checked; a match alone does not establish a biological effect."),
+    (r"gapmer", "Gapmer", "An ASO with a central DNA segment and modified ends, designed to recruit RNase H to cut the target RNA."),
+    (r"steric", "Steric blocker", "An ASO designed to occupy an RNA site and block a process such as splicing or translation."),
+    (r"phosphorothioate|\bPS\b", "Phosphorothioate (PS)", "A chemical modification to the links between nucleotides."),
+    (r"MOE|2.prime", "2′-MOE", "A sugar modification used in some ASOs. Its placement is part of the chemistry record, separate from the A, C, G and T sequence letters."),
+    (r"\bdelta\b", "Predicted change (delta)", "The change in a model score. For splicing, the score describes use of a particular splice site."),
+    (r"BED0|0.based|1.based|coordinate", "Sequence coordinates", "Positions depend on the named reference and counting convention. Zero-based half-open intervals exclude the end; one-based inclusive intervals include both endpoints. RNA and genomic positions are not interchangeable."),
+    (r"predict|estimate", "Prediction", "A result calculated by a model."),
+    (r"\bisoform\w*\b", "Isoform", "A version of an RNA transcript."),
+    (r"off[-_ ]target", "Off-target", "Another sequence an ASO may also bind. The search settings specify which references and sequence differences were checked."),
     (r"\bGC(?:_|\b)", "GC fraction", "The fraction of a sequence made up of G and C bases. A fraction of 0.30 is 30%."),
     (r"homopolymer", "Homopolymer", "A run of the same base, such as AAAA."),
-    (r"nondominated|pareto", "Nondominated candidate", "No other candidate in the stated comparison is at least as good on every compared measure and better on at least one. This is not a claim of overall biological superiority."),
+    (r"nondominated|pareto", "Nondominated candidate", "An option for which improving one compared measure requires a trade-off on another."),
     (r"\brank\b|selection_rank", "Rank", "The order recorded for a particular candidate set. Ranks from different sets or scoring methods may not be comparable."),
-    (r"\b(?:unavailable|not_predicted|not recorded)\b", "Unavailable result", "A missing measurement or prediction. It is not a zero, a negative finding, or evidence that the ASO does not work."),
-    (r"\bN/?A\b", "NA / N/A", "The report supplies no value in that field. It may be unavailable or not applicable; check the accompanying notes. It does not mean zero."),
+    (r"\b(?:unavailable|not_predicted|not recorded)\b", "Unavailable result", "A missing measurement or prediction; the accompanying note explains why."),
+    (r"\bN/?A\b", "NA / N/A", "A field with no value supplied. The accompanying note explains whether the value is missing or inapplicable."),
 )
 
 
@@ -302,6 +410,88 @@ def _intro_html(lines, report_dir, extra_details, header_request):
     return markdown_html(text, report_dir)
 
 
+def _evidence_body(lines, report_dir):
+    """Add a second reading level inside known evidence sections.
+
+    A heading in a code fence is data. Unfamiliar top-level sections do not use
+    this function and remain visible. Each original body is rendered once.
+    """
+    groups, current, fence = [], {'heading': '', 'lines': []}, None
+    for line in lines:
+        marker = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if fence:
+            current['lines'].append(line)
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
+                fence = None
+            continue
+        if marker:
+            fence = marker[1]
+        heading = re.match(r'^###\s+(.+?)\s*#*\s*$', line) if not fence else None
+        if heading:
+            groups.append(current)
+            current = {'heading': heading[1], 'lines': []}
+        else:
+            current['lines'].append(line)
+    groups.append(current)
+    parts = []
+    for group in groups:
+        body = friendly_tables(markdown_html('\n'.join(group['lines']), report_dir))
+        if group['heading']:
+            parts.append('<details class="reader-nested"><summary>' + html.escape(group['heading'])
+                         + '</summary><div>' + body + '</div></details>')
+        else:
+            parts.append(body)
+    return ''.join(parts)
+
+
+def _disclosure(section_id, label, body, hint=''):
+    return ('<details class="reader-evidence" id="' + section_id + '"><summary>' + html.escape(label)
+            + ('<span class="reader-detail-hint">' + html.escape(hint) + '</span>' if hint else '')
+            + '</summary><div>' + body + '</div></details>')
+
+
+def _limitation_body(lines, report_dir):
+    """Keep each caveat's first sentence visible; expand its exact explanation.
+
+    Only simple, complete bullet lists qualify. Complex Markdown stays intact.
+    Do not split inside a code span, link, or parenthesis, or invent a headline.
+    """
+    nonempty = [line for line in lines if line.strip()]
+    if not nonempty or any(not line.startswith('- ') for line in nonempty):
+        return friendly_tables(markdown_html('\n'.join(lines), report_dir))
+    items = []
+    for line in nonempty:
+        text = line[2:]; end = None; code = False; brackets = 0
+        # Native multi-observation caveats start with a scope label. Keep that
+        # label with the consequence; a label alone is not a useful preview.
+        scope = re.match(r'^\*\*Observation \d+ \(.+?\):\*\*\s+', text)
+        consequence_start = scope.end() if scope else 0
+        for index, char in enumerate(text):
+            if char == '`':
+                code = not code
+            if code:
+                continue
+            if char in '[(':
+                brackets += 1
+            elif char in '])':
+                brackets = max(0, brackets - 1)
+            if (char == ':' and index > consequence_start and brackets == 0
+                    and text[index + 1:index + 2].isspace()
+                    and len(text[consequence_start:index].split()) <= 12):
+                end = index + 1
+                break
+            if char == '.' and brackets == 0 and re.match(r'\s+[A-Z]', text[index + 1:]):
+                end = index + 1
+                break
+        if end and len(text) > 180:
+            first = markdown_html(text[:end], report_dir).strip().removeprefix('<p>').removesuffix('</p>')
+            rest = markdown_html(text[end:].lstrip(), report_dir)
+            items.append('<li><details class="reader-limit-detail"><summary>' + first + '</summary><div>' + rest + '</div></details></li>')
+        else:
+            items.append(markdown_html(line, report_dir).strip().removeprefix('<ul>').removesuffix('</ul>').strip())
+    return '<ul>' + ''.join(items) + '</ul>'
+
+
 def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None, context=None):
     """Reorganize saved text for reading without editing its evidence blocks.
 
@@ -309,22 +499,48 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     body is rendered once. Unknown headings are visible in their original order.
     """
     sections = _sections(markdown)
-    visible, details, intro, downloads = [], [], [], []
+    visible, details, evidence, intro, downloads = [], [], [], [], []
     for index, section in enumerate(sections):
         heading = section['heading']; key = heading.casefold()
         label = HEADING_LABELS.get(key, heading)
         body = friendly_tables(markdown_html('\n'.join(section['lines']), report_dir))
         section_id = f'reader-section-{index}'
         if not heading or section['level'] == 1:
-            content = friendly_tables(_intro_html(section['lines'], report_dir, details, header_request))
+            if key == 'supplied aso evaluation':
+                # Native multi-ASO reports retain complete, reviewed summaries
+                # under observation headings. Each can be opened independently.
+                content = _evidence_body(section['lines'], report_dir)
+            else:
+                content = friendly_tables(_intro_html(section['lines'], report_dir, details, header_request))
+            # Generated design context is available beside the full request.
+            # Free-form introductions may contain the only finding and stay open.
+            if key == 'run output summary' and re.search(r'^This run designed ', '\n'.join(section['lines']), re.M):
+                details.append(_disclosure(section_id, 'Design context and assumptions', content))
+                continue
             if heading and label != header_title and key not in {'run output summary', 'sandbox summary'}:
                 content = '<h2>' + html.escape(label) + '</h2>' + content
             intro.append((index, section_id, label or 'Overview', content))
+        elif key == 'practical interpretation' and (context or {}).get('kind') == 'design':
+            evidence.append((index, section_id, label, _disclosure(section_id, label,
+                _evidence_body(section['lines'], report_dir))))
+        elif key in EVIDENCE_HEADINGS:
+            lines = section['lines']
+            counts = [line for line in lines if key == 'selected physical panel' and
+                      re.fullmatch(r'Selected candidate rows: \d+\. Distinct molecules \(antisense sequence plus chemistry\): \d+\. Preview: \d+ molecules in .+\.', line)]
+            content = _evidence_body([line for line in lines if line not in counts], report_dir)
+            if counts:
+                content += '<details><summary>Selection counts</summary>' + markdown_html('\n'.join(counts), report_dir) + '</details>'
+            evidence.append((index, section_id, label, _disclosure(section_id, label,
+                content, EVIDENCE_HEADINGS[key])))
         elif key in DETAIL_HEADINGS:
             details.append('<details id="' + section_id + '"><summary>' + html.escape(label)
                            + '</summary><div>' + body + '</div></details>')
         else:
             cls = ' reader-limits' if key in LIMIT_HEADINGS else ' reader-downloads' if key == 'requested output files' else ''
+            if key in LIMIT_HEADINGS:
+                body = _limitation_body(section['lines'], report_dir)
+            elif key in {'practical interpretation', 'main finding', 'bottom line'}:
+                body = _evidence_body(section['lines'], report_dir)
             content = '<h2>' + html.escape(label) + '</h2>' + body
             item = (index, section_id, label, '<section class="reader-section' + cls + '" id="' + section_id + '">' + content + '</section>')
             if key == 'requested output files':
@@ -332,31 +548,32 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
             else:
                 visible.append((0 if key in RESULT_HEADINGS else 1 if key in LIMIT_HEADINGS else 2, item))
     visible.sort(key=lambda entry: (entry[0], 0 if entry[1][2] == 'Main finding' else 1, entry[1][0]))
+    evidence.sort(key=lambda item: (0 if sections[item[0]]['heading'].casefold() in
+                                   {'selected physical panel', 'molecule overview', 'aso-by-aso assessment'} else 1, item[0]))
     blocks = [item for _, item in visible]
-    nav = []
-    if blocks:
-        nav.append(('<a href="#' + blocks[0][1] + '">Results</a>'))
     limits = next((item for priority, item in visible if priority == 1), None)
-    if limits:
-        nav.append('<a href="#' + limits[1] + '">Limitations</a>')
-    if downloads:
-        nav.append('<a href="#' + downloads[0][1] + '">Downloads</a>')
-    if details:
-        nav.append('<a href="#reader-details">Methods and details</a>')
     terms = glossary_html(str(markdown or ''))
-    if terms:
-        nav.append('<a href="#reader-terms">Explain report terms</a>')
-    tools = ('<div class="reader-tools"><h2 id="reader-findings">Findings and data</h2>'
+    tools = ('<div class="reader-tools"><h2 id="reader-findings">Explore the results</h2>'
              '<button type="button" class="reader-expand">Expand all details</button></div>') if include_tools else '<span id="reader-findings"></span>'
     # A free-form introduction may itself be the only scientific summary.
     lead = ''.join('<section class="reader-section" id="' + item[1] + '">' + item[3] + '</section>' for item in intro)
-    detail_html = ('<section class="reader-section" id="reader-details"><h2>Methods and details</h2>' + ''.join(details) + '</section>') if details else ''
+    detail_html = (_disclosure('reader-details', 'Methods, references and run details', ''.join(details),
+                              'How the analysis was done, which references were used, and the complete run context.')
+                   if details else '')
     from .report_orientation import build_orientation, orientation_html
-    orientation = orientation_html(build_orientation(sections, context), findings='reader-findings',
+    orientation_data = build_orientation(sections, context)
+    orientation = orientation_html(orientation_data, findings='reader-findings',
                                    downloads=downloads[0][1] if downloads else None,
                                    limitations=limits[1] if limits else None)
-    return (orientation + tools + ('<nav class="reader-nav" aria-label="In this report">' + ''.join(nav) + '</nav>' if nav else '')
-            + lead + ''.join(item[3] for item in blocks) + ''.join(item[3] for item in downloads)
+    # A specific finding already introduces an unstructured analysis. Do not
+    # put a second, generic "this is an analysis" preamble in front of it.
+    if (orientation_data['kind'] == 'analysis' and not orientation_data['facts']
+            and not orientation_data['notices']
+            and any(section['heading'].casefold() in {'main finding', 'bottom line'} for section in sections)):
+        orientation = ''
+    return (orientation + lead + ''.join(item[3] for item in blocks)
+            + tools
+            + ''.join(item[3] for item in evidence) + ''.join(item[3] for item in downloads)
             + detail_html + terms)
 
 
@@ -407,6 +624,11 @@ def basic_document(title, markdown, report_dir=None):
         first = next((section['heading'] for section in sections if section['level'] == 1), '')
         if first.casefold() in HEADING_LABELS and first.casefold() not in {'run output summary', 'sandbox summary'}:
             display_title = HEADING_LABELS[first.casefold()]
+        if display_title == 'ASO analysis':
+            from .report_orientation import build_orientation
+            kind = build_orientation(sections)['kind']
+            display_title = {'evaluation': 'Supplied ASO evaluation', 'comparison': 'ASO panel comparison',
+                             'sequence_checks': 'Candidate sequence checks'}.get(kind, display_title)
     body = readable_markdown_html(markdown, report_dir, header_title=display_title)
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -429,8 +651,15 @@ def design_results(payload):
     if not markdown:
         return saved or '<p>Final results are not recorded.</p>'
     meta = payload.get('meta') or {}
+    from .report_orientation import design_reader_context
+    reader_context = payload.get('reader_context')
+    if not isinstance(reader_context, dict):
+        collections = (payload.get('outputs') or {}).get('collections') or []
+        programs = next((c.get('raw') for c in collections if c.get('key') == 'design_programs'), [])
+        reader_context = design_reader_context({'design_programs': programs if isinstance(programs, list) else []},
+                                               (payload.get('decisions') or {}).get('strategy_routing'))
     body = readable_markdown_html(markdown, payload.get('oligoai_report_dir'), header_request=meta.get('user_request'),
-                                  context={'kind': 'design', 'gene': meta.get('gene_symbol') or meta.get('gene_id'),
+                                  context={**reader_context, 'kind': 'design', 'gene': meta.get('gene_symbol') or meta.get('gene_id'),
                                            'evaluations': payload.get('oligoai_evaluations') or []})
     inventory, separator, _ = saved.partition('<h2>Report and interpretation</h2>')
     if inventory and separator:

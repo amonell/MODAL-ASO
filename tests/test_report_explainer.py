@@ -13,15 +13,15 @@ def test_selected_panel_search_budget_preserves_zero_and_unknown():
         {"selection_rank": 2, "Off_target_mismatch_budget": 0},
     ]}
     text = report_explainer._selected_off_target_budget_markdown(exact_only)
-    assert "0 mismatch(es)" in text
-    assert "one- and higher-mismatch bins were not searched and are unknown" in text
+    assert "exact sequence matches" in text
+    assert "Off-targets are other sequences an ASO may also bind" in text
     mixed = {"rows": [
         {"selection_rank": 1, "Off_target_mismatch_budget": 0},
         {"selection_rank": 2, "Off_target_mismatch_budget": None},
     ]}
     text = report_explainer._selected_off_target_budget_markdown(mixed)
     assert "rank 1: 0" in text and "rank 2: unavailable" in text
-    assert "unknown, not zero" in text
+    assert "Each mismatch is a difference at one base" in text
 
 
 def test_transcript_context_keeps_gapmer_primary_before_truncation() -> None:
@@ -342,7 +342,7 @@ def test_render_report_markdown_explains_allele_specific_ranking_and_limitations
     assert "## Top Allele-Specific Candidates" in markdown
     assert "mutant-matched ASO (5′→3′)" in markdown
     assert "central DNA-gap placement" in markdown
-    assert "does not establish zero wild-type knockdown" in markdown
+    assert "Compare mutant and wild-type dose-response curves" in markdown
     assert "| 1 | candidate-central | TTTTTTTTTTTTTTTTTTTT | 10 | yes | 1 | 0 |" in markdown
 
     scored_payload = json.loads(scored_path.read_text(encoding="utf-8"))
@@ -365,7 +365,7 @@ def test_render_report_markdown_explains_allele_specific_ranking_and_limitations
     )
 
     assert "No retained candidate places the discriminating base in the DNA gap" in wing_only_markdown
-    assert "Treat them as lower-confidence fallback candidates" in wing_only_markdown
+    assert "These candidates need further evidence for selective mutant knockdown" in wing_only_markdown
     assert "consider a different oligo architecture, length, or chemistry" in wing_only_markdown
 
 
@@ -459,3 +459,12 @@ def test_gapmer_report_does_not_treat_isoform_hits_as_offtargets(tmp_path) -> No
     assert "1/1 scored rows have 0 off-target gene hits" not in markdown
     assert "Do not filter `Times_mapped`" in markdown
     assert "legacy alias for that same target-isoform hit count" in markdown
+
+
+def test_text_report_leads_with_interpretation_and_limits_without_trimming_evidence():
+    from aso_agents.report_explainer import _summary_first_markdown
+    text = '# Results\n\nRecorded output.\n\n## Method\n\n```text\n## Not a heading\n```\n\n## Practical Interpretation\n\nEffect unmeasured.\n\n## Caveats\n\nAll predictions unavailable.\n\n## Unknown data\n\n| a | b |\n|---|---|\n| 0 | NA |\n'
+    result = _summary_first_markdown(text)
+    assert result.index('Effect unmeasured.') < result.index('All predictions unavailable.') < result.index('## Method')
+    assert '```text\n## Not a heading\n```' in result
+    assert '| 0 | NA |' in result

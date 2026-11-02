@@ -216,7 +216,9 @@ def build_goal_intake_html_payload(
     if report_markdown:
         results_html += '<h2>Report and interpretation</h2>' + markdown_html(report_markdown, run_path)
 
+    from .report_orientation import design_reader_context
     return {
+        "reader_context": design_reader_context(structured_goal, strategy_routing),
         "meta": {
             "gene_symbol": meta.get("gene_symbol") or structured_goal.get("gene_symbol"),
             "gene_id": meta.get("gene_id") or structured_goal.get("gene_id"),

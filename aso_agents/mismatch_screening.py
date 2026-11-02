@@ -20,6 +20,7 @@ class MismatchQueryIndex:
         self.by_length = defaultdict(set)
         self.seeds = defaultdict(set)
         self.parts = {}
+        self._ambiguity_masks = {}
         for query in self.queries:
             if not query or set(query) - set("ACGT"):
                 raise ValueError("Substitution queries must contain only A/C/G/T")
@@ -45,6 +46,58 @@ class MismatchQueryIndex:
                 candidates.update(self.seeds.get((length, i, target[start:end]), ()))
         return [(query, distance) for query in sorted(candidates)
                 if (distance := sum(a != b for a, b in zip(query, target))) <= self.budget]
+
+    def possible_matches(self, target):
+        """Queries an unresolved reference could match, with minimum distance.
+
+        Bitsets track substitution counts without expanding ambiguous bases into
+        every possible sequence. These are uncertainty records, never hits.
+        """
+        length = len(target)
+        if length not in self._ambiguity_masks:
+            queries = sorted(self.by_length.get(length, ()))
+            masks = [{base: 0 for base in "ACGT"} for _ in range(length)]
+            for index, query in enumerate(queries):
+                for position, base in enumerate(query):
+                    masks[position][base] |= 1 << index
+            self._ambiguity_masks[length] = queries, masks
+        queries, masks = self._ambiguity_masks[length]
+        all_queries = (1 << len(queries)) - 1
+        states = [all_queries] + [0] * self.budget
+        ambiguity = {"R": "AG", "Y": "CT", "S": "CG", "W": "AT", "K": "GT", "M": "AC",
+                     "B": "CGT", "D": "AGT", "H": "ACT", "V": "ACG"}
+        for position, base in enumerate(target.upper()):
+            allowed = base if base in "ACGT" else ambiguity.get(base, "ACGT")
+            matching = 0
+            for nucleotide in allowed:
+                matching |= masks[position][nucleotide]
+            different = all_queries ^ matching
+            states = [(states[mm] & matching) | (states[mm - 1] & different if mm else 0)
+                      for mm in range(self.budget + 1)]
+        result = []
+        for distance, bits in enumerate(states):
+            while bits:
+                bit = bits & -bits
+                result.append((queries[bit.bit_length() - 1], distance))
+                bits ^= bit
+        return result
+
+
+def reference_incomplete_reasons(summary, query, coverage=None):
+    """Old receipts stay incomplete; new coverage is bound to the query/budget."""
+    reasons = []
+    for key, reason in (("error", "reference_search_failed"), ("skipped_chrom", "reference_sequence_missing"),
+                        ("skipped_unresolved_strand", "transcript_strand_missing")):
+        if summary.get(key):
+            reasons.append(reason)
+    if summary.get("skipped_ambiguous_windows"):
+        valid = (isinstance(coverage, dict) and coverage.get("version") == 1
+                 and coverage.get("query") == query
+                 and coverage.get("mismatch_budget") == summary.get("mismatch_budget")
+                 and coverage.get("checked") is True)
+        if not valid or coverage.get("unresolved_possible_matches") != 0:
+            reasons.append("reference_bases_unresolved")
+    return reasons
 
 
 def empty_hits(budget=0):
@@ -96,6 +149,9 @@ def annotate_mismatch_bins(row, budget, incomplete=False):
     row["off_target_observed_gene_count"] = len(union) if union is not None else None
     row["off_target_count_status"] = ("complete_within_declared_scope" if complete else
                                     "incomplete" if incomplete else "unavailable")
+    row["off_target_search_status"] = "complete" if complete else "incomplete" if incomplete else "unavailable"
+    if complete:
+        row["off_target_incomplete_reasons"] = []
     for mm in range(4):
         label = "exact" if mm == 0 else f"{mm}mm"
         row[f"Off_target_{label}_count"] = len(ids_by_bin[f"{mm}mm"]) if complete and mm <= budget else None

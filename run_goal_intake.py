@@ -8175,6 +8175,8 @@ def _generate_goal_intake_html_report(run_dir: str, structured_goal: Optional[Di
     html = render_goal_intake_html(html_payload)
 
     output_path = canonical_run_path(run_dir, "report.html")
+    from aso_agents.standalone_report import standalone_html
+    html, _ = standalone_html(html, source_path=output_path, source_root=Path(run_dir))
     try:
         output_path.write_text(html, encoding="utf-8")
     except Exception as exc:
@@ -24353,7 +24355,7 @@ def _build_reference_isoform_cdna_sequences(
 
 _GTF_EXON_BIN_SIZE = 10000
 _GTF_EXON_CACHE_VERSION = 1
-_GTF_TRANSCRIPT_CACHE_VERSION = 1
+_GTF_TRANSCRIPT_CACHE_VERSION = 2
 
 
 def _parse_gtf_attributes(attr_text: str) -> Dict[str, str]:
@@ -24474,6 +24476,8 @@ def _build_gtf_transcript_exons(gtf_path: Path) -> Dict[str, Any]:
                     "strand": strand,
                     "gene_id": gene_id,
                     "gene_name": gene_name,
+                    "transcript_id_version": transcript_id_raw,
+                    "gene_id_version": gene_id_raw,
                     "exons": [],
                 },
             )
@@ -24669,117 +24673,133 @@ def _collect_junction_off_targets(
     species_key: str,
     target_gene_id: Optional[str],
     max_mismatches: int = 0,
-) -> Tuple[Dict[str, Dict[str, Set[str]]], Dict[str, Any]]:
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
     from aso_agents.mismatch_screening import MismatchQueryIndex, empty_hits, add_hit
+    from aso_agents.reference_gap_recovery import load_transcript_sequences, recover_exons
     unique_seqs = sorted({seq.upper() for seq in sequences if isinstance(seq, str) and seq})
     lengths = sorted({len(seq) for seq in unique_seqs if len(seq) > 1})
     summary: Dict[str, Any] = {
-        "queries": len(unique_seqs),
-        "lengths": lengths,
-        "mismatch_budget": max_mismatches,
+        "queries": len(unique_seqs), "lengths": lengths, "mismatch_budget": max_mismatches,
+        "junctions_scanned": 0, "matched_queries": 0, "matched_transcripts": 0,
+        "recovered_exon_windows": 0,
     }
     if not unique_seqs or not lengths:
-        summary["error"] = "junction_no_sequences"
-        return {}, summary
-
+        return {}, {**summary, "error": "junction_no_sequences"}
+    query_index = MismatchQueryIndex(unique_seqs, max_mismatches)
     genome = _load_genome_fasta(species_key)
     if not genome:
-        summary["error"] = "junction_genome_missing"
-        return {}, summary
+        return {}, {**summary, "error": "junction_genome_missing"}
+    hits = {seq: empty_hits(max_mismatches) for seq in unique_seqs}
+    coverage = {seq: {"version": 1, "query": seq, "mismatch_budget": max_mismatches,
+                      "checked": False, "unresolved_possible_matches": 0, "unresolved_genes": []}
+                for seq in unique_seqs}
 
-    payload = _load_gtf_transcript_exons(species_key)
-    transcripts = payload.get("transcripts") if isinstance(payload, dict) else None
-    if not transcripts:
-        summary["error"] = "junction_gtf_missing"
-        return {}, summary
+    @lru_cache(maxsize=65536)
+    def exon_sequence(chrom, start, end, strand):
+        sequence = _fetch_genome_slice(genome, chrom, start, end) or ""
+        if len(sequence) != end - start:
+            return ""
+        return str(Seq(sequence).reverse_complement()) if strand in {"-", "-1"} else sequence
 
-    queries_by_len: Dict[int, Set[str]] = {}
-    for seq in unique_seqs:
-        queries_by_len.setdefault(len(seq), set()).add(seq)
-    query_index = MismatchQueryIndex(unique_seqs, max_mismatches) if max_mismatches else None
+    @lru_cache(maxsize=65536)
+    def matches(sequence):
+        return query_index.matches(sequence)
 
-    max_len = max(lengths) - 1
-    if max_len <= 0:
-        summary["error"] = "junction_length_invalid"
-        return {}, summary
+    @lru_cache(maxsize=1024)
+    def possible_matches(sequence):
+        return query_index.possible_matches(sequence)
 
-    hits: Dict[str, Dict[str, Set[str]]] = {
-        seq: empty_hits(max_mismatches) for seq in unique_seqs
-    }
-    junctions_scanned = 0
-    matched_queries: Set[str] = set()
-    matched_transcripts = 0
-    skipped_chrom = 0
-    skipped_ambiguous_windows = 0
-    skipped_unresolved_strand = 0
+    def screen_window(sequence, tx_id, entry):
+        gene_id = _strip_ensembl_version(entry["gene_id"])
+        gene_name = entry.get("gene_name") or gene_id
+        if sequence.strip("ACGT"):
+            summary["skipped_ambiguous_windows"] = summary.get("skipped_ambiguous_windows", 0) + 1
+            for query, _ in possible_matches(sequence):
+                evidence = coverage[query]
+                evidence["unresolved_possible_matches"] += 1
+                if gene_id not in evidence["unresolved_genes"] and len(evidence["unresolved_genes"]) < 20:
+                    evidence["unresolved_genes"].append(gene_id)
+            return
+        for query, mismatches in matches(sequence):
+            add_hit(hits[query], tx_id, gene_id, str(gene_name), mismatches)
+            summary["matched_transcripts"] += 1
 
-    for tx_id, entry in transcripts.items():
-        if not isinstance(entry, dict):
-            continue
-        exons = entry.get("exons") or []
-        if len(exons) < 2:
-            continue
-        chrom = entry.get("chrom")
-        if not chrom:
-            continue
-        gene_id = entry.get("gene_id")
-        if not gene_id:
-            continue
-        gene_id_norm = _strip_ensembl_version(gene_id)
-        gene_name = entry.get("gene_name") or gene_id_norm
-        if target_gene_id and gene_id_norm == target_gene_id:
-            continue
-        strand = entry.get("strand")
-        if str(strand) not in {"+", "-", "1", "-1"}:
-            skipped_unresolved_strand += 1
-            continue
-        reverse = str(strand) in {"-", "-1"}
-        try:
-            exons_sorted = sorted(exons, key=lambda ex: ex[0], reverse=reverse)
-        except Exception:
-            exons_sorted = list(exons)
-        head_tail: List[Tuple[str, str]] = []
-        chrom_available = True
-        for start0, end0 in exons_sorted:
-            head, tail = _fetch_exon_head_tail(genome, chrom, int(start0), int(end0), strand, max_len)
-            if not head and not tail:
-                chrom_available = False
-            head_tail.append((head, tail))
-        if not chrom_available:
-            skipped_chrom += 1
-            continue
-        for idx in range(len(head_tail) - 1):
-            left_tail = head_tail[idx][1]
-            right_head = head_tail[idx + 1][0]
-            if not left_tail or not right_head:
+    def screen_junctions(exon_sequences, tx_id, entry):
+        for left, right in zip(exon_sequences, exon_sequences[1:]):
+            summary["junctions_scanned"] += 1
+            for length in lengths:
+                for k in range(max(1, length - len(right)), min(len(left), length - 1) + 1):
+                    screen_window(left[-k:] + right[:length - k], tx_id, entry)
+
+    try:
+        payload = _load_gtf_transcript_exons(species_key)
+        transcripts = payload.get("transcripts") if isinstance(payload, dict) else None
+        if not transcripts:
+            return {}, {**summary, "error": "junction_gtf_missing"}
+        deferred = {}
+        for tx_id, entry in transcripts.items():
+            if not isinstance(entry, dict) or not entry.get("exons"):
                 continue
-            junctions_scanned += 1
-            for length, query_set in queries_by_len.items():
-                max_k = min(len(left_tail), length - 1)
-                min_k = max(1, length - len(right_head))
-                if min_k > max_k:
-                    continue
-                for k in range(min_k, max_k + 1):
-                    seq = left_tail[-k:] + right_head[: length - k]
-                    if query_index and set(seq) - set("ACGT"):
-                        skipped_ambiguous_windows += 1
-                    matches = query_index.matches(seq) if query_index else [(seq, 0)] if seq in query_set else []
-                    for query, mismatches in matches:
-                        add_hit(hits[query], tx_id, gene_id_norm or gene_id,
-                                str(gene_name) if gene_name else None, mismatches)
-                        matched_queries.add(query)
-                        matched_transcripts += 1
+            gene_id = _strip_ensembl_version(entry.get("gene_id") or "")
+            if target_gene_id and gene_id == target_gene_id:
+                continue
+            if not gene_id or not entry.get("chrom"):
+                summary["error"] = "transcript_annotation_incomplete"
+                continue
+            strand = str(entry.get("strand"))
+            if strand not in {"+", "-", "1", "-1"}:
+                summary["skipped_unresolved_strand"] = summary.get("skipped_unresolved_strand", 0) + 1
+                continue
+            exons = sorted(entry["exons"], key=lambda exon: exon[0], reverse=strand in {"-", "-1"})
+            exon_sequences = [exon_sequence(entry["chrom"], int(start), int(end), strand) for start, end in exons]
+            if any(not sequence or sequence.strip("ACGT") for sequence in exon_sequences):
+                deferred[tx_id] = (entry, exons, exon_sequences)
+            else:
+                screen_junctions(exon_sequences, tx_id, entry)
 
-    summary["junctions_scanned"] = junctions_scanned
-    summary["matched_queries"] = len(matched_queries)
-    summary["matched_transcripts"] = matched_transcripts
-    if skipped_chrom:
-        summary["skipped_chrom"] = skipped_chrom
-    if skipped_ambiguous_windows:
-        summary["skipped_ambiguous_windows"] = skipped_ambiguous_windows
-    if skipped_unresolved_strand:
-        summary["skipped_unresolved_strand"] = skipped_unresolved_strand
-    return hits, summary
+        if deferred:
+            summary["transcripts_with_reference_gaps"] = len(deferred)
+            try:
+                recovered, reference = load_transcript_sequences(species_key, {tx: data[0] for tx, data in deferred.items()})
+                summary["supplemental_transcript_reference"] = reference
+            except Exception as exc:
+                recovered = {}
+                summary["transcript_recovery_error"] = str(exc)[:500]
+            recovery_failures = []
+            for tx_id, (entry, exons, originals) in deferred.items():
+                exon_lengths = [end - start for start, end in exons]
+                try:
+                    repaired = recover_exons(recovered.get(tx_id, ""), originals, exon_lengths)
+                    summary["recovered_transcripts"] = summary.get("recovered_transcripts", 0) + 1
+                except ValueError as exc:
+                    repaired = [sequence or "N" * length for sequence, length in zip(originals, exon_lengths)]
+                    if len(recovery_failures) < 10:
+                        recovery_failures.append({"transcript": tx_id, "reason": str(exc)})
+                # Bowtie cannot report windows across masked genomic bases.
+                # Re-screen those exon windows as well as the exon junctions.
+                for original, sequence in zip(originals, repaired):
+                    if original and not original.strip("ACGT"):
+                        continue
+                    for length in lengths:
+                        for start in range(max(0, len(sequence) - length + 1)):
+                            if not original or original[start:start + length].strip("ACGT"):
+                                window = sequence[start:start + length]
+                                if not window.strip("ACGT"):
+                                    summary["recovered_exon_windows"] += 1
+                                screen_window(window, tx_id, entry)
+                screen_junctions(repaired, tx_id, entry)
+            if recovery_failures:
+                summary["transcript_recovery_failures"] = recovery_failures
+        for query, evidence in coverage.items():
+            evidence["checked"] = True
+            hits[query]["reference_coverage"] = evidence
+        summary["matched_queries"] = sum(bool(hit["gene_ids"]) for hit in hits.values())
+        summary["queries_with_unresolved_reference"] = sum(
+            bool(evidence["unresolved_possible_matches"]) for evidence in coverage.values())
+        return hits, summary
+    finally:
+        if callable(getattr(genome, "close", None)):
+            genome.close()
 
 
 def _annotate_gapmer_off_targets(
@@ -24789,7 +24809,7 @@ def _annotate_gapmer_off_targets(
 ) -> Optional[Dict[str, Any]]:
     from aso_agents.mismatch_screening import (
         MismatchQueryIndex, empty_hits, add_hit, sam_substitution_count,
-        annotate_mismatch_bins, GENOMIC_TRANSCRIPT_STRAND_POLICY,
+        annotate_mismatch_bins, reference_incomplete_reasons, GENOMIC_TRANSCRIPT_STRAND_POLICY,
     )
     from aso_agents.tiling_agent import _resolve_num_mismatches
     mismatch_goal = dict(structured_goal)
@@ -24834,8 +24854,7 @@ def _annotate_gapmer_off_targets(
         return {"error": "off_target_no_sequences"}
 
     unique_seqs = sorted({seq for seq in sequences if seq})
-    if mismatch_budget:
-        MismatchQueryIndex(unique_seqs, mismatch_budget)  # Validate before launching a search.
+    MismatchQueryIndex(unique_seqs, mismatch_budget)  # Validate before launching a search.
     qname_to_seq: Dict[str, str] = {}
     artifact_stem = Path(tiles_json_path).stem
     fasta_path = os.path.join(os.path.dirname(tiles_json_path), artifact_stem + ".offtarget_queries.fasta")
@@ -25043,10 +25062,15 @@ def _annotate_gapmer_off_targets(
         if seq in overmapped_sequences:
             row["off_target_mapping_count_lower_bound"] = mapper_alignment_cap + 1
             row["off_target_mapping_capped"] = True
-        annotate_mismatch_bins(row, mismatch_budget, bool(
-            seq in overmapped_sequences or seq in unclassified_queries or junction_summary.get("error")
-            or junction_summary.get("skipped_chrom") or junction_summary.get("skipped_ambiguous_windows")
-            or junction_summary.get("skipped_unresolved_strand")))
+        row["off_target_reference_coverage"] = (junction_hits.get(seq) or {}).get("reference_coverage")
+        reasons = reference_incomplete_reasons(junction_summary, seq, row["off_target_reference_coverage"])
+        if seq in overmapped_sequences:
+            reasons.append("alignment_limit_exceeded")
+        if seq in unclassified_queries:
+            reasons.append("alignment_assignment_incomplete")
+        row["off_target_incomplete_reasons"] = reasons
+        row["off_target_query_sequence"] = seq
+        annotate_mismatch_bins(row, mismatch_budget, bool(reasons))
         if transcripts or gene_ids or gene_names:
             rows_with_hits += 1
         updated_rows.append(row)
@@ -25064,6 +25088,9 @@ def _annotate_gapmer_off_targets(
     columns["Off_target_mismatch_budget"] = "integer"
     columns["off_target_unclassified_alignments"] = "boolean"
     columns["off_target_count_status"] = "string"
+    columns["off_target_search_status"] = "string"
+    columns["off_target_reference_coverage"] = "object"
+    columns["off_target_incomplete_reasons"] = "array"
     columns["off_target_observed_gene_count"] = "number"
     for mm in (0, 1, 2, 3):
         columns[f"Off_target_{'exact' if mm == 0 else str(mm) + 'mm'}_count"] = "number"
@@ -25104,6 +25131,7 @@ def _annotate_gapmer_off_targets(
                 os.fspath(species_config.genome_fasta)
                 if not junction_summary.get("error") else None
             ),
+            "supplemental_transcript_reference": junction_summary.get("supplemental_transcript_reference"),
             "target_gene_excluded_from_off_target_counts": bool(target_gene_id),
         },
     }

@@ -39,8 +39,8 @@ def test_translation_start_report_uses_attested_strand_and_selected_sites(
     assert genomic_site in text
     assert "cDNA 10–47; 2/3" in text
     assert "2/3 windows overlap" in text
-    assert "1 of 3 site pairs do not overlap" in text
-    assert "not measured target occupancy" in text
+    assert "Overlapping pairs of binding sites: 2 of 3" in text
+    assert "not measured target occupancy" not in text
 
 
 def test_translation_start_report_refuses_mismatched_transcript(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ import json
 import re
 
 from aso_agents.readable_report import (
-    _sections, basic_document, composite_document, design_results, readable_markdown_html,
+    _sections, _limitation_body, basic_document, composite_document, design_results, readable_markdown_html,
 )
 from aso_agents.report_presentation import markdown_html
 
@@ -159,3 +159,106 @@ def test_fenced_headings_and_unknown_nested_sections_remain_in_their_parent():
     sections = _sections(source)
     assert [section['heading'] for section in sections] == ['Method', 'Caveats']
     assert '### Coordinate convention' in sections[0]['lines']
+
+
+def test_evidence_opens_in_two_levels_without_losing_rows_or_misreading_fences():
+    source = '''## Requested binding-region candidate sets
+One molecule occurs in both groups; these are not two distinct molecules.
+### Region A
+| ASO | Position | Value |
+|---|---|---|
+| ACGT | [0, 4) | 0 |
+### Region B
+| ASO | Position | Value |
+|---|---|---|
+| ACGT | 1–4 inclusive | NA |
+```text
+### This is data
+```
+## Caveats
+Chemistry is unresolved.
+'''
+    page = readable_markdown_html(source)
+    assert Content(page).cells == Content(markdown_html(source)).cells
+    assert '<details class="reader-evidence" id="reader-section-0">' in page
+    assert '<details class="reader-nested"><summary>Region A</summary>' in page
+    assert '<details class="reader-nested"><summary>This is data' not in page
+    assert '<h2>Limitations</h2>' in page and 'Chemistry is unresolved.' in page
+    assert page.index('Chemistry is unresolved.') < page.index('<summary>Candidates for the requested sites')
+
+
+def test_caveat_consequence_stays_visible_and_its_qualifications_are_complete():
+    text = ('The chemistry is unverified. The recorded sequence has no evidence confirming its sugar modifications, '
+            'backbone linkages or stereochemistry. These fields are unavailable, not evidence of an unmodified molecule.')
+    page = _limitation_body(['- ' + text], None)
+    assert '<summary>The chemistry is unverified.</summary>' in page
+    assert text.split('. ', 1)[1] in page
+    # Do not split inside an inline code value or interpret complex lists.
+    complex_lines = ['- Check `field. Value` carefully.', '  - A nested limitation remains intact.']
+    assert _limitation_body(complex_lines, None) == markdown_html('\n'.join(complex_lines))
+
+
+def test_evaluation_details_keep_every_assessment_and_plain_field_labels():
+    from aso_agents.evaluation_report import evaluation_markdown
+    response = {'answer_summary': 'Binding remains unknown.', 'evaluation_assessments': [
+        {'name': 'A', 'uncertainty': 'Activity was not measured.', 'ranking_rationale': 'No comparable rank.'},
+        {'name': 'B', 'uncertainty': 'Chemistry is unverified.', 'ranking_rationale': 'No comparable rank.'},
+    ]}
+    markdown = evaluation_markdown(response, {'provided_asos': []})
+    assert '## ASO-by-ASO assessment\n' in markdown
+    assert '### A\n' in markdown and '### B\n' in markdown
+    assert 'What remains uncertain: Chemistry is unverified.' in markdown
+    page = readable_markdown_html(markdown)
+    assert '<details class="reader-nested"><summary>A</summary>' in page
+    assert 'Activity was not measured.' in page and 'Chemistry is unverified.' in page
+
+
+def test_native_component_summaries_expand_individually_without_losing_scope():
+    source = '# Supplied ASO evaluation\n\nAll 2 supplied observations are assessed.\n\n### Observation 1 (A)\n\nA-specific uncertainty.\n\n### Observation 2 (B)\n\nB-specific uncertainty.'
+    page = readable_markdown_html(source)
+    assert 'All 2 supplied observations are assessed.' in page
+    assert '<details class="reader-nested"><summary>Observation 1 (A)</summary>' in page
+    assert '<details class="reader-nested"><summary>Observation 2 (B)</summary>' in page
+    assert page.count('A-specific uncertainty.') == page.count('B-specific uncertainty.') == 1
+
+
+def test_writer_headings_put_finding_before_caveats_and_supporting_data():
+    text = '## Supporting results\n\nRecorded details.\n\n## What needs attention\n\nUnverified chemistry.\n\n## Main finding\n\nBinding is unknown.'
+    page = readable_markdown_html(text)
+    assert page.index('Binding is unknown.') < page.index('Unverified chemistry.') < page.index('Recorded details.')
+
+
+def test_known_inline_code_headers_are_readable_without_rewriting_values():
+    text = '| ID | `claimed_length` accuracy | Exclusion reasons | `unfamiliar` |\n|---|---|---|---|\n| a | inaccurate | `length_not_exactly_37_nt` | 0 |'
+    page = readable_markdown_html(text)
+    assert 'title="claimed_length accuracy">Reported length correct?</th>' in page
+    assert 'Length differs from 37 bases' in page
+    assert 'data-recorded-value="length_not_exactly_37_nt"' in page
+    assert '<th><code>unfamiliar</code></th>' in page and '<td>0</td>' in page
+
+
+def test_caveat_preview_retains_observation_scope_and_plain_consequence():
+    text = ('**Observation 2 (A):** Chemistry cannot be confirmed: the supplied sequence letters do not establish '
+            'the sugar modifications, linkages or stereochemistry; the recorded chemistry fields are unavailable.')
+    page = _limitation_body(['- ' + text], None)
+    assert '<summary><strong>Observation 2 (A):</strong> Chemistry cannot be confirmed:</summary>' in page
+    assert 'the supplied sequence letters do not establish' in page
+    assert 'the recorded chemistry fields are unavailable.' in page
+
+
+def test_specific_finding_is_not_preceded_by_an_empty_generic_summary():
+    page = readable_markdown_html('## Main finding\n\nThe requested value is unavailable.\n\n## Supporting results\n\nNo measurement is recorded.')
+    assert 'The requested value is unavailable.' in page
+    assert 'This report presents the results of an ASO analysis.' not in page
+
+
+def test_explicit_recorded_aso_strand_precedes_target_without_computing_a_sequence():
+    record = 'AACCGG (transcript_oriented_target_binding_site); synthesized ASO: CCGGTT'
+    page = readable_markdown_html('| Antisense oligo (5′→3′) |\n|---|\n| ' + record + ' |')
+    assert 'data-recorded-value="' + record + '"' in page
+    assert page.index('Recorded ASO:</span> <code>CCGGTT') < page.index('<summary>Target RNA strand')
+    assert 'Target RNA site (5′→3′): <code>AACCGG' in page
+    unknown = readable_markdown_html('| Antisense oligo (5′→3′) |\n|---|\n| AACCGG (transcript_oriented_target_binding_site); synthesized ASO: unverified |')
+    assert 'ASO strand not verified' in unknown and 'CCGGTT' not in unknown
+    arbitrary = readable_markdown_html('| ID |\n|---|\n| ' + record + ' |')
+    assert 'reader-strands' not in arbitrary  # never reinterpret an arbitrary cell

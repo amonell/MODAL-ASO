@@ -56,7 +56,7 @@ def test_optional_conservation_report_uses_final_panel_measurements(tmp_path):
     assert "1 were checked without a full cross-species match" in markdown
     assert "1 have unavailable or incomplete conservation evidence" in markdown
     assert "Conservation is optional" in markdown
-    assert "unavailable species reference does not establish absence" in markdown
+    assert "Candidates can remain eligible when species references are unavailable" in markdown
     assert "single-species decision surface" not in markdown
     assert "Do not expect mouse-conservation" not in markdown
 

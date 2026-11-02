@@ -19,6 +19,42 @@ import uuid
 
 
 REPORT_SUFFIXES = {".md", ".markdown", ".html", ".htm"}
+MAX_LINKED_ASSET_BYTES = 2 * 1024 * 1024
+MAX_REPORT_BUNDLE_BYTES = 8 * 1024 * 1024
+_REFERENCE_SUFFIXES = {
+    '.fa', '.fasta', '.fna', '.fai', '.gtf', '.gff', '.gff3', '.2bit',
+    '.bw', '.bigwig', '.ebwt', '.ebwtl', '.bt2', '.bt2l', '.bam', '.sam',
+    '.cram', '.bai', '.crai', '.ckpt', '.pt', '.pth', '.onnx', '.safetensors',
+}
+
+
+def asset_exclusion(path, *, max_bytes=MAX_LINKED_ASSET_BYTES):
+    """Check names and sizes before reading or hashing reference-sized files."""
+    path = Path(path)
+    if any(suffix.lower() in _REFERENCE_SUFFIXES for suffix in path.suffixes):
+        return 'reference_or_runtime_asset'
+    if path.stat().st_size > max_bytes:
+        return 'large_evidence_file'
+    return None
+
+
+def small_asset_tree(path):
+    """Do not blindly copy legacy bundles, directory symlinks or model assets."""
+    if Path(path).is_symlink():
+        return False
+    total = 0
+    for parent, directories, files in os.walk(path, followlinks=False):
+        for name in directories:
+            if (Path(parent) / name).is_symlink():
+                return False
+        for name in files:
+            item = Path(parent) / name
+            if item.is_symlink() or not item.is_file() or asset_exclusion(item):
+                return False
+            total += item.stat().st_size
+            if total > MAX_REPORT_BUNDLE_BYTES:
+                return False
+    return True
 _ATTRIBUTE = re.compile(r'''([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?''')
 _DESTINATION = r'''(?:<(?P<angle>[^<>\n]*)>|(?P<bare>(?:\\.|[^\s()\\]|\([^()\s]*\))*))'''
 _INLINE_LINK = re.compile(
@@ -144,6 +180,8 @@ def export_native_report(source, destination, *, source_root):
     if not source.is_relative_to(root):
         raise ValueError("native_report_export_source_outside_run:" + str(source))
     nodes, pending, unresolved = {}, [source], []
+    admitted = {source}
+    total_bytes = source.stat().st_size
     while pending:
         path = pending.pop()
         if path in nodes:
@@ -165,6 +203,13 @@ def export_native_report(source, destination, *, source_root):
             ref = _reference(path, root, span[2])
             if ref is None:
                 continue
+            if not ref['reason'] and ref['path'] not in admitted:
+                ref['reason'] = asset_exclusion(ref['path'])
+                if not ref['reason'] and total_bytes + ref['path'].stat().st_size > MAX_REPORT_BUNDLE_BYTES:
+                    ref['reason'] = 'report_bundle_size_limit'
+                if not ref['reason']:
+                    admitted.add(ref['path'])
+                    total_bytes += ref['path'].stat().st_size
             node["links"].append((span, ref))
             if ref["reason"]:
                 unresolved.append({"source": path.relative_to(root).as_posix(),
@@ -173,19 +218,37 @@ def export_native_report(source, destination, *, source_root):
                 pending.append(ref["path"])
     identity = {path.relative_to(root).as_posix(): node["source_sha256"]
                 for path, node in nodes.items()}
-    digest = hashlib.sha256(json.dumps({"format": 1, "entry": source.relative_to(root).as_posix(),
-                                       "sources": identity}, sort_keys=True).encode()).hexdigest()
+    digest = hashlib.sha256(json.dumps({"format": 2, "entry": source.relative_to(root).as_posix(),
+                                       "sources": identity, "unresolved_links": unresolved}, sort_keys=True).encode()).hexdigest()
     bundle = destination.with_name(destination.name + ".assets") / digest
     files = bundle / "files"
 
     def render(node, target):
         text = node["text"]
         for (start, end, _, is_html), ref in reversed(node["links"]):
+            if ref['reason'] in {'reference_or_runtime_asset', 'large_evidence_file', 'report_bundle_size_limit'}:
+                prefix = node['text'][:start]
+                resource = is_html and not re.search(r'href\s*=\s*["\']?$', prefix, re.I)
+                replacement = 'data:,' if resource else '#files-kept-in-run'
+                text = text[:start] + replacement + text[end:]
+                continue
             if "path" not in ref:
                 continue
             copied = files / ref["path"].relative_to(root)
             href = quote(Path(os.path.relpath(copied, target.parent)).as_posix(), safe="/.") + ref["suffix"]
             text = text[:start] + (html.escape(href, quote=True) if is_html else href) + text[end:]
+        omitted = [ref for _, ref in node['links'] if ref['reason'] in
+                   {'reference_or_runtime_asset', 'large_evidence_file', 'report_bundle_size_limit'}]
+        if omitted:
+            names = sorted({Path(ref['path']).name for ref in omitted})
+            if target.suffix.lower() in {'.html', '.htm'}:
+                note = ('<details id="files-kept-in-run"><summary>Files kept in the run folder</summary>'
+                        '<p>Large evidence files and reference assets are not included in this reading copy.</p><ul>'
+                        + ''.join('<li>'+html.escape(name)+'</li>' for name in names) + '</ul></details>')
+                text = text.replace('</body>', note+'</body>') if '</body>' in text else text+note
+            else:
+                text += '\n\n<a id="files-kept-in-run"></a>\n## Files kept in the run folder\n\nLarge evidence files and reference assets are not included in this reading copy.\n\n'
+                text += '\n'.join('- '+name for name in names)+'\n'
         return text.encode("utf-8")
 
     exported = {}
@@ -214,7 +277,7 @@ def export_native_report(source, destination, *, source_root):
     for path, node in nodes.items():
         if _sha(path) != node["source_sha256"]:
             raise ValueError("native_report_export_source_changed:" + str(path))
-    manifest = {"format": 1, "entry": source.relative_to(root).as_posix(),
+    manifest = {"format": 2, "entry": source.relative_to(root).as_posix(),
                 "files": exported, "unresolved_links": unresolved,
                 "scope": "Explicit Markdown links and HTML URL attributes; no dynamic JavaScript or CSS URL parsing."}
     manifest_path = bundle / "manifest.json"

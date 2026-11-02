@@ -1191,14 +1191,11 @@ def build_recorded_report_explainer(context: Dict[str, Any]) -> Dict[str, Any]:
                        "what_happened": "The report and linked artifacts record the executed design work.",
                        "result": "; ".join(statuses) or "Consult the report for the recorded outcome.",
                        "bullets": []},
-           "start_here": ["Read the report, then inspect the linked candidate tables and reference evidence.",
-                          "Binding-region membership and predicted splice-response routes describe different properties.",
-                          "Use each screening metric's stated reference universe and mismatch policy."],
+           "start_here": ["Open the ASO table for sequences and chemistry.",
+                          "Open the prediction tables for model results and their conditions."],
            "walkthrough": walkthrough, "key_decisions": decisions, "branch_explanations": branches,
            "output_guides": guides,
-           "caveats": [str(x) for x in manifest.get("pipeline_alerts") or [] if isinstance(x, str)] +
-                      ["Computational design and screening do not establish cellular activity, efficacy or safety.",
-                       "An unavailable measurement is unknown; a recorded zero applies only to its stated screen."],
+           "caveats": [str(x) for x in manifest.get("pipeline_alerts") or [] if isinstance(x, str)],
            "glossary": [], "tooltips": _fallback_tooltips(context)}
     result = normalize_report_explainer(raw, context)
     if result:
@@ -1675,19 +1672,41 @@ def _selected_off_target_budget_markdown(generated_set: Dict[str, Any]) -> str:
     known = sorted({value for value in budgets if value is not None})
     if len(known) == 1 and len(budgets) == len(rows) and all(value is not None for value in budgets):
         budget = known[0]
-        scope = (
-            "exact matches (0 mismatches) only; one- and higher-mismatch bins were not searched and are unknown"
-            if budget == 0 else
-            f"ungapped matches through {budget} mismatch(es); higher-mismatch bins were not searched and are unknown"
-        )
-        return f"Selected panel: every retained candidate has a recorded off-target search budget of {budget} mismatch(es), covering {scope}."
+        scope = 'exact sequence matches' if budget == 0 else f'sequences differing by up to {budget} bases'
+        return f"Off-targets are other sequences an ASO may also bind. For every selected ASO, the search checked {scope}, without insertions or deletions."
     labels = [
         f"rank {row.get('selection_rank', index)}: {value if value is not None else 'unavailable'}"
         for index, (row, value) in enumerate(zip(rows, budgets), 1)
         if isinstance(row, dict)
     ]
     return ("Selected-panel off-target mismatch budgets: " + "; ".join(labels)
-            + ". Counts beyond each recorded budget are unsearched and unknown, not zero.")
+            + ". Each mismatch is a difference at one base. The search covered the listed differences.")
+
+
+def _summary_first_markdown(markdown: str) -> str:
+    """Put conclusions and limits before evidence and methods in text exports.
+
+    Reorder complete sections; do not trim scientific text or table rows. The
+    same parser as the HTML reader respects headings inside fenced examples.
+    """
+    from .readable_report import _sections, DETAIL_HEADINGS, LIMIT_HEADINGS
+    sections = _sections(markdown)
+    def priority(section):
+        key = section['heading'].casefold()
+        if section['level'] < 2:
+            return 0
+        if key in {'practical interpretation', 'bottom line', 'main finding'}:
+            return 1
+        if key in LIMIT_HEADINGS:
+            return 2
+        if key in DETAIL_HEADINGS:
+            return 4
+        return 3
+    parts = []
+    for section in sorted(sections, key=priority):
+        heading = ('#' * section['level'] + ' ' + section['heading'] + '\n') if section['heading'] else ''
+        parts.append(heading + '\n'.join(section['lines']).strip('\n'))
+    return '\n\n'.join(parts).strip() + '\n'
 
 
 def render_report_markdown(explainer: Dict[str, Any], report_payload: Dict[str, Any]) -> str:
@@ -1695,12 +1714,12 @@ def render_report_markdown(explainer: Dict[str, Any], report_payload: Dict[str, 
     if deterministic_summary:
         from .reference_provenance import reference_markdown
         from .binding_region_reports import binding_region_markdown
-        return "\n\n".join(part for part in [deterministic_summary, binding_region_markdown(report_payload.get("binding_region_candidate_sets")), reference_markdown(report_payload.get("reference_provenance")), _source_search_markdown(report_payload)] if part)
+        return _summary_first_markdown("\n\n".join(part for part in [deterministic_summary, binding_region_markdown(report_payload.get("binding_region_candidate_sets")), reference_markdown(report_payload.get("reference_provenance")), _source_search_markdown(report_payload)] if part))
 
     summary = explainer.get("summary") if isinstance(explainer.get("summary"), dict) else {}
     lines: List[str] = []
 
-    lines.append("# TL;DR")
+    lines.append("# Results")
     headline = _stringify(summary.get("headline")) or "Run summary unavailable."
     lines.append(headline)
     lines.append("")
@@ -1851,7 +1870,7 @@ def render_report_markdown(explainer: Dict[str, Any], report_payload: Dict[str, 
     if source_search:
         lines.extend([source_search, ""])
     run_root = _infer_report_run_root(report_payload) if isinstance(report_payload, dict) else None
-    return _sanitize_report_paths("\n".join(line.rstrip() for line in lines).strip(), run_root) + "\n"
+    return _summary_first_markdown(_sanitize_report_paths("\n".join(line.rstrip() for line in lines).strip(), run_root))
 
 
 def _build_transcript_context(structured_goal: Dict[str, Any], final_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2666,8 +2685,6 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
     )
     if context:
         lines.append(f"Target context: {_clean_report_sentence(context)}.")
-    if request_text:
-        lines.extend(["", "Original request:", "", _sanitize_report_paths(request_text, run_root)])
     lines.append("")
 
     lines.append("## How To Read The Rankings")
@@ -2688,8 +2705,8 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
                     "- `selection_rank`: lower is better. Start here for a general shortlist.",
                     "- `isoform_uniqueness_class`: `gene_wide` means standard knockdown candidates were scored for pan-isoform coverage.",
                     "- " + ISOFORM_SCORE_DEFINITION,
-                    "- `isoform_uniqueness_count` / `isoform_hit_count`: number of annotated **target-gene isoforms** containing the site. Higher is better for pan-isoform knockdown. This is not an off-target count.",
-                    "- `Times_mapped`: legacy alias for that same target-isoform hit count on gapmer cDNA tiles. Do not read it as other-gene off-targets.",
+                    "- `isoform_uniqueness_count` / `isoform_hit_count`: number of annotated **target-gene isoforms** containing the site. Higher is better for pan-isoform knockdown. ",
+                    "- `Times_mapped`: legacy alias for that same target-isoform hit count on gapmer cDNA tiles.",
                     "- `off_target_gene_count` counts distinct off-target genes. `Off_target_exact_count` is the workflow exact-hit count (inspect its count unit and source loci/gene lists); `repeat_hit_count_exact` counts alternate exact repeat loci. Do not equate loci, transcripts and genes.",
                 ]
             )
@@ -2815,7 +2832,10 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
                 lines.append(f"- {gene_wide_count}/{len(rows)} scored rows use `gene_wide` isoform conservation.")
         zero_off = _count_zero_offtarget_rows(rows)
         measured_off = sum(_candidate_offtarget_count(row) is not None for row in rows)
-        lines.append(f"- {zero_off}/{measured_off} rows with reported exact-match gene counts have zero annotated other-gene hits in the stated search; {len(rows)-measured_off} rows have unknown gene counts. This is not a safety assessment.")
+        if measured_off:
+            lines.append(f"- Exact-match gene counts are available for {measured_off} screened rows. Of these, {zero_off} have zero matches to other genes. Counts are unavailable for {len(rows)-measured_off} rows.")
+        else:
+            lines.append(f"- Exact-match gene counts are unavailable for all {len(rows)} screened rows.")
     cross_species_filters = (
         [
             item for item in generated_set.get("eligibility_filters", [])
@@ -2867,7 +2887,7 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
     access_rows = [row for row in rows if isinstance(row.get("target_accessibility"), dict)]
     if access_rows:
         lines.extend(["## Target-RNA Accessibility and Screening Scope", "",
-                      "RNAplfold predicts the probability that the full target binding window is unpaired. Higher values indicate greater predicted accessibility within the recorded transcript scope. These predictions do not establish cellular accessibility or RNase H activity.", "",
+                      "RNAplfold predicts the probability that the full target binding window is unpaired. Higher values indicate greater predicted accessibility within the recorded transcript scope.", "",
                       "| Species | Candidates with accessibility measurements | Candidates with complete off-target screening |",
                       "|---|---:|---:|"])
         species_keys = sorted({key for row in access_rows for key in (row["target_accessibility"].get("measurements") or {})})
@@ -2875,7 +2895,7 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
             measured = sum(bool((row["target_accessibility"].get("measurements") or {}).get(key)) for row in access_rows)
             screened = sum((row.get("off_target_screening_status_by_species") or {}).get(key) == "complete" for row in access_rows)
             lines.append(f"| {key} | {measured}/{len(access_rows)} | {screened}/{len(access_rows)} |")
-        lines.extend(["", "Exact conservation and off-target screening are separate checks. Missing screening coverage is unavailable, not zero off-targets. The panel exports preserve the per-species measurements, transcript identities, raw RNAplfold matrices and actual screening status.", ""])
+        lines.extend(["", "The panel exports include the reference species, transcript identities, RNAplfold results and screening status.", ""])
 
     selected_screening_scope = _selected_off_target_budget_markdown(generated_set)
     if selected_screening_scope:
@@ -2899,14 +2919,14 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
         elif conservation["active"]:
             lines.append("- Review the recorded cross-species matches alongside selection ranks. Conservation is optional: candidates without a supported cross-species match remain eligible when they satisfy the other requested constraints. Missing species evidence remains unknown.")
         else:
-            lines.append("- No cross-species conservation evidence is recorded for these candidates.")
+            lines.append("- Cross-species sequence comparisons were outside this analysis.")
     elif route_rows:
         router_rel = _run_artifact_path(run_root, "strategy_router_summary.json") or "artifacts/design/strategy_router_summary.json"
         routes_rel = _run_artifact_path(run_root, "strategy_routes") or "artifacts/design/strategy_routes"
         if has_requested_bindings:
             lines.append(f"- Start with `{_relative_report_path(binding_sets.get('artifact_path'), run_root)}` and the candidate panel. Apply the stated containment/overlap rule for each requested physical region.")
         lines.append(f"- Review predicted splice responses in `{router_rel}` and the rank-ordered response CSV/XLSX files under `{routes_rel}/`.")
-        lines.append("- A predicted response-site coordinate describes the measured model output; it does not relocate the ASO binding interval or establish experimental activity.")
+        lines.append("- The response-site coordinate identifies the splice site whose model score changed. Each ASO also has its own binding interval.")
         lines.append("- Favor routes with strong directional delta, low opposite-direction signal, non-empty candidate counts, and confidence/rationale consistent with the biology.")
     else:
         lines.append("- Use the delivered candidate CSV/JSON/XLSX tables and target-site annotations. No ranked splice-route output was produced.")
@@ -2953,33 +2973,29 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
                 else:
                     lines.append(
                         f"For {gene}, the retained rows have sequence-level mutant-versus-wild-type discrimination but no DNA-gap mismatch placement. "
-                        "Treat them as lower-confidence fallback candidates, not as a strong allele-selective shortlist."
+                        "These candidates need further evidence for selective mutant knockdown."
                     )
                 lines.append(
-                    "A single sequence mismatch does not establish zero wild-type knockdown. Validate mutant and wild-type dose-response curves experimentally before treating a candidate as allele-selective."
+                    "Compare mutant and wild-type dose-response curves to assess allele selectivity."
                 )
             else:
                 lines.append(
-                    f"For {gene}, use the recorded candidate ranks and requested eligibility filters to choose a shortlist. "
-                    "Interpret each isoform score using its recorded selectivity or catalog-coverage definition, and retain the stated uncertainty of off-target screening."
+                    f"These ASOs are designed to reduce {gene} RNA. The selection details show how each sequence met the requested filters and was ranked."
                 )
         if conservation["required"]:
             lines.append("Because this run required cross-species identity, do not promote candidates that lack the required species evidence even if their sequence metrics look good.")
         elif conservation["active"]:
-            lines.append("Use the recorded conservation evidence for the requested prioritization while retaining otherwise eligible candidates without a cross-species match. An unavailable species reference does not establish absence of conservation. Exact matches do not establish cross-species activity.")
-        else:
-            lines.append("Cross-species conservation is unestablished in these outputs; it should not be inferred from single-species sequence scores.")
+            lines.append("Cross-species sequence matches contribute to the requested prioritization. Candidates can remain eligible when species references are unavailable.")
     elif route_rows:
         lines.append(
-            f"For {gene}, make route choice first. The route table tells you which splice intervention produced usable candidate sets; "
-            "then inspect the top route-specific CSV/XLSX files for the final ASO shortlist."
+            f"The splicing model groups {gene} ASOs by their predicted effect on splice-site use. Each group lists the ASO binding sites and the affected splice site."
         )
         if route_rows:
             rationale = _stringify(route_rows[0].get("rationale"))
             if rationale:
-                lines.append(f"Top-route rationale: {rationale}")
+                lines.extend(["", "### Why this predicted response ranked first", "", rationale])
     else:
-        lines.append(f"For {gene}, these are computational candidates for the requested steric-blocking sites. Sequence overlap and annotations support a binding hypothesis; cellular occupancy and the intended regulatory effect remain unmeasured.")
+        lines.append(f"These ASOs are designed to occupy the requested sites in {gene} RNA. The tables show each sequence and its binding position.")
     lines.append("")
 
     caveats = []
@@ -2993,9 +3009,12 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
             caveats.append(f"{_humanize_key(branch)}: {reason}")
     if caveats:
         lines.append("## Caveats")
-        for item in caveats[:8]:
+        for item in caveats:
             lines.append(f"- {item}")
         lines.append("")
+
+    if request_text:
+        lines.extend(["## Original request", "", _sanitize_report_paths(request_text, run_root), ""])
 
     markdown = "\n".join(lines).strip() + "\n"
     return _sanitize_report_paths(markdown, run_root)
@@ -3248,11 +3267,11 @@ def _default_glossary(report_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 },
                 {
                     "term": "Times_mapped",
-                    "definition": "On gapmer cDNA tiles, a legacy alias for that target-isoform hit count. It is not a count of off-target genes.",
+                    "definition": "On gapmer cDNA tiles, a legacy alias for that target-isoform hit count.",
                 },
                 {
                     "term": "off-target genes",
-                    "definition": "Other genes with an exact match to the oligo. Prefer 0. Do not confuse this with target-isoform hit counts.",
+                    "definition": "Other genes with an exact match to the oligo.",
                 },
             ]
         )

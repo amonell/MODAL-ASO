@@ -33,6 +33,16 @@ Static references use pinned checksums; verified mirrors support interrupted tra
 
 Other species use Ensembl reference retrieval during the relevant workflow. Splice prediction requires a compatible species model; [model configuration](llm-providers.md) describes language-model settings separately.
 
+## Missing bases during off-target screening
+
+The human alignment reference masks some chromosome Y sequence. Gene-level off-target screening checks every annotated exon for missing bases, including exon interiors. When needed, MODAL-ASO automatically downloads the matching GENCODE transcript FASTA: v42 for human or vM35 for mouse. These checksum-pinned reference files use about 79 MiB or 54 MiB, respectively, in `MODAL_ASO_CACHE_DIR/reference_transcripts`. They stay outside report bundles. Users do not need previous run outputs or a supplied evidence cache.
+
+Recovery requires matching transcript and gene versions, matching exon lengths, and agreement with every available genomic base. The recovered exon windows and adjacent exon junctions are searched at the requested mismatch budget. Remaining unknown bases are checked against each ASO: a gap affects completeness only when it could conceal a match within that budget. This also applies to exact-match searches.
+
+A failed download or inconsistent reference leaves the affected search incomplete. Complete counts stay unavailable until the missing check is resolved; observed matches and the failure reason remain in the result. Other annotations retain this behavior when a matching transcript reference is unavailable.
+
+A design can finish only after each delivered ASO has complete counts at the requested mismatch budget and reference records for each requested species. This check also runs for child designs and composite reports. Unselected molecules in the search pool can retain incomplete screens. Evaluation tasks that explicitly disable off-target screening retain that scope.
+
 ## Import existing references
 
 ```bash

@@ -146,8 +146,15 @@ def evaluation_markdown(response, summary):
             rendered = evidence_link(key.replace("_", " "), "off_target_count_scope") if isinstance(value, (list, dict)) else str(value)
             lines.append(f"- {key}: {rendered}")
     fields = ("mechanistic_plausibility", "selectivity_limitations", "uncertainty", "ranking_rationale", "evidence_refs")
+    field_labels = {"mechanistic_plausibility": "What the evidence supports",
+                    "selectivity_limitations": "Limits of the selectivity evidence",
+                    "uncertainty": "What remains uncertain",
+                    "ranking_rationale": "How this ASO compares",
+                    "evidence_refs": "Supporting evidence"}
+    if response.get("evaluation_assessments"):
+        lines.extend(["", "## ASO-by-ASO assessment", ""])
     for assessment in response.get("evaluation_assessments") or []:
-        lines.extend(["", "## " + str(assessment.get("name") or "ASO"), ""])
+        lines.extend(["", "### " + str(assessment.get("name") or "ASO"), ""])
         if assessment.get("input_row_id"):
             lines.append("- Input row: " + assessment["input_row_id"])
         all_fields = [*fields, *(field for field in assessment if field not in {*fields, "name", "input_row_id"})]
@@ -159,7 +166,7 @@ def evaluation_markdown(response, summary):
                 rendered = evidence_link(field.replace("_", " "), "assessment-" + str(assessment.get("input_row_id") or assessment.get("name")))
             else:
                 rendered = "; ".join(str(item) for item in value) if isinstance(value, list) else str(value)
-            lines.append(f"- {field}: {rendered}")
+            lines.append(f"- {field_labels.get(field, field)}: {rendered}")
         row = resolve(assessment) or {}
         anchor = "row-" + str(row.get("input_row_id") or row.get("name"))
         identity = row.get("resolved_sequence_identity") or {}

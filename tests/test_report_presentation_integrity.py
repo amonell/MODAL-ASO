@@ -120,11 +120,11 @@ def test_selected_panel_never_uses_target_or_unattested_rc_as_oligo(tmp_path):
     assert 'PHYSICAL_OLIGO' in page
     assert 'TARGET_ONLY' not in page and 'UNATTESTED_RC' not in page
     assert '0</td>' in page and '1 (separate_scope)' in page
-    assert '2 delivered native records' in page
+    assert page.count('<tr>') == 3
     separate = final_candidate_panel(tmp_path, request_envelope={'final_outputs': [{'path': '/output/final.csv'}]})
-    assert '<h2>Native design-stage panel</h2>' in separate
-    assert '<h2>Final selected panel</h2>' not in separate
-    assert 'separately requested deliverables define the final selection' in separate
+    assert '<h2>Design-stage ASOs</h2>' in separate
+    assert '<h2>Selected ASOs</h2>' not in separate
+    assert 'separately requested files contain the final selection' in separate
 
 
 def test_basic_and_composite_html_are_readable_and_portable(tmp_path):

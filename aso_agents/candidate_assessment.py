@@ -158,6 +158,8 @@ def off_target_evidence(row):
         "mismatch_budget":int(budget) if budget in {0,1,2,3} else None,
         "counts_by_mismatch":bins, "unit":values.get("off_target_exact_count_unit") or "unresolved",
         "search_status":values.get("off_target_search_status"),
+        "incomplete_reasons":values.get("off_target_incomplete_reasons") or [],
+        "reference_coverage":values.get("off_target_reference_coverage") or {},
         "references_by_species":values.get("off_target_search_provenance_by_species") or {},
         "species_evidence":values.get("off_target_by_species") or {},
         "species_statuses":values.get("off_target_screening_status_by_species") or {},
@@ -332,9 +334,7 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         for record in records:
             writer.writerow({k:json.dumps(v) if isinstance(v,(list,dict)) else v for k,v in record.items()})
     lines = ["# Recommended shortlist", "", f"{len(records)} distinct molecules selected; {payload['pool_molecule_count']} in the assessed eligible pool.", "",
-        "Recommendations combine recorded scientific ranking, comparable off-target screening, and chemistry-qualified motif flags under the requested hard constraints. Explicit joint panel and role objectives retain priority. Unavailable measurements remain visible. Thermodynamic proxies are reported for comparison and are not maximized as a potency score.", "",
-        "Tm and ΔG are perfect-match, unmodified RNA/DNA references at 1 M sodium; they are not validated modified-ASO binding affinities. Motif flags are context-dependent and cannot certify safety.", "",
-        "Where splice predictions were computed, the CSV/JSON includes the largest unannotated acceptor/donor score gains, genomic coordinates, baseline/perturbed scores and the exact search scope. These are review flags, not confirmed cryptic products; unavailable evidence is not a clean screen.", "",
+        *SHORTLIST_EXPLANATION,
         "| Order | ASO (5′→3′) | Status | Splice safeguards | Off-target screen | Motif flags | Reference Tm (°C) | Reference ΔG (kcal/mol) |",
         "|---|---|---|---|---|---|---|---|"]
     for record in records:
@@ -347,6 +347,14 @@ def write_assessment_artifacts(pool, selected, goal, directory):
     md_path.write_text("\n".join(lines) + "\n")
     return {"candidate_assessments_json":str(pool_path),"recommended_shortlist_json":str(shortlist_path),
             "recommended_shortlist_csv":str(csv_path),"recommended_shortlist_md":str(md_path)}
+
+
+SHORTLIST_EXPLANATION = [
+        "Selection applies the requested filters, then uses the design ranking, comparable off-target checks and sequence motifs relevant to the chosen chemistry. Requested panel roles take priority.", "",
+        "Off-targets are other sequences an ASO may also bind. Motif flags identify short sequence patterns for review in the relevant chemistry and biological context.", "",
+        "Tm (melting temperature) and ΔG (binding free energy) describe a perfectly matched, unmodified RNA/DNA duplex at 1 M sodium. They provide a common reference for comparing sequences.", "",
+        "When splicing was modeled, the CSV/JSON also lists predicted increases at unannotated splice sites, with positions and before/after scores.", "",
+]
 
 
 def shortlist_size_specified(goal):

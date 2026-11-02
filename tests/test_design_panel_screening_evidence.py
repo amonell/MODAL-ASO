@@ -25,7 +25,7 @@ def test_panel_exports_measured_primary_screen_and_preserves_unknown_bins(tmp_pa
     markdown = (tmp_path / 'design_panel.md').read_text()
     assert 'exact=0 loci' in markdown
     assert '1mm=4' in markdown
-    assert 'unsearched or unavailable, not zero' in markdown
+    assert 'Empty cells indicate missing results.' in markdown
 
 
 def test_panel_does_not_invent_screen_counts_for_unscreened_row(tmp_path):

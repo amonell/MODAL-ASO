@@ -52,4 +52,4 @@ def test_panel_exports_per_candidate_physical_element_explanation(tmp_path):
     assert "220" not in explanation
     markdown = Path(result["design_panel_md"]).read_text()
     assert explanation in markdown
-    assert "not motif occupancy or measured activity" in markdown
+    assert "Splice-element labels identify the exons, introns or boundaries covered by an ASO" in markdown

@@ -440,10 +440,9 @@ def translation_start_panel_evidence(goal, panel_csv):
         f"The exported panel has {len(sites)} physical rows at {len(unique_sites)} "
         f"distinct mature-RNA intervals spanning cDNA {min(start for start, _ in sites)}–"
         f"{max(end for _, end in sites)}. {codon_overlaps}/{len(sites)} windows overlap "
-        f"the annotated start codon; {nonoverlap_pairs} of "
-        f"{len(sites) * (len(sites) - 1) // 2} site pairs do not overlap. "
-        "These counts describe site diversity and geometry, not measured target "
-        "occupancy, protein inhibition, efficacy, or safety.\n"
+        f"the annotated start codon. Overlapping pairs of binding sites: "
+        f"{len(sites) * (len(sites) - 1) // 2 - nonoverlap_pairs} of {len(sites) * (len(sites) - 1) // 2}. "
+        "\n"
         + "\n".join(site_lines) + "\n"
     )
 
@@ -576,6 +575,24 @@ def _protected_site_count(reference, mismatches):
     return value if type(value) is int and value >= 0 else None
 
 
+def molecule_chemistry_summary(molecule):
+    """Describe the stored chemical identity without inferring modifications."""
+    from itertools import groupby
+    sugars = molecule['nucleotide_sugars_5to3']
+    sugar_names = {'2MOE': '2′-MOE', 'DNA': 'DNA', 'LNA': 'LNA', 'RNA': 'RNA'}
+    groups = [(key, len(list(items))) for key, items in groupby(sugars)]
+    sugar_text = ' – '.join(f"{count} {sugar_names.get(key, key)}" for key, count in groups)
+    links = molecule['linkages_5to3']
+    backbone_names = {'PS': 'phosphorothioate (PS)', 'PO': 'phosphodiester (PO)'}
+    backbone = ', '.join(backbone_names.get(key, key) for key in sorted(set(links))) or 'no internucleotide bonds'
+    modifications = sorted({mod for base, mod in zip(molecule['antisense_5to3'], molecule['base_modifications_5to3']) if base == 'C'})
+    modifications = [{'5mC': '5-methylcytosine (5mC)', 'none': 'unmodified'}.get(mod, mod) for mod in modifications]
+    stereo = {'not_stereodefined': 'unspecified'}.get(molecule['PS_stereochemistry'], molecule['PS_stereochemistry'])
+    status = {'attested': 'checked against the chemistry record'}.get(molecule['ordering_status'], molecule['ordering_status'])
+    return (f"Sugars (5′→3′): {sugar_text}. Backbone: {backbone}. "
+            f"Cytosines: {', '.join(modifications) or 'none'}. PS stereochemistry: {stereo}. Ordering string: {status}.")
+
+
 def write_design_panel(candidate_set, goal, output_directory):
     """A concise export generated directly from selected candidate evidence."""
     directory = Path(output_directory)
@@ -596,9 +613,10 @@ def write_design_panel(candidate_set, goal, output_directory):
         distinct = distinct_ranked_rows(rows)
     preview = distinct if len(distinct) <= 20 else distinct[:10]
     exported = []
-    order_description = "requested role order" if ordered_roles else "recorded rank order"
+    order_description = ("requested role order" if ordered_roles else "recorded rank order"
+                         if all(row.get('selection_rank') is not None for row in preview) else "panel order")
     lines = ["# Candidate panel", "", f"Selected candidate rows: {len(rows)}. Distinct molecules (antisense sequence plus chemistry): {len(distinct)}. Preview: {len(preview)} molecules in {order_description}.", "",
-             "Sequences are written 5′→3′. These are computational design candidates; experimental activity and in-cell accessibility have not been established.", "",
+             "ASO sequences are written 5′→3′.", "",
              "| Candidate | Native rank / scope | Antisense oligo (5′→3′) | Physical binding interval(s), BED0 | Target genomic strand | Physical splice element | Predicted response site | Genomic screening |",
              "|---|---|---|---|---|---|---|---|"]
     for index, row in enumerate(rows, 1):
@@ -717,14 +735,10 @@ def write_design_panel(candidate_set, goal, output_directory):
         molecule = row.get("molecule_specification")
         if not molecule:
             continue
-        links = molecule["linkages_5to3"]
-        modifications = sorted({mod for base, mod in zip(molecule["antisense_5to3"], molecule["base_modifications_5to3"]) if base == "C"})
-        chemistry_summaries.add(f"{molecule['architecture']}; cytosine modifications: {', '.join(modifications) or 'no cytosines'}; "
-                               f"backbone: {', '.join(sorted(set(links))) or 'no internucleotide bonds'}; "
-                               f"PS stereochemistry: {molecule['PS_stereochemistry']}; ordering status: {molecule['ordering_status']}.")
+        chemistry_summaries.add(molecule_chemistry_summary(molecule))
     if chemistry_summaries:
         lines.extend(["", "## Physical chemistry", "", *sorted(chemistry_summaries), "",
-                      "Exact per-position sugars, base modifications and linkages are preserved with each molecule in the CSV and JSON. An attested ordering string verifies chemical identity, not biological activity."])
+                      "The CSV and JSON list every sugar, base modification and linkage, with the ordering string for each molecule."])
     if ordered_roles:
         lines.extend(["", "## Requested role selection", "",
             "Selection status: " + str(role_selection.get("status") or "unresolved") + ". "
@@ -741,8 +755,8 @@ def write_design_panel(candidate_set, goal, output_directory):
             "[role_selection_eligible_pool.json](role_selection_eligible_pool.json); it is not the unfiltered tiling library."])
     lines.extend(["", "## Selection and evidence", "",
                   "Selection policy: " + str((candidate_set.get("candidate_selection") or {}).get("method") or "recorded native ranking") + ".",
-                  "", "The preview contains one row per physical molecule; the full CSV retains every binding/route observation. Native ranks apply within their recorded scope and do not establish experimental potency. Physical splice-element labels describe annotated exon/intron geometry crossed by the ASO, not motif occupancy or measured activity. Predicted response coordinates identify the site whose perturbation was scored; physical binding coordinates identify where the ASO binds.",
-                  "", "Full sequences, transcript positions, chemical notation, exact species matches and the actual off-target screening coverage are in [design_panel.csv](design_panel.csv). The complete per-candidate evidence and source paths are in [generated_aso_set.json](generated_aso_set.json). Missing screening data must not be interpreted as zero off-targets."])
+                  "", "The preview shows each distinct ASO once. The CSV includes all binding sites and prediction results for each molecule. Ranks apply within the named design group. Splice-element labels identify the exons, introns or boundaries covered by an ASO. Response coordinates identify the splice site whose model score changed; binding coordinates identify where the ASO pairs with RNA.",
+                  "", "[design_panel.csv](design_panel.csv) contains sequences, positions, chemistry, species matches and off-target search results. [generated_aso_set.json](generated_aso_set.json) contains the complete supporting records."])
     protected_rows = [(index, row.get("gapmer_preservation_assessment") or
                        (row.get("source_annotations") or {}).get("gapmer_preservation_assessment"))
                       for index, row in enumerate(rows, 1)]
@@ -803,7 +817,7 @@ def write_design_panel(candidate_set, goal, output_directory):
                            if row.get("off_target_search_provenance_by_species")), None)
     if isinstance(search_sources, dict):
         lines.extend(["", "## Off-target search references", "",
-                      "The recorded zero-mismatch search used these species-specific references; this is a search-scope statement, not evidence of experimental specificity.", "",
+                      "The exact-match search used these reference sequences and exon annotations.", "",
                       "| Species | Assembly | Genomic index | Exon annotation | Junction search |",
                       "|---|---|---|---|---|"])
         for species, source in sorted(search_sources.items()):
@@ -815,7 +829,7 @@ def write_design_panel(candidate_set, goal, output_directory):
                 f"{Path(str(source.get('exon_annotation') or '')).name or 'unresolved'} | "
                 f"{source.get('junction_search') or 'unresolved'} |"
             )
-    lines.append("Genomic screening counts report the recorded query, mismatch budget, and hit unit; they do not establish binding to transcribed RNA or cellular specificity. Empty count cells mean unsearched or unavailable, not zero. Exon overlap and anchor distance describe physical binding, not the scored splice response coordinate.")
+    lines.append("Genome-search results include the query, allowed base differences and the type of match counted. Empty cells indicate missing results. Exon overlap and anchor distance locate the ASO binding site.")
     if goal.get("target_accessibility") is True:
         measured = sum((row.get("target_accessibility") or {}).get("status") == "measured" for row in rows)
         if measured == len(rows) and rows:

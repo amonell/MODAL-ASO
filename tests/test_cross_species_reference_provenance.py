@@ -17,7 +17,11 @@ def test_species_offtarget_reference_provenance_reaches_candidate_rows(tmp_path,
         payload = json.loads(open(path).read())
         for row in payload["rows"]:
             row.update(off_target_count_status="complete_within_declared_scope",
-                       Off_target_exact_count=0, Off_target_mismatch_budget=0)
+                       Off_target_exact_count=0, Off_target_mismatch_budget=0,
+                       off_target_search_status="complete", off_target_incomplete_reasons=[],
+                       off_target_query_sequence=row["Sequence"],
+                       off_target_reference_coverage={"version": 1, "query": row["Sequence"],
+                           "mismatch_budget": 0, "checked": True, "unresolved_possible_matches": 0})
         open(path, "w").write(json.dumps(payload))
         species = goal["species"]
         return {
@@ -44,6 +48,11 @@ def test_species_offtarget_reference_provenance_reaches_candidate_rows(tmp_path,
     assert result["status_by_species"] == {"human": "complete", "mouse": "complete"}
     assert set(row["off_target_search_provenance_by_species"]) == {"human", "mouse"}
     assert row["off_target_search_provenance_by_species"]["mouse"]["genomic_index"] == "/references/mouse/index"
+    assert row["off_target_search_status"] == "complete"
+    normalized = pipeline_tools._normalized_generated_candidate_row(row)
+    assert normalized["off_target_search_status"] == "complete"
+    assert normalized["off_target_query_sequence"] == row["Sequence"]
+    assert normalized["off_target_reference_coverage"]["unresolved_possible_matches"] == 0
 
 
 def test_missing_junction_search_cannot_be_reported_complete(tmp_path, monkeypatch):
