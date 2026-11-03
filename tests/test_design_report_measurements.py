@@ -39,5 +39,5 @@ def test_report_uses_recorded_eligibility_without_inventing_zero_cutoff(tmp_path
         "gapmer_tiling": {"scored_tiles_path": str(scored), "row_count": 1}})
     assert "| 0.2500 |" in report
     assert "off-target gene count 0" not in report
-    assert "requested filters" in report
+    assert "applied filters, recorded ranks and remaining checks" in report
     assert "| 2 |" in report

@@ -89,12 +89,12 @@ def _audit_summary(sections, tables):
              and all(counts[name] == observed[name.casefold()] for name in names[1:]))
     if not valid:
         return {'valid': False}
-    source = f'reader-section-{index}'
+    source = f'reader-section-{audits[0][0]}'
     return {'valid': True, 'facts': [
-        _fact('Sequences checked', counts['Total input rows'], source),
-        _fact('Pass the listed checks', counts['Retained'], source),
-        _fact('Do not pass the checks', counts['Excluded'], source),
-    ], 'note': (f"{counts['Indeterminate']} could not be classified." if counts['Indeterminate'] else ''), 'source': source}
+        _fact('Input entries', counts['Total input rows'], source),
+        _fact('Kept', counts['Retained'], source),
+        _fact('Excluded', counts['Excluded'], source),
+    ], 'note': (f"{counts['Indeterminate']} {'entry needs' if counts['Indeterminate'] == 1 else 'entries need'} a complete check result." if counts['Indeterminate'] else ''), 'source': source}
 
 
 def _candidate_summary(sections, tables):
@@ -107,7 +107,7 @@ def _candidate_summary(sections, tables):
         if not count or len(own) != 1:
             return None
         total, distinct, shown = map(int, count.groups())
-        if not (0 <= distinct <= total and shown == len(own[0]['rows']) and shown <= total):
+        if not (0 <= distinct <= total and shown == len(own[0]['rows']) and shown <= distinct and (total == 0) == (distinct == 0)):
             return None
         other = any(i != index and table['rows'] and any(key.startswith(('aso (', 'antisense oligo')) for key in table['headers']) for i, table in tables)
         unranked = 0
@@ -133,7 +133,7 @@ def _activity_summary(evaluations):
     statuses = Counter(row.get('status') for row in rows)
     if set(statuses) - {'predicted', 'not_predicted', 'unavailable', 'error'} or statuses['predicted'] != predicted:
         return None
-    summary = {'total': total, 'predicted': predicted}
+    summary = {'total': total, 'predicted': predicted, 'all_failed': statuses['error'] == total}
     conditions = value.get('conditions') or {}
     if not isinstance(conditions, dict):
         return summary
@@ -184,6 +184,14 @@ def _recorded_cautions(sections, tables):
                 else:
                     note = 'Some activity predictions failed; see the affected entries in the linked table.'
                 cautions.append((note, source))
+        elif key == 'molecule overview':
+            own = [table for i, table in tables if i == index and 'screening status' in table['headers']]
+            if len(own) == 1:
+                table = own[0]; col = table['headers'].index('screening status')
+                missing_states = {'incomplete_or_unavailable', 'incomplete', 'unavailable', 'error', 'not attested', 'not_screened'}
+                missing = sum(_key(row[col]) in missing_states for row in table['rows'])
+                if missing:
+                    cautions.append((f"Off-target search results are unavailable or incomplete for {missing} of {len(table['rows'])} entries.", source))
     # Repeated prediction sections stay separate below; one identical alert is
     # enough here. No results or scientific limitations are removed.
     unique = {}
@@ -214,17 +222,17 @@ def _design_purpose(context, gene):
     exon = str(context.get('exon_label') or '').strip()
     exon_name = f'exon {exon}' if exon else 'the requested exon'
     if intent == 'knockdown':
-        return f'Designed to lower {target} RNA.'
+        return f'Goal: lower {target} RNA.'
     if intent == 'binding' and context.get('target_region') == 'translation_start':
-        return f'Designed to block protein production by binding near the start of the {target} coding sequence.'
+        return f'Goal: block {target} protein production by binding near the start codon.'
     if intent == 'splice_modulation' and effect in {'inclusion', 'exon_inclusion'}:
-        return f'Designed to help {target} RNA retain {exon_name} during splicing.'
+        return f'Goal: help {target} RNA retain {exon_name} during splicing.'
     if intent == 'splice_modulation' and effect in {'skipping', 'exon_skipping'}:
-        return f'Designed to make {target} RNA skip {exon_name} during splicing.'
+        return f'Goal: make {target} RNA skip {exon_name} during splicing.'
     if intent == 'splice_modulation':
-        return f'Designed to change how {target} RNA is spliced.'
+        return f'Goal: change how {target} RNA is spliced.'
     if intent == 'binding':
-        return f'Designed to bind the requested sites in {target} RNA.'
+        return f'Goal: bind the requested sites in {target} RNA.'
     return f'ASO designs for {target}.'
 
 
@@ -245,34 +253,34 @@ def build_orientation(sections, context=None):
     elif kind == 'analysis' and assessments:
         kind = 'evaluation'
     result = {'kind': kind, 'facts': [], 'notices': [], 'source_links': []}
+    recorded_cautions = _recorded_cautions(sections, tables)
     if kind == 'design':
         gene = str(context.get('gene') or '').strip()
         result['purpose'] = _design_purpose(context, gene)
         result['meaning'] = ''
         candidate = _candidate_summary(sections, tables)
         if candidate:
-            result['title'] = f"{candidate['distinct']} ASOs" + (f' for {gene}' if gene else '')
+            result['title'] = f"{candidate['distinct']} " + ('ASO' if candidate['distinct'] == 1 else 'ASOs') + (f' for {gene}' if gene else '')
             note = ''
             if candidate['shown'] != candidate['total']:
                 note = f"The table previews {candidate['shown']} of {candidate['total']} entries."
             result['meaning'] = note
-            result['source_links'].append(('View the ASOs', candidate['source']))
-            for index, section in enumerate(sections):
-                if _key(section['heading']) != 'recommended shortlist':
-                    continue
-                match = re.search(r'(?m)^(\d+) distinct molecules selected; (\d+) in the assessed eligible pool\.$', '\n'.join(section['lines']))
-                own = [t for i, t in tables if i == index and {'order', 'off-target screen'} <= set(t['headers'])]
-                if (match and len(own) == 1 and int(match[1]) == len(own[0]['rows']) == candidate['distinct']
-                        and int(match[2]) >= candidate['distinct']):
-                    result['meaning'] = f"Selected from {int(match[2]):,} designs that passed the filters." + (f' {note}' if note else '')
+            if candidate['total']:
+                result['source_links'].append(('View the ASOs', candidate['source']))
+            # Pool counts belong with the selection evidence. A pool's recorded
+            # eligibility is distinct from completion of the selected ASOs' checks.
             if candidate['total'] == 0:
-                result['notices'].append('The main candidate table is empty.' + (' Other tables contain ASO entries; check those tables and the requested files before choosing a list.' if candidate['other_tables'] else ' Check the detailed results for the reason and any other available outputs.'))
+                result['title'] = 'No ASOs selected'
+                if candidate['other_tables']:
+                    result['notices'].append('Other tables contain ASO entries. Their results remain available below.')
         activity = _activity_summary(context.get('evaluations') or [])
         if activity:
             missing = activity['total'] - activity['predicted']
             source = next((f'reader-section-{i}' for i, section in enumerate(sections)
                            if _key(section['heading']) == 'oligoai gapmer efficacy prediction'), '')
-            if missing:
+            table_explains_failure = activity.get('all_failed') and any(
+                note.startswith('Activity prediction failed for every entry') and link == source for note, link in recorded_cautions)
+            if missing and not table_explains_failure:
                 result['notices'].append(f"OligoAI activity predictions are unavailable for {missing} of {activity['total']} ASOs.")
             elif source and activity.get('prediction'):
                 result['meaning'] = ' '.join(part for part in (result['meaning'], activity['prediction']) if part)
@@ -296,21 +304,21 @@ def build_orientation(sections, context=None):
             source = next((f'reader-section-{i}' for i, s in enumerate(sections) if _key(s['heading']) == 'practical interpretation'), '')
             result.setdefault('notice_sources', {})[result['notices'][-1]] = source
     elif kind == 'sequence_checks':
-        result['purpose'] = 'This report checks the supplied sequences against the stated sequence rules.'
-        result['meaning'] = 'The table shows which sequences meet each rule and which require review.'
+        result['purpose'] = 'Sequences checked against the supplied rules.'
+        result['meaning'] = ''
         if audit['valid']:
             result['facts'] = audit['facts']; result['source_links'].append(('See the check results', audit['source']))
             if audit['note']:
                 result['notices'].append(audit['note'])
         else:
-            result['notices'].append('Use the full sequence results below. These results could not be summarized reliably.')
+            result['notices'].append('The recorded totals could not be reconciled with the sequence table.')
     elif kind == 'evaluation':
         result['purpose'] = 'This report assesses the supplied ASOs using the available sequence checks.'
         result['meaning'] = 'Sequence matching finds places an ASO may bind. Off-targets are other sequences it may also bind.'
         if len(assessments) == 1:
             index, table = assessments[0]
             source = f'reader-section-{index}'
-            result['facts'].append(_fact('Entries assessed', len(table['rows']), source, 'Entries in the assessment table.'))
+            result['facts'].append(_fact('Entries assessed', len(table['rows']), source))
             result['source_links'].append(('See the assessments', source))
             if 'exact antisense records' in table['headers'] and table['rows']:
                 col = table['headers'].index('exact antisense records')
@@ -319,9 +327,12 @@ def build_orientation(sections, context=None):
                     matched = sum(int(count) > 0 for count in counts)
                     result['facts'].append(_fact('Entries with recorded exact matches', f'{matched} of {len(counts)}',
                                                 source, 'Within the references represented in this table.'))
-                    if matched < len(counts):
-                        missing = len(counts) - matched
-                        result['notices'].append(f"{missing} {'entry has' if missing == 1 else 'entries have'} no recorded exact match. Read the assessments for search status and any near matches.")
+                    if matched < len(counts) and 'screening status' in table['headers']:
+                        status_col = table['headers'].index('screening status')
+                        missing = sum(int(row[col]) == 0 and _key(row[status_col]) in {'complete', 'complete_within_declared_scope'}
+                                      for row in table['rows'])
+                        if missing:
+                            result['notices'].append(f"{missing} {'entry has' if missing == 1 else 'entries have'} no recorded exact match in the completed search. See the assessments for near matches.")
     elif kind == 'comparison':
         result['purpose'] = 'This report compares the supplied ASO entries using the measures provided.'
         result['meaning'] = 'An option can look better on one measure and worse on another. A trade-off option has no alternative in the comparison that is at least as good on every measure and better on at least one.'
@@ -345,31 +356,40 @@ def build_orientation(sections, context=None):
         result['meaning'] = 'Start with the findings and the questions that remain open. The detailed tables show which conclusions the supplied data support.'
     result['basics'] = 'An antisense oligonucleotide (ASO) is a short synthetic strand designed to bind RNA.'
     result.setdefault('notice_sources', {})
-    for text, source in _recorded_cautions(sections, tables):
+    for text, source in recorded_cautions:
         result['notices'].append(text)
         result['notice_sources'][text] = source
     return result
 
 
-def orientation_html(orientation, *, findings, downloads=None, limitations=None):
+def notice_list_html(orientation):
+    esc = html.escape
+    def label(note):
+        return 'View files' if 'requested file' in note else 'View off-target checks' if note.startswith('Off-target') else 'View evidence'
+    return '<ul>' + ''.join('<li>' + esc(note) + (' <a href="#' + esc(orientation['notice_sources'][note], quote=True)
+        + '">' + label(note) + '</a>' if orientation.get('notice_sources', {}).get(note) else '') + '</li>'
+        for note in orientation['notices']) + '</ul>'
+
+
+def orientation_html(orientation, *, findings, downloads=None, limitations=None, compact=False):
     esc = html.escape
     cards = ''.join('<div class="reader-fact"><span class="reader-fact-value">' + esc(str(fact['value']))
                     + '</span><span class="reader-fact-label">' + esc(fact['label']) + '</span>'
                     + ('<span class="reader-fact-note">' + esc(fact['note']) + '</span>' if fact['note'] else '')
                     + ('<a class="reader-fact-source" href="#' + esc(fact['source'], quote=True) + '">See these results</a>' if fact['source'] else '')
                     + '</div>' for fact in orientation['facts'])
-    notices = ('<div class="reader-attention"><h3>Limitations</h3><ul>'
-               + ''.join('<li>' + esc(note) + (' <a href="#' + esc(orientation['notice_sources'][note], quote=True)
-                   + '">Details</a>' if note in orientation.get('notice_sources', {}) else '') + '</li>'
-                   for note in orientation['notices']) + '</ul></div>') if orientation['notices'] else ''
+    notices = ('<div class="reader-attention"><h3>Limitations</h3>'
+               + notice_list_html(orientation) + '</div>') if orientation['notices'] else ''
     first_link = next(iter(orientation.get('source_links') or []), ('Explore the results', findings))
     actions = '<a class="reader-action" href="#' + esc(first_link[1], quote=True) + '">' + esc(first_link[0]) + '</a>'
-    if first_link[1] != findings and orientation['kind'] != 'design':
-        actions += '<a href="#' + esc(findings, quote=True) + '">All results</a>'
-    if limitations:
-        actions += '<a href="#' + esc(limitations, quote=True) + '">See limitations</a>'
     if downloads:
         actions += '<a href="#' + esc(downloads, quote=True) + '">Get the files</a>'
+    if compact:
+        count_label = 'Comparison counts' if orientation['kind'] == 'comparison' else 'Counts and search coverage'
+        counts = ('<details class="reader-basics"><summary>' + count_label + '</summary>'
+                  + ('<div class="reader-facts">' + cards + '</div>' if cards else '')
+                  + ('<p>' + esc(orientation['meaning']) + '</p>' if orientation['meaning'] else '') + '</details>') if cards else ''
+        return '<section class="reader-orientation">' + notices + counts + '<nav class="reader-actions" aria-label="Explore results">' + actions + '</nav></section>'
     return ('<section class="reader-orientation" aria-labelledby="reader-start">'
             + '<h2 id="reader-start">' + esc(orientation.get('title', 'Results')) + '</h2><p class="reader-purpose">' + esc(orientation['purpose']) + '</p>'
             + ('<div class="reader-facts">' + cards + '</div>' if cards else '')

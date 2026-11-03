@@ -48,7 +48,7 @@ _SCRIPT = r'''<script>
     if(id){a.href=download(id);a.download=packet.files[id].name;}
     else{
       a.setAttribute('href','#portable-other-files');
-      a.title='This file stays in the original run folder; it is not part of this reading copy.';
+      a.title='View this file’s location and availability.';
     }
   }
   function scan(node){
@@ -129,13 +129,18 @@ def standalone_html(document: str, *, source_path: Path, source_root: Path):
     payload=json.dumps(packet,separators=(',',':')).replace('<','\\u003c').replace('&','\\u0026')
     download_links=''.join('<li id="portable-file-'+key+'"><a href="#portable-file-'+key+'">'
         +html.escape(item['name'])+'</a> ('+str(round(item['bytes']/1024,1))+' KB)</li>' for key,item in files.items())
-    names=sorted({item['name'] for item in omitted})
+    reason_labels = {'reference_or_runtime_asset': 'Reference or model file',
+                     'large_evidence_file': 'Large file', 'download_size_limit': 'Download size limit',
+                     'separate_report': 'Separate report', 'file_unavailable': 'File unavailable',
+                     'outside_producing_run': 'Outside this run', 'invalid_local_reference': 'Location unavailable'}
+    other_files = sorted({(item['name'], reason_labels.get(item['reason'], item['reason'])) for item in omitted})
     section=('<section id="portable-files" style="max-width:1120px;margin:24px auto;padding:0 24px;overflow-wrap:anywhere">'
-        '<details><summary>Files included with this report</summary><ul>'+download_links+'</ul>'
-        '<noscript>Enable JavaScript to save the embedded downloads. The report text and tables remain readable.</noscript></details>'
-        '<details id="portable-other-files"><summary>Files kept in the original run folder</summary>'
-        '<p>This reading copy includes the report and small downloads. Large evidence files, reference genomes, model files and separate reports stay in the original run folder.</p>'
-        '<ul>'+''.join('<li>'+html.escape(name)+'</li>' for name in names)+'</ul></details></section>'
+        '<details id="portable-other-files"><summary>Files and download details</summary>'
+        + ('<h3>Included downloads</h3><ul>'+download_links+'</ul>' if files else '')
+        + '<noscript>Enable JavaScript to save the embedded downloads. The report text and tables remain readable.</noscript>'
+        + ('<h3>Additional files</h3><p>Available files listed here can be opened from the original run folder.</p><ul>'
+           + ''.join('<li>'+html.escape(name)+' — '+html.escape(reason)+'</li>' for name, reason in other_files)+'</ul>' if other_files else '')
+        + '</details></section>'
         '<script id="modal-portable-assets" type="application/json">'+payload+'</script>'+_SCRIPT)
     document=document.replace('</body>',section+'</body>') if '</body>' in document else document+section
     return document, {'embedded_file_count':len(files),'embedded_bytes':total,'omitted_links':omitted}

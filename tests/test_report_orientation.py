@@ -28,9 +28,9 @@ def test_sequence_checks_explain_eligibility_without_claiming_biological_success
     summary = build_orientation(sections)
     assert summary['kind'] == 'sequence_checks'
     assert [fact['value'] for fact in summary['facts']] == [3, 1, 1]
-    assert summary['notices'] == ['1 could not be classified.']
-    assert 'which sequences meet each rule' in summary['meaning']
-    assert all(fact['source'] == 'reader-section-0' for fact in summary['facts'])
+    assert summary['notices'] == ['1 entry needs a complete check result.']
+    assert summary['purpose'] == 'Sequences checked against the supplied rules.'
+    assert all(fact['source'] == 'reader-section-1' for fact in summary['facts'])
     assert sections == before
 
 
@@ -40,7 +40,7 @@ def test_sequence_checks_explain_eligibility_without_claiming_biological_success
 def test_inconsistent_or_ambiguous_counts_are_not_given_authoritative_summary_cards(text):
     summary = build_orientation(_sections(text))
     assert summary['facts'] == []
-    assert 'could not be summarized reliably' in summary['notices'][0]
+    assert 'could not be reconciled' in summary['notices'][0]
 
 
 def test_saved_passed_failed_statuses_agree_with_retained_flags_before_summarizing():
@@ -77,7 +77,7 @@ def test_partial_candidate_preview_does_not_become_a_claim_of_complete_delivery(
 def test_empty_main_panel_is_not_reported_as_no_asos_anywhere():
     text = candidate_text(0, 0) + '\n## Another candidate list\n| ASO (5′–3′) | score |\n|---|---|\n| CCGG | 0 |'
     summary = build_orientation(_sections(text), {'kind': 'design'})
-    assert summary['title'] == '0 ASOs'
+    assert summary['title'] == 'No ASOs selected'
     assert 'Other tables contain ASO entries' in summary['notices'][0]
     assert 'failed' not in str(summary)
 
@@ -231,10 +231,12 @@ def test_native_evaluation_match_counts_describe_recorded_references_not_activit
     summary = build_orientation(_sections(text))
     assert summary['kind'] == 'evaluation'
     assert [fact['value'] for fact in summary['facts']] == [2, '1 of 2']
-    assert '1 entry has no recorded exact match' in summary['notices'][0]
-    assert 'search status' in summary['notices'][0]
+    assert summary['notices'] == ['Off-target search results are unavailable or incomplete for 1 of 2 entries.']
+    complete = build_orientation(_sections(text.replace('0 | unavailable', '0 | complete')))
+    assert '1 entry has no recorded exact match in the completed search' in complete['notices'][0]
     unknown = build_orientation(_sections(text.replace('| 0 |', '| NA |')))
-    assert len(unknown['facts']) == 1 and not unknown['notices']
+    assert len(unknown['facts']) == 1
+    assert unknown['notices'] == ['Off-target search results are unavailable or incomplete for 1 of 2 entries.']
 
 
 def test_design_summary_explains_intent_and_actual_incomplete_checks_without_boilerplate():
@@ -249,8 +251,8 @@ def test_design_summary_explains_intent_and_actual_incomplete_checks_without_boi
     context = design_reader_context({'intent':'knockdown'})
     summary = build_orientation(_sections(text), {**context,'kind':'design','gene':'GENE'})
     assert summary['title'] == '2 ASOs for GENE'
-    assert summary['purpose'] == 'Designed to lower GENE RNA.'
-    assert summary['meaning'] == 'Selected from 17 designs that passed the filters.'
+    assert summary['purpose'] == 'Goal: lower GENE RNA.'
+    assert summary['meaning'] == ''
     assert summary['notices'] == ['Off-targets are other sequences an ASO may also bind. The search is incomplete for 1 of 2 ASOs.']
     page = orientation_html(summary, findings='reader-findings')
     for phrase in ['not measurements', 'does not establish', 'Activity estimates available', 'Entries in the main candidate table']:
@@ -262,7 +264,7 @@ def test_low_confidence_splicing_remains_visible_and_exon_name_comes_from_typed_
     context = design_reader_context({'intent':'splice_modulation','desired_effect':'inclusion','exon_label':7},
         {'goals':[{'rank':1,'ranking_confidence':'low'}]})
     result = build_orientation(_sections(candidate_text(2, 2)),{**context,'kind':'design','gene':'GENE'})
-    assert result['purpose'] == 'Designed to help GENE RNA retain exon 7 during splicing.'
+    assert result['purpose'] == 'Goal: help GENE RNA retain exon 7 during splicing.'
     assert result['notices'][0] == 'Confidence in the leading splicing approach is low.'
 
 

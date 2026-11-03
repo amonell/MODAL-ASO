@@ -1673,14 +1673,14 @@ def _selected_off_target_budget_markdown(generated_set: Dict[str, Any]) -> str:
     if len(known) == 1 and len(budgets) == len(rows) and all(value is not None for value in budgets):
         budget = known[0]
         scope = 'exact sequence matches' if budget == 0 else f'sequences differing by up to {budget} bases'
-        return f"Off-targets are other sequences an ASO may also bind. For every selected ASO, the search checked {scope}, without insertions or deletions."
+        return f"Off-targets are other sequences an ASO may also bind. The recorded search setting for every selected ASO covers {scope}, without insertions or deletions. Completion is reported with each ASO."
     labels = [
         f"rank {row.get('selection_rank', index)}: {value if value is not None else 'unavailable'}"
         for index, (row, value) in enumerate(zip(rows, budgets), 1)
         if isinstance(row, dict)
     ]
     return ("Selected-panel off-target mismatch budgets: " + "; ".join(labels)
-            + ". Each mismatch is a difference at one base. The search covered the listed differences.")
+            + ". Each mismatch is a difference at one base. These are recorded search settings; completion is reported with each ASO.")
 
 
 def _summary_first_markdown(markdown: str) -> str:
@@ -2980,7 +2980,7 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
                 )
             else:
                 lines.append(
-                    f"These ASOs are designed to reduce {gene} RNA. The selection details show how each sequence met the requested filters and was ranked."
+                    f"These ASOs are designed to reduce {gene} RNA. Selection details list the applied filters, recorded ranks and remaining checks for each sequence."
                 )
         if conservation["required"]:
             lines.append("Because this run required cross-species identity, do not promote candidates that lack the required species evidence even if their sequence metrics look good.")

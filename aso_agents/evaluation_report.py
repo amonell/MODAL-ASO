@@ -118,7 +118,7 @@ def evaluation_markdown(response, summary):
     resolve = assessment_row_lookup(rows)
     lines = ["# Supplied ASO evaluation", "", str(response.get("answer_summary") or ""), "",
              "## Molecule overview", "",
-             "Exact and near-match counts below describe retained antisense alignment records within the searched references. They do not establish binding or activity.", "",
+             "Sequence matches show where an ASO could bind in the searched references. Exact matches share every base; near matches contain base differences. Counts include the antisense alignments retained by the search.", "",
              "| ASO | Evaluated molecule (5′→3′) | Exact antisense records | Minimum retained antisense mismatches | Other-gene screening count | Screening status |",
              "|---|---|---:|---:|---:|---|"]
     for row in rows:
@@ -186,8 +186,8 @@ def evaluation_markdown(response, summary):
             lines.extend(["", "## " + title, "", *["- " + str(value) for value in response[field]]])
     if str(response.get("markdown") or "").strip():
         lines.extend(["", "## Additional model commentary", "", response["markdown"]])
-    lines.extend(["", "Full evidence is retained in [the evidence file](evaluation_evidence.json) and "
-                  "[the browsable evidence record](evaluation_evidence.html). Every scientific assessment above retains the model's original judgment."])
+    lines.extend(["", "## Supporting evidence", "", "[Browse the complete evidence](evaluation_evidence.html) or "
+                  "[download the evidence as JSON](evaluation_evidence.json)."])
     return "\n".join(lines)
 
 

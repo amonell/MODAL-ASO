@@ -20,6 +20,34 @@ The scientific Markdown, JSON, CSV and Excel files are unchanged by this view. R
 
 The opening explanation states the purpose directly. Fully available predictions appear as results with their model and conditions; missing predictions appear as concrete gaps. Design reports put detailed analysis tabs behind “Explore the analysis”; the original request and exact target identifier remain available together. In-page links open folded explanations when needed. Essential findings and limitations remain visible.
 
+The opening labels the intended biological effect as the **goal**. Intermediate
+pool counts stay with selection details. A stated search limit describes its
+settings; completion is reported separately. For an evaluation or comparison
+with a main finding, that finding leads the page. Counts and coverage open on
+demand. Checked status summaries and the source's limitations share one section.
+Missing results never become zero, and a missing exact match is called out only
+when its search is recorded as complete.
+
+Design reports have three main reading paths: **Selected ASOs**, **Chemistry,
+predictions and checks**, and **Other designs considered**. A recognized selected
+panel opens as individual ASO sequences, with positions and search details under
+each one. The complete table remains available below. Predictions with the same
+candidate identity, sequence and assay conditions are grouped for reading; all
+reference-context rows remain in the full prediction table. Differing predictions
+are never averaged. Unrecognized layouts use the complete original table.
+
+Known missing count values and motif identifiers receive plain display labels in
+their own columns, with the exact value retained in `data-recorded-value`. A motif
+label identifies its study context without assigning that chemistry to the ASO.
+The selected molecule, its chemistry, numeric measurements, rank and scientific
+assessment remain unchanged.
+
+The title, original request and critical alerts are rendered into the HTML itself.
+They remain available without JavaScript. Repeated clicks on a source link reopen
+its section, including nested sections; links also restore the appropriate
+analysis tab. Included downloads and other file locations share one disclosure.
+Missing files are explicitly labelled unavailable.
+
 The view works without external fonts or services. JavaScript adds table-column controls and expand-all; with JavaScript disabled, all table columns are visible and native HTML details controls still work. Printing expands details and restores the screen state afterward. Existing frozen reports should be previewed into a separate directory, never regenerated in place.
 ## Reading levels
 

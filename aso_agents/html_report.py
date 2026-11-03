@@ -1550,8 +1550,8 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
       <header class="hero">
         <div>
           <p class="eyebrow">MODAL-ASO report</p>
-          <h1 id="hero-title"></h1>
-          <details class="request-details"><summary>Original request and target ID</summary><p class="hero-request" id="hero-request"></p><p class="hero-gene-id" id="hero-gene-id"></p></details>
+          <h1 id="hero-title">__READER_TITLE__</h1>
+          <details class="request-details"><summary>Original request and target ID</summary><p class="hero-request" id="hero-request">__READER_REQUEST__</p><p class="hero-gene-id" id="hero-gene-id">__READER_GENE_ID__</p></details>
 
         </div>
       </header>
@@ -1569,7 +1569,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
 
       <main class="stack">
         <section class="tab-panel active panel reader-content report-content" id="results">
-          <div id="quick-overview-alerts"></div>
+          <div id="quick-overview-alerts">__READER_ALERTS__</div>
           __RESULTS_SECTION__
           <details><summary>More downloads</summary><div class="artifact-links" id="quick-overview-artifacts"></div></details>
         </section>
@@ -1934,6 +1934,10 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         artifactsRoot.innerHTML = artifacts.length
           ? artifacts.map(item=>`<a class="artifact-link" href="${escapeHtml(item.href)}">${escapeHtml(labels[item.label] || item.label)}</a>`).join("")
           : '<p>No additional downloads are recorded.</p>';
+        const moreDownloads = artifactsRoot.closest('details');
+        moreDownloads.hidden = !artifacts.length;
+        const downloads = document.querySelector('#results .reader-downloads');
+        if(downloads && artifacts.length)downloads.append(moreDownloads);
         const alerts = (overview.alerts || []).filter(Boolean);
         const alertsRoot = document.getElementById("quick-overview-alerts");
         alertsRoot.innerHTML = alerts.length
@@ -3838,6 +3842,12 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
     from .oligoai import html_section
     from .report_presentation import TABLE_CSS
     from .readable_report import DESIGN_CSS, READER_SCRIPT, design_results
+    from html import escape
+    meta = report_payload.get('meta') or {}
+    gene = meta.get('gene_symbol') or meta.get('gene_id')
+    alerts = [str(item) for item in (report_payload.get('overview') or {}).get('alerts') or [] if item]
+    alert_html = ('<section class="reader-section reader-limits"><h2>Limitations and missing results</h2><ul>'
+                  + ''.join('<li>' + escape(item) + '</li>' for item in alerts) + '</ul></section>') if alerts else ''
     evaluations = report_payload.get("oligoai_evaluations") or [report_payload.get("oligoai_evaluation") or {}]
     sections = []
     for index, evaluation in enumerate(evaluations):
@@ -3852,6 +3862,10 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         "__OLIGOAI_SECTION__": ''.join(sections),
         "__READER_CSS__": DESIGN_CSS,
         "__READER_SCRIPT__": READER_SCRIPT,
+        "__READER_TITLE__": escape(f'{gene} · ASO results' if gene else 'ASO results'),
+        "__READER_REQUEST__": escape(str(meta.get('user_request') or 'No user request recorded.')),
+        "__READER_GENE_ID__": escape(str(meta.get('gene_id') or '')) if meta.get('gene_symbol') else '',
+        "__READER_ALERTS__": alert_html,
     }
     # Substitute the template once so literal tokens in source evidence survive.
     return re.sub('|'.join(map(re.escape, substitutions)), lambda match: substitutions[match[0]], html)
