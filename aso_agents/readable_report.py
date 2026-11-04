@@ -13,9 +13,13 @@ import re
 import ast
 
 from .report_presentation import TABLE_CSS, markdown_html
+from .report_values import (
+    FIELD_LABELS, VALUE_CSS, VALUE_LABELS, field_label, identity_key,
+    parse_collection, readable_prose, value_html,
+)
 
 
-READER_CSS = TABLE_CSS + """
+READER_CSS = TABLE_CSS + VALUE_CSS + """
 :root{color-scheme:light;--reader-ink:#24332f;--reader-muted:#53645e;--reader-line:#dbe4de;--reader-accent:#23624e}
 *{box-sizing:border-box}
 body{margin:0;background:#f7f9f7;color:var(--reader-ink);font:16px/1.65 system-ui,-apple-system,'Segoe UI',sans-serif}
@@ -322,18 +326,22 @@ def friendly_tables(fragment):
                         aso = ('<span>Recorded ASO:</span> <code>' + html.escape(strands[2]) + '</code>'
                                if strands[2] != 'unverified' else '<span>ASO strand not verified</span>')
                         return ('<td data-recorded-value="' + html.escape(raw, quote=True) + '">'
-                                + aso + '<details class="reader-strands"><summary>Target RNA strand and original record</summary>'
+                                + aso + '<details class="reader-strands"><summary>Target RNA strand</summary>'
                                 + '<p>Target RNA site (5′→3′): <code>' + html.escape(strands[1]) + '</code></p>'
-                                + '<p>This is the RNA sequence the ASO is designed to pair with. Sugar and backbone modifications are listed under ASO chemistry.</p>'
-                                + '<p>Original record: <code>' + html.escape(raw) + '</code></p></details></td>')
+                                + '<p>This is the RNA sequence the ASO is designed to pair with. Sugar and backbone modifications are listed under ASO chemistry.</p></details></td>')
                 if key == 'native rank / scope' and (rank := re.fullmatch(r'(\d+|unavailable|not recorded)\s+/\s+(.+)', raw)):
                     rank_label = rank[1] if rank[1].isdigit() else 'No rank supplied'
                     return ('<td data-recorded-value="' + html.escape(raw, quote=True)
                             + '"><details class="reader-rank"><summary>' + rank_label
                             + ' · group details</summary><p>Design group: <code>'
                             + html.escape(rank[2]) + '</code></p></details></td>')
+                if key == 'genomic screening':
+                    from .report_candidate_view import screening_fields
+                    if fields := screening_fields(raw):
+                        return ('<td data-recorded-value="' + html.escape(raw, quote=True) + '">'
+                                + value_html(dict(fields)) + '</td>')
                 if key in {'status', 'outcome', 'retention_status', 'off-target screen', 'splice safeguards', 'screening status'}:
-                    label = STATUS_LABELS.get(raw, raw)
+                    label = STATUS_LABELS.get(raw, VALUE_LABELS.get(raw, raw))
                 elif key in MISSING_RESULT_COLUMNS and raw in {'None', 'null', 'NA', 'N/A', 'unknown'}:
                     label = 'Not reported'
                 elif key == 'motif flags':
@@ -345,8 +353,17 @@ def friendly_tables(fragment):
                         isinstance(flags, list) and all(isinstance(flag, str) for flag in flags)) else raw
                 elif key in {'exclusion reason', 'exclusion reasons', 'exclusion_reasons'}:
                     label = _reason_label(raw)
+                elif key in {'pooled_nondominated_frontier', 'claimed_length_accuracy', 'claimed_gc_accuracy'} and raw in {'true', 'false', 'True', 'False'}:
+                    label = 'Yes' if raw.lower() == 'true' else 'No'
+                elif key == 'reference / context':
+                    label = re.sub(r'\b(genomic_pre_mrna|mature_mrna|mature_rna)\b', lambda m: VALUE_LABELS[m[0]], raw)
+                elif not identity_key(key):
+                    label = VALUE_LABELS.get(raw, raw)
                 else:
                     label = raw
+                if key != 'motif flags' and (record := parse_collection(raw)) is not None and not identity_key(key):
+                    return ('<td data-recorded-value="' + html.escape(raw, quote=True) + '">'
+                            + value_html(record, key) + '</td>')
                 if label == raw:
                     return cell_match[0]
                 # The source code remains machine-checkable and available in the
@@ -359,10 +376,10 @@ def friendly_tables(fragment):
         # Writers sometimes use inline code around a known field name. Strip
         # only that formatting, never links or arbitrary header markup.
         value = html.unescape(re.sub(r'</?code>', '', match[1])); key = value.strip('`').casefold()
-        if key not in TABLE_LABELS and key not in DETAIL_COLUMNS:
+        if key not in TABLE_LABELS and key not in DETAIL_COLUMNS and key not in FIELD_LABELS and not re.fullmatch(r'[A-Za-z][\w]*_[\w]+', value):
             return match[0]
         css = ' class="reader-detail-column"' if key in DETAIL_COLUMNS else ''
-        return '<th' + css + ' title="' + html.escape(value, quote=True) + '">' + html.escape(TABLE_LABELS.get(key, value)) + '</th>'
+        return '<th' + css + ' title="' + html.escape(value, quote=True) + '">' + html.escape(TABLE_LABELS.get(key, field_label(value))) + '</th>'
     return re.sub(r'<th>(.*?)</th>', header, fragment, flags=re.S)
 
 TERMS = (
@@ -640,7 +657,7 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     if (context or {}).get('kind') == 'design':
         evidence = _group_design_evidence(evidence, sections)
     if inventory_html:
-        details.append('<details><summary>ASOs produced during design</summary>' + inventory_html + '</details>')
+        details.append('<details><summary>ASOs produced during design</summary>' + friendly_tables(inventory_html) + '</details>')
     blocks = [item for _, item in visible]
     limits = next((item for priority, item in visible if priority == 1), None)
     if limits and orientation_data['notices']:
@@ -675,7 +692,7 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
         blocks = [item for item in blocks if item not in main_findings]
     else:
         opening = orientation + lead
-    return (opening + ''.join(item[3] for item in blocks)
+    return readable_prose(opening + ''.join(item[3] for item in blocks)
             + tools
             + ''.join(item[3] for item in evidence) + ''.join(item[3] for item in downloads)
             + detail_html + terms)

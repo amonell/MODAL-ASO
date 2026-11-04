@@ -11,7 +11,8 @@ from aso_agents.html_report import render_goal_intake_html
 def render_table(rows):
     html = render_goal_intake_html({})
     names = ['escapeHtml', 'humanizeKey', 'formatValue', 'formatExonObjectiveEvidence', 'getAsoColumns', 'renderAsoTables']
-    functions = []
+    # Include the shared value renderer used by these table functions.
+    functions = [html[html.index('const reportValueLabels ='):html.index('      function humanizeKey')]]
     for name in names:
         match = re.search(r'      function ' + name + r'\(.*?\n      \}', html, re.S)
         assert match, name

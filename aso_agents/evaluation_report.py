@@ -9,6 +9,7 @@ import uuid
 from .input_rows import assessment_row_lookup
 from .sequence_orientation import preferred_binding_hits
 from .splice_prediction_records import METRICS, splice_prediction_records
+from .report_values import VALUE_CSS, field_label, value_html
 
 
 EVIDENCE_FILE = "evaluation_evidence.html"
@@ -211,11 +212,11 @@ def write_evaluation_evidence(directory, response):
                      str(row.get("name") or row.get("input_row_id")), row) for row in record["provided_asos"])
     sections.extend(("assessment-" + str(row.get("input_row_id") or row.get("name")),
                      "Assessment: " + str(row.get("name") or row.get("input_row_id")), row) for row in record["evaluation_assessments"])
-    html = ['<!doctype html><html><head><meta charset="utf-8"><title>Evaluation evidence</title>',
-            '<style>body{font-family:Arial,sans-serif;max-width:1000px;margin:2em auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}details{margin:1em 0}</style></head><body>',
-            '<h1>Evaluation evidence</h1><p>Original observations and cited reference values. These are computational records, not experimental activity.</p>']
+    html = ['<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Evaluation evidence</title>',
+            '<style>body{font:16px/1.6 system-ui,sans-serif;max-width:1000px;margin:2em auto;padding:0 20px;overflow-wrap:anywhere}details{margin:1em 0}summary{cursor:pointer}' + VALUE_CSS + '</style></head><body>',
+            '<h1>Evaluation evidence</h1><p>Recorded predictions, sequence matches and reference evidence.</p>']
     for anchor, title, value in sections:
-        html.append(f'<section id="{escape(str(anchor), quote=True)}"><h2>{escape(title)}</h2><details><summary>Show full record</summary><pre>{escape(json.dumps(value, ensure_ascii=False, indent=2))}</pre></details></section>')
+        html.append(f'<section id="{escape(str(anchor), quote=True)}"><h2>{escape(field_label(title))}</h2><details><summary>Show details</summary>{value_html(value, anchor)}</details></section>')
     html.append('</body></html>')
     html_path.write_text("\n".join(html), encoding="utf-8")
     return {"evaluation_evidence_json": str(json_path), "evaluation_evidence_html": str(html_path)}

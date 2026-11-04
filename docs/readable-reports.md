@@ -2,7 +2,7 @@
 
 The HTML report is an offline reading view of the saved scientific report. It opens with the design goal, the selected ASOs, available predictions and concrete gaps in the results. It then links to findings, limitations and files. Methods and administrative records are expandable. Reports for multiple targets have distinct target labels. A small glossary explains terms that appear in the report. Full tables and downloads remain available, including missing results and unsuccessful analyses.
 
-The scientific Markdown, JSON, CSV and Excel files are unchanged by this view. Rendering does not call a model, run predictions, select candidates, change ranks, or revise a scientific assessment. Known status and exclusion codes receive plain labels only in their own table columns; their exact source values remain in HTML attributes and tooltips as well as the original exports. Numeric cells and unknown codes are untouched. This does not change existing benchmark records. Scientific validation remains a separate workflow.
+The scientific Markdown, JSON, CSV and Excel files are unchanged by this view. Rendering does not call a model, run predictions, select candidates, change ranks, or revise a scientific assessment. Known status and exclusion codes receive plain labels in their corresponding fields; their exact source values remain in HTML attributes and the original exports. Numeric measurements and unknown codes retain their values. This does not change existing benchmark records. Scientific validation remains a separate workflow.
 
 ## Writing rules for the reading view
 
@@ -11,10 +11,10 @@ The scientific Markdown, JSON, CSV and Excel files are unchanged by this view. R
 - Say directly what something is. Avoid “X, not Y” constructions and generic warnings about what a count, rank or prediction cannot prove. Explain concrete missing checks and failures.
 - Define off-targets as other sequences an ASO may also bind. Describe mismatches as base differences. Keep routine search settings in methods.
 - Keep unknown sections visible. Only known methods and administrative sections may be collapsed automatically. Never filter out candidate rows or silently discard columns.
-- Change labels at the rendering boundary. Do not apply global word substitutions to scientific prose, sequences, paths, identifiers or machine-readable exports.
+- Change labels at the rendering boundary using explicit vocabulary and structured fields. Preserve scientific findings, sequences, identifiers and machine-readable exports.
 - Do not change scientific prompts to improve report style. Those prompts can affect the agent's decisions and require separate scientific qualification.
 
-`aso_agents/readable_report.py` contains the common reading view. The design, analysis and combined-report renderers use it. Scientific prose stays verbatim; the view improves organization and tool-owned language without asking a second model to paraphrase evidence. A deeper prose rewrite would need its own meaning-preservation checks.
+`aso_agents/readable_report.py` contains the common reading view. The design, analysis and combined-report renderers use it. Scientific explanations stay verbatim apart from readable labels for known internal codes and file paths. The view improves organization and tool-owned language without asking a second model to paraphrase evidence. A deeper prose rewrite would need its own meaning-preservation checks.
 
 `aso_agents/report_orientation.py` builds the opening explanation from saved report sections and structured prediction records. Counts retain their original scope: panel, preview or assessed pool. Sequence-check summaries must agree with the complete status table and any retained flags. Multiple prediction contexts are never pooled. Missing predictions are distinguished from zero activity; an empty main candidate table is distinguished from other candidate lists elsewhere in the report. Comparison summaries count recorded entries and trade-off flags without deduplicating, reranking, or choosing a winner. Unknown or inconsistent formats receive no guessed count cards. Every table-based count links back to its source section.
 
@@ -41,6 +41,21 @@ their own columns, with the exact value retained in `data-recorded-value`. A mot
 label identifies its study context without assigning that chemistry to the ASO.
 The selected molecule, its chemistry, numeric measurements, rank and scientific
 assessment remain unchanged.
+
+`aso_agents/report_values.py` formats structured evidence for both the static
+report and its interactive tabs. Objects become labeled facts, lists become
+lists, and nested evidence opens in expandable rows. Explicit BED0 positions
+retain their exact endpoints and state that numbering starts at zero and
+excludes the end. Missing values, empty lists, empty objects, zero and false
+remain distinct. Full tables and target details use this same reading format.
+The original JSON remains embedded for provenance and downloads.
+
+Known native codes receive readable labels in structured fields and prose.
+Unknown field names get spaces between words; unknown values and scientific
+identifiers remain literal. Local file paths display the file name or a known
+file label, with the full path retained in an HTML attribute. Only complete
+structured records are parsed. Chemistry notation, interval expressions with an
+unspecified convention, code examples and malformed records stay literal.
 
 The title, original request and critical alerts are rendered into the HTML itself.
 They remain available without JavaScript. Repeated clicks on a source link reopen
@@ -78,8 +93,8 @@ and incomplete runs, on desktop and mobile, with source hashes and table-cell
 preservation checks for frozen examples.
 
 Where a native table explicitly records a target RNA strand and a synthesized
-ASO strand together, the recorded ASO is displayed first. The target strand and
-complete original record are expandable, and the original value is retained in
+ASO strand together, the recorded ASO is displayed first. The target strand is
+expandable, and the complete original value is retained in
 the cell's `data-recorded-value`. No complement is calculated and no missing
 ASO strand is inferred. Chemistry descriptions come from the saved molecule specification.
 

@@ -700,6 +700,8 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
       .data-card,
       .trace-card,
       .target-card {
+        min-width: 0;
+        overflow-wrap: anywhere;
         border: 1px solid rgba(185, 205, 232, 0.72);
         border-radius: 18px;
         background: rgba(255, 255, 255, 0.96);
@@ -820,14 +822,14 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         padding-bottom: 0;
       }
 
-      .fact-row span:first-child {
+      .fact-row > span:first-child {
         color: var(--muted);
         font-weight: 600;
       }
 
-      .fact-row span:last-child {
-        text-align: right;
-        word-break: break-word;
+      .fact-row > div {
+        min-width: 0;
+        overflow-wrap: anywhere;
       }
 
       .bullet-list {
@@ -969,7 +971,15 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
       .record-body {
         margin-top: 12px;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-width: 0;
         gap: 10px;
+      }
+
+      .target-card .table-scroll {
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
       }
 
       .artifact-toolbar,
@@ -1684,6 +1694,8 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           .replace(/'/g, "&#039;");
       }
 
+      __VALUE_RENDERER__
+
       function humanizeKey(value) {
         const labels = {
           times_mapped: "Mappings (source reference)",
@@ -1700,25 +1712,11 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         if (Object.prototype.hasOwnProperty.call(labels, value)) {
           return labels[value];
         }
-        return String(value || "")
-          .replace(/_/g, " ")
-          .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-          .replace(/\s+/g, " ")
-          .trim()
-          .replace(/^\w/, (char) => char.toUpperCase());
+        return reportFieldLabel(value || "");
       }
 
-      function formatValue(value) {
-        if (value === null || value === undefined || value === "") {
-          return "N/A";
-        }
-        if (Array.isArray(value)) {
-          return value.join(", ");
-        }
-        if (typeof value === "number") {
-          return value.toLocaleString();
-        }
-        return String(value);
+      function formatValue(value, key = '') {
+        return value === "" ? "Not reported" : formatRecordValue(value, key);
       }
 
       function formatExonObjectiveEvidence(items) {
@@ -1795,9 +1793,9 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         }
         return `<div class="fact-list">${facts.map((fact) => {
           const value = fact.href
-            ? `<a href="${escapeHtml(fact.href)}">${escapeHtml(formatValue(fact.value))}</a>`
-            : escapeHtml(formatValue(fact.value));
-          return `<div class="fact-row"><span>${escapeHtml(fact.label)}</span><span>${value}</span></div>`;
+            ? `<a href="${escapeHtml(fact.href)}">${escapeHtml(formatValue(fact.value, fact.label))}</a>`
+            : renderRecordValue(fact.value, fact.label);
+          return `<div class="fact-row"><span>${escapeHtml(reportFieldLabel(fact.label))}</span><div>${value}</div></div>`;
         }).join("")}</div>`;
       }
 
@@ -2544,9 +2542,9 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
               </div>
               ${facts.length ? renderFacts(facts) : ""}
               <details class="record" style="margin-top:12px">
-                <summary class="record-title">Raw step JSON</summary>
+                <summary class="record-title">Step details</summary>
                 <div class="record-body">
-                  <pre class="json-block">${escapeHtml(JSON.stringify(step, null, 2))}</pre>
+                  ${renderRecordValue(step)}
                 </div>
               </details>
             </article>
@@ -2568,7 +2566,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
             <div class="record-body">
               ${(record.fields || []).length ? renderFacts(record.fields) : ""}
               ${(record.bullets || []).length ? renderBullets(record.bullets) : ""}
-              ${record.raw ? `<pre class="json-block">${escapeHtml(JSON.stringify(record.raw, null, 2))}</pre>` : ""}
+              ${record.raw ? renderRecordValue(record.raw) : ""}
             </div>
           </details>
         `;
@@ -2599,9 +2597,9 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
             ${(collection.records || []).length ? `<div class="record-list" style="margin-top:12px">${collection.records.map(renderCollectionRecord).join("")}</div>` : ""}
             ${collection.raw ? `
               <details class="record" style="margin-top:12px">
-                <summary class="record-title">Compact JSON</summary>
+                <summary class="record-title">Supporting records</summary>
                 <div class="record-body">
-                  <pre class="json-block">${escapeHtml(JSON.stringify(collection.raw, null, 2))}</pre>
+                  ${renderRecordValue(collection.raw)}
                 </div>
               </details>` : ""}
           </article>
@@ -3678,18 +3676,18 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           return `
             <div class="record">
               <div class="record-title">${escapeHtml(group.label)}</div>
-              <table class="target-table">
+              <div class="table-scroll" tabindex="0" role="region" aria-label="Scrollable ASO records"><table class="target-table">
                 <thead>
                   <tr>${columns.map((column) => `<th>${escapeHtml(humanizeKey(column))}</th>`).join("")}</tr>
                 </thead>
                 <tbody>
                   ${group.asos.slice(0, 14).map((aso) => `
                     <tr>
-                      ${columns.map((column) => `<td class="${column === "sequence" ? "sequence" : ""}">${escapeHtml(column === "exon_objective_evidence" ? formatExonObjectiveEvidence(aso[column]) : formatValue(aso[column]))}</td>`).join("")}
+                      ${columns.map((column) => `<td class="${column === "sequence" ? "sequence" : ""}">${column === "exon_objective_evidence" ? escapeHtml(formatExonObjectiveEvidence(aso[column])) : renderRecordValue(aso[column], column)}</td>`).join("")}
                     </tr>
                   `).join("")}
                 </tbody>
-              </table>
+              </table></div>
               ${group.asos.length > 14 ? `<div class="subtle" style="margin-top:8px">Showing 14 of ${group.asos.length} ASOs.</div>` : ""}
               ${guardMarkup}
             </div>
@@ -3763,9 +3761,9 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
                 ${facts.length ? renderFacts(facts) : ""}
                 ${renderAsoTables(target)}
                 <details class="record">
-                  <summary class="record-title">Target JSON</summary>
+                  <summary class="record-title">All target details</summary>
                   <div class="record-body">
-                    <pre class="json-block">${escapeHtml(JSON.stringify(target, null, 2))}</pre>
+                    ${renderRecordValue(target)}
                   </div>
                 </details>
               </div>
@@ -3807,9 +3805,9 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
               </div>` : ""}
             ${view.raw ? `
               <details class="record" style="margin-top:12px">
-                <summary class="record-title">Compact JSON</summary>
+                <summary class="record-title">Supporting records</summary>
                 <div class="record-body">
-                  <pre class="json-block">${escapeHtml(JSON.stringify(view.raw, null, 2))}</pre>
+                  ${renderRecordValue(view.raw)}
                 </div>
               </details>` : ""}
           </article>
@@ -3842,6 +3840,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
     from .oligoai import html_section
     from .report_presentation import TABLE_CSS
     from .readable_report import DESIGN_CSS, READER_SCRIPT, design_results
+    from .report_values import browser_value_renderer
     from html import escape
     meta = report_payload.get('meta') or {}
     gene = meta.get('gene_symbol') or meta.get('gene_id')
@@ -3857,6 +3856,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         sections.append(section)
     substitutions = {
         "__REPORT_DATA__": data_json,
+        "__VALUE_RENDERER__": browser_value_renderer(report_payload),
         "__REPORT_PRESENTATION_CSS__": TABLE_CSS,
         "__RESULTS_SECTION__": design_results(report_payload),
         "__OLIGOAI_SECTION__": ''.join(sections),

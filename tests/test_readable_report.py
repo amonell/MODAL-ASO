@@ -72,7 +72,7 @@ def test_unknown_sections_and_unknown_fields_are_visible_not_reinterpreted():
     text = '# Results\n\n## Unfamiliar scientific finding\n\nNever infer a dose from these results.\n\n| id | new_measure |\n|---|---|\n| unknown | NA |'
     page = readable_markdown_html(text)
     assert '<h2>Unfamiliar scientific finding</h2>' in page
-    assert '<th>new_measure</th>' in page and '<td>NA</td>' in page
+    assert '<th title="new_measure">New measure</th>' in page and '<td>NA</td>' in page
     assert '<summary>Unfamiliar scientific finding' not in page
 
 
