@@ -152,6 +152,8 @@ HEADING_LABELS = {
     "original intervals and assembly conversion evidence": "Requested regions and genome coordinates",
     "translation-start evidence for the selected panel": "Binding near the start codon",
     "recommended shortlist": "Selection and checks",
+    "source search evidence": "Binding-site datasets",
+    "protected-transcript sequence discrimination": "Matches to the isoform to preserve",
 }
 
 # Fold only explicitly named methods/administration, never arbitrary prose or
@@ -164,6 +166,7 @@ DETAIL_HEADINGS = {
     "what happened", "key decisions", "how to read the outputs", "run metadata",
     "reference context", "exact gene-screening count definition", "glossary",
     "original request", "how to read this run", "original intervals and assembly conversion evidence",
+    "source search evidence",
 }
 # These are complete evidence blocks, not alternative summaries. Their contents
 # are never shortened, sampled, deduplicated, or interpreted by the renderer.
@@ -197,6 +200,7 @@ EVIDENCE_HEADINGS = {
     "suggested follow-up": "The report's proposed next steps, with their original scope and qualifications.",
     "recommended shortlist": "Selection order, off-target checks and sequence features to review.",
     "translation-start evidence for the selected panel": "Where each ASO binds relative to the start of the coding sequence.",
+    "protected-transcript sequence discrimination": "Sequence matches and mismatches in the transcript the design aims to preserve.",
 }
 RESULT_HEADINGS = {
     "outcome summary", "practical interpretation", "bottom line", "selected physical panel",
@@ -440,6 +444,14 @@ def _sections(markdown):
     return sections
 
 
+def _source_search_completed(lines):
+    """Fold verified source-search provenance; keep missing/failed searches open."""
+    blocks = re.findall(r'```(?:json)?\s*\n(.*?)\n```', '\n'.join(lines), re.S)
+    records = [parse_collection(block) for block in blocks]
+    return bool(records) and all(isinstance(record, dict)
+        and record.get('search_status') in ('complete', 'completed') for record in records)
+
+
 def _intro_html(lines, report_dir, extra_details, header_request):
     """Fold only the generated request/administration blocks; keep their text."""
     # Only a leading metadata block is eligible. The same text inside a code
@@ -559,7 +571,7 @@ def _group_design_evidence(evidence, sections):
         return evidence
     rationale = {'practical interpretation', 'physical chemistry', 'recommended shortlist',
                  'predicted splice-response candidate sets', 'oligoai gapmer efficacy prediction',
-                 'translation-start evidence for the selected panel'}
+                 'translation-start evidence for the selected panel', 'protected-transcript sequence discrimination'}
     alternatives = {'top normal-ranking candidates', 'top allele-specific candidates',
                     'strongest raw splice-effect rows', 'requested binding-region candidate sets'}
     primary, reasons, other = [], [], []
@@ -636,7 +648,7 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
                     content = reading_view + '<details><summary>All prediction records and model details</summary>' + content + '</details>'
             evidence.append((index, section_id, label, _disclosure(section_id, label,
                 content, EVIDENCE_HEADINGS[key])))
-        elif key in DETAIL_HEADINGS:
+        elif key in DETAIL_HEADINGS and (key != 'source search evidence' or _source_search_completed(section['lines'])):
             details.append('<details id="' + section_id + '"><summary>' + html.escape(label)
                            + '</summary><div>' + body + '</div></details>')
         else:

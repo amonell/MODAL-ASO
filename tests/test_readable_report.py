@@ -76,6 +76,22 @@ def test_unknown_sections_and_unknown_fields_are_visible_not_reinterpreted():
     assert '<summary>Unfamiliar scientific finding' not in page
 
 
+def test_completed_source_search_is_folded_but_incomplete_search_stays_visible():
+    record = {'source':'rbp_binding', 'search_status':'completed', 'result':'sites_found',
+              'experiment':'ENCSR308YNT', 'overlapping_peaks':2}
+    text = '## Source search evidence\n```json\n'+json.dumps(record)+'\n```\n'
+    page = readable_markdown_html(text)
+    assert '<summary>Binding-site datasets</summary>' in page
+    assert page.index('Methods, references and run details') < page.index('ENCSR308YNT')
+    assert 'RNA-binding protein sites' in page and 'Binding sites found' in page
+    assert json.dumps(record) in [attrs.get('data-recorded-value') for _, attrs in Content(page).tags]
+    for status in ['incomplete','error','unavailable','unknown',None,{'status':'completed'}]:
+        incomplete = readable_markdown_html('## Source search evidence\n```json\n'
+            +json.dumps({**record,'search_status':status})+'\n```\n')
+        assert '<h2>Binding-site datasets</h2>' in incomplete
+        assert '<summary>Binding-site datasets</summary>' not in incomplete
+
+
 def test_status_and_reason_codes_are_explained_only_in_their_own_columns():
     text = '| id | outcome | Exclusion reason | score |\n|---|---|---|---|\n| completed_no_candidates | completed_no_candidates | length_not_exactly_37_nt | 0 |'
     page = readable_markdown_html(text)

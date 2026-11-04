@@ -30,6 +30,11 @@ FIELD_LABELS = {
     'original_build': 'Original reference assembly', '__truncated__': 'Additional records',
     'physical binding interval(s), bed0': 'Binding positions (zero-based; end excluded)',
     'binding interval(s), bed0': 'Binding positions (zero-based; end excluded)',
+    'searched_gene_span_bed0': 'Searched gene region (zero-based; end excluded)',
+    'source_rows_bed0_half_open': 'Dataset regions (zero-based; end excluded)',
+    'reference_feature_rows_bed0_half_open': 'Requested RNA regions (zero-based; end excluded)',
+    'projected_rows_bed0_half_open': 'Overlapping regions (zero-based; end excluded)',
+    'feature_scope': 'Requested RNA region',
 }
 
 # Explicit vocabulary, rather than replacing underscores in arbitrary values.
@@ -76,6 +81,11 @@ VALUE_LABELS = {
     'reference_scope': 'Reference scope', 'mixed_or_partial_predictions': 'Mixed or incomplete predictions',
     'splice_mod': 'Splicing change',
     'scored_splice_response_site': 'Splice site evaluated by the model',
+    'rbp_binding': 'RNA-binding protein sites',
+    'mirna_binding': 'miRNA-binding sites',
+    'sites_found': 'Binding sites found',
+    'intersects_feature': 'Overlaps the requested RNA region',
+    'outside_feature_or_opposite_strand': 'Outside the requested RNA region or on the opposite strand',
 }
 
 FILE_LABELS = {
