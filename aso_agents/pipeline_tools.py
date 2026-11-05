@@ -52413,7 +52413,7 @@ def _run_splice_eval_on_tiles_json(
         "skipped_count": skipped_count,
         "sites": sorted(list(site_label_set)),
     }
-    for key in ("splice_eval_backend", "splice_eval_species", "splice_eval_model"):
+    for key in ("splice_eval_backend", "splice_eval_species", "splice_eval_model", "runtime_recovery"):
         if splicing_eval.get(key):
             splice_eval_summary[key] = splicing_eval.get(key)
     if isinstance(repeat_risk_summary, dict):

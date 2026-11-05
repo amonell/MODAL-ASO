@@ -68,6 +68,8 @@ Install the corresponding species references before splice models. Splice models
 
 OligoAI uses BF16 arithmetic on supported GPUs to prevent overflow in its RNA encoder. Each prediction receipt records the arithmetic precision and runner identity. If an individual RNA context produces an invalid estimate, its activity remains unavailable and valid estimates for other contexts are retained.
 
+After a CUDA execution fault, splice scoring gets one retry in a fresh model process. The run keeps the original error, retry inputs, model log and outcome beside the input tile table. A failed retry remains an error. Later splice jobs in the same run also use fresh processes because a CUDA execution fault invalidates the original process's GPU context.
+
 OligoAI supports DNA/MOE/cET sugars and PO/PS bonds. Reports identify unsupported chemistries and the conditions attached to each prediction.
 
 Setup remembers a custom OligoAI directory across sessions:
