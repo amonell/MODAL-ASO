@@ -87,7 +87,8 @@ def requested_skip_reports(goal, catalog, genome_path):
     containers = [goal, *(goal.get('design_programs') or []), *(goal.get('evaluation_targets') or []),
                   *(goal.get('splice_isoform_objectives') or [])]
     for item in containers:
-        if not isinstance(item, dict) or item.get('desired_effect') != 'skipping':
+        if (not isinstance(item, dict) or item.get('role') == 'context'
+                or item.get('desired_effect') != 'skipping'):
             continue
         labels = item.get('exon_labels') or [item.get('exon_label')]
         if not isinstance(labels, list):

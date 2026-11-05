@@ -268,6 +268,17 @@ def test_low_confidence_splicing_remains_visible_and_exon_name_comes_from_typed_
     assert result['notices'][0] == 'Confidence in the leading splicing approach is low.'
 
 
+def test_isoform_knockdown_summary_retains_the_saved_target_in_older_reports():
+    from aso_agents.readable_report import design_results
+    program = {'intent': 'knockdown', 'isoform_label': 'GENE-A'}
+    payload = {'reader_context': {'intent': 'knockdown'}, 'meta': {'gene_symbol': 'GENE'},
+               'outputs': {'collections': [{'key': 'design_programs', 'raw': [program]}]},
+               'overview': {'report_markdown': candidate_text(2, 2)}}
+    before = deepcopy(payload)
+    assert 'Goal: lower GENE-A RNA.' in design_results(payload)
+    assert payload == before
+
+
 def test_splicing_summary_uses_the_recorded_direction_comparison_without_calling_it_exon_inclusion():
     text = candidate_text(2, 2) + '''\n## Predicted Splice-Response Candidate Sets
 | rank | directional delta | opposite delta | confidence |

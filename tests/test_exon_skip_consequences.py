@@ -37,3 +37,21 @@ def test_incomplete_or_discordant_reference_is_not_an_nmd_negative():
     transcript['exons_tx'][0]['coding_start_genomic']=1
     with pytest.raises(ValueError,match='outside'):
         simulate_exon_skips(transcript,genome)
+
+
+def test_isoform_context_does_not_request_another_exon_skip(tmp_path):
+    from aso_agents.exon_skip_consequences import requested_skip_reports
+    goal = {'design_programs': [{'desired_effect': 'inclusion', 'exon_label': 2}],
+            'splice_isoform_objectives': [{'role': 'context', 'desired_effect': 'skipping',
+                'desired_abundance': 'decrease', 'transcript_id': 'TX', 'exon_label': 2}]}
+    assert requested_skip_reports(goal, {}, tmp_path/'absent.fa') == []
+    # An explicitly requested conditional calculation remains available.
+    transcript, genome = fixture('+', 65)
+    transcript['transcript_id'] = 'TX'
+    fasta = tmp_path/'reference.fa'
+    fasta.write_text('>chr8\n' + genome['chr8'] + '\n')
+    goal['conditional_exon_skip_events'] = [{'transcript_id': 'TX', 'exon_label': 2}]
+    result = requested_skip_reports(goal, {'variant': transcript}, fasta)
+    assert len(result) == 1
+    assert result[0]['requested_exon'] == 2
+    assert result[0]['consequence']['status'] == 'computed'

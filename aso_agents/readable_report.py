@@ -114,7 +114,7 @@ HEADING_LABELS = {
     "predicted splice-response candidate sets": "Predicted splicing changes",
     "strongest raw splice-effect rows": "Largest predicted splicing changes",
     "requested binding-region candidate sets": "Candidates for the requested sites",
-    "conditional exon-skipping sequence consequences": "Predicted effects of exon skipping",
+    "conditional exon-skipping sequence consequences": "Exon-skipping scenarios",
     "practical interpretation": "What the results mean",
     "outcome summary": "Results at a glance",
     "candidate sequence audit and reconciliation": "Candidate sequence checks",
@@ -178,7 +178,7 @@ EVIDENCE_HEADINGS = {
     "predicted splice-response candidate sets": "Candidate groups for predicted splicing changes; the response site can differ from the binding site.",
     "strongest raw splice-effect rows": "A check of model signals, separate from the selected panel.",
     "requested binding-region candidate sets": "Candidates grouped by requested binding region; the same molecule may appear in several groups.",
-    "conditional exon-skipping sequence consequences": "Expected RNA sequence after the proposed exon skip.",
+    "conditional exon-skipping sequence consequences": "RNA sequence changes calculated for hypothetical exon skips.",
     "target-rna accessibility and screening scope": "Predicted RNA accessibility and the recorded scope of screening.",
     "oligoai gapmer efficacy prediction": "Activity predictions and unavailable results, with their reasons.",
     "full observation membership": "Every supplied entry and the measures used in the comparison.",
@@ -646,8 +646,11 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
                 reading_view = prediction_reading_view(section)
                 if reading_view:
                     content = reading_view + '<details><summary>All prediction records and model details</summary>' + content + '</details>'
-            evidence.append((index, section_id, label, _disclosure(section_id, label,
-                content, EVIDENCE_HEADINGS[key])))
+            disclosure = _disclosure(section_id, label, content, EVIDENCE_HEADINGS[key])
+            if key == 'conditional exon-skipping sequence consequences':
+                details.append(disclosure)
+            else:
+                evidence.append((index, section_id, label, disclosure))
         elif key in DETAIL_HEADINGS and (key != 'source search evidence' or _source_search_completed(section['lines'])):
             details.append('<details id="' + section_id + '"><summary>' + html.escape(label)
                            + '</summary><div>' + body + '</div></details>')
@@ -799,11 +802,11 @@ def design_results(payload):
     meta = payload.get('meta') or {}
     from .report_orientation import design_reader_context
     reader_context = payload.get('reader_context')
-    if not isinstance(reader_context, dict):
-        collections = (payload.get('outputs') or {}).get('collections') or []
-        programs = next((c.get('raw') for c in collections if c.get('key') == 'design_programs'), [])
-        reader_context = design_reader_context({'design_programs': programs if isinstance(programs, list) else []},
-                                               (payload.get('decisions') or {}).get('strategy_routing'))
+    collections = (payload.get('outputs') or {}).get('collections') or []
+    programs = next((c.get('raw') for c in collections if c.get('key') == 'design_programs'), [])
+    saved_program_context = design_reader_context({'design_programs': programs if isinstance(programs, list) else []},
+                                                  (payload.get('decisions') or {}).get('strategy_routing'))
+    reader_context = {**saved_program_context, **(reader_context if isinstance(reader_context, dict) else {})}
     inventory, separator, _ = saved.partition('<h2>Report and interpretation</h2>')
     body = readable_markdown_html(markdown, payload.get('oligoai_report_dir'), header_request=meta.get('user_request'),
                                   context={**reader_context, 'kind': 'design', 'gene': meta.get('gene_symbol') or meta.get('gene_id'),

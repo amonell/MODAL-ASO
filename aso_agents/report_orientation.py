@@ -204,7 +204,7 @@ def design_reader_context(goal, routing=None):
     """Carry typed intent into the view; never infer a goal from a gene name."""
     goal = goal if isinstance(goal, dict) else {}
     programs = [p for p in goal.get('design_programs') or [] if isinstance(p, dict)]
-    fields = ('intent', 'desired_effect', 'exon_label', 'target_region')
+    fields = ('intent', 'desired_effect', 'exon_label', 'target_region', 'isoform_label')
     context = {}
     for field in fields:
         values = {str(p[field]) for p in programs if p.get(field) is not None}
@@ -222,6 +222,7 @@ def _design_purpose(context, gene):
     exon = str(context.get('exon_label') or '').strip()
     exon_name = f'exon {exon}' if exon else 'the requested exon'
     if intent == 'knockdown':
+        target = context.get('isoform_label') or target
         return f'Goal: lower {target} RNA.'
     if intent == 'binding' and context.get('target_region') == 'translation_start':
         return f'Goal: block {target} protein production by binding near the start codon.'
