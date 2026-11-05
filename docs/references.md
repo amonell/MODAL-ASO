@@ -41,7 +41,7 @@ Recovery requires matching transcript and gene versions, matching exon lengths, 
 
 A failed download or inconsistent reference leaves the affected search incomplete. Complete counts stay unavailable until the missing check is resolved; observed matches and the failure reason remain in the result. Other annotations retain this behavior when a matching transcript reference is unavailable.
 
-A design can finish only after each delivered ASO has complete counts at the requested mismatch budget and reference records for each requested species. This check also runs for child designs and composite reports. Unselected molecules in the search pool can retain incomplete screens. Evaluation tasks that explicitly disable off-target screening retain that scope.
+A design can finish with incomplete off-target screening. Reports retain the screening status, missing counts and reference details for each requested species, and the completion record includes screening warnings. Child designs carry these details into composite reports. Missing counts remain unknown. Evaluation tasks that explicitly disable off-target screening retain that scope.
 
 ## Import existing references
 

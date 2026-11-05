@@ -39735,6 +39735,10 @@ def _extract_pipeline_integrity(
             scoped = _scoped_design_integrity(run_dir, requested_task, request_envelope, skip_router=skip_router)
             if scoped is not None and scoped.get("ok") is not True:
                 summary["blocking_errors"].append(f"scoped_design_delivery_incomplete:{task_id}")
+            if scoped is not None:
+                summary.setdefault("scoped_design_integrity", {})[task_id] = scoped
+                if scoped.get("warnings"):
+                    summary["warnings"].append(f"scoped_design_warnings:{task_id}")
             outcome = indexed_task.get("design_outcome")
             if not isinstance(outcome, dict):
                 summary["blocking_errors"].append(f"design_outcome_missing:{task_id}")
@@ -39751,7 +39755,7 @@ def _extract_pipeline_integrity(
             if outcome_status == "skipped":
                 continue
             if scoped is None:
-                summary["blocking_errors"].append(f"scoped_design_screening_unverified:{task_id}")
+                summary["warnings"].append(f"scoped_design_screening_unverified:{task_id}")
             outcome_artifacts = outcome.get("artifacts") if isinstance(outcome.get("artifacts"), dict) else {}
             for artifact_key in ("generated_aso_set_json", "generated_filter_trace_json"):
                 artifact_path = str(outcome_artifacts.get(artifact_key) or "").strip()
@@ -39815,7 +39819,9 @@ def _extract_pipeline_integrity(
         screening = screening_delivery(delivered_rows, required_species=required_species,
             mismatch_budget=_resolve_num_mismatches(structured_goal, default=2))
         summary["off_target_screening"] = screening
-        summary["blocking_errors"].extend(screening["errors"])
+        # Deliver the available designs and reports while retaining incomplete
+        # screening as an explicit limitation. It must never become a zero count.
+        summary["warnings"].extend(screening["errors"])
 
     summary["ok"] = bool(summary["report_exists"] and not summary["blocking_errors"])
     return summary

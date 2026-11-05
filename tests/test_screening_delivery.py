@@ -25,7 +25,7 @@ def check(rows, species=("human",), budget=2):
     {"off_target_incomplete_reasons": ["reference_bases_unresolved"]},
     {"off_target_screening_status_by_species": {"human": "mapping_failed"}},
 ])
-def test_each_missing_screening_requirement_blocks_completion(changes):
+def test_each_missing_screening_requirement_remains_explicit(changes):
     row = {**screened_row(), **changes}
     result = check([row])
     assert result["status"] == "incomplete"
@@ -64,8 +64,11 @@ def test_candidate_pool_failure_does_not_block_delivered_screened_panel(tmp_path
     (tmp_path / "generated_aso_set.json").write_text(json.dumps({"rows": [selected]}))
     result = pipeline._extract_pipeline_integrity(str(tmp_path),
         {"exists": {"report_md": True, "report_html": True}}, skip_router=True)
-    assert not result["ok"]
-    assert "selected_off_target_screen_incomplete:candidate_1" in result["blocking_errors"]
+    assert result["ok"]
+    assert result["off_target_screening"]["status"] == "incomplete"
+    assert "selected_off_target_screen_incomplete:candidate_1" in result["warnings"]
+    assert not result["blocking_errors"]
+    assert json.loads((tmp_path / "generated_aso_set.json").read_text())["rows"][0]["Off_target_2mm_count"] is None
 
 
 def test_evaluation_only_scope_keeps_explicit_disabled_screening(tmp_path):

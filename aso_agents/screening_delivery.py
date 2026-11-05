@@ -1,4 +1,4 @@
-"""Require complete screening evidence for every delivered design molecule."""
+"""Record screening completeness independently of design/report completion."""
 from .candidate_assessment import off_target_evidence
 from .mismatch_screening import reference_incomplete_reasons
 
