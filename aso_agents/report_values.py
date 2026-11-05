@@ -35,10 +35,15 @@ FIELD_LABELS = {
     'reference_feature_rows_bed0_half_open': 'Requested RNA regions (zero-based; end excluded)',
     'projected_rows_bed0_half_open': 'Overlapping regions (zero-based; end excluded)',
     'feature_scope': 'Requested RNA region',
+    'off_target_positions_truncated': 'Location list shortened for display',
+    'off_target_position_preview_limit': 'Locations shown per mismatch group',
+    'off_target_search_method': 'Search method',
+    'off_target_gene_annotation_status': 'Gene annotation coverage',
 }
 
 # Explicit vocabulary, rather than replacing underscores in arbitrary values.
 VALUE_LABELS = {
+    'uncapped_overflow_recovery': 'Complete search of repetitive sequences',
     'full_containment': 'Entire ASO binding site inside the region',
     'any_overlap': 'ASO binding site overlaps the region',
     'candidates_available': 'Candidates available',

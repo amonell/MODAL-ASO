@@ -114,7 +114,7 @@ rule tile:
 
 rule map:
     """
-    Maps sequences. Tiles that align to more than 3 (-m) positions are filtered out.
+    Map ordinary queries and retain repetitive queries for uncapped recovery.
     """
     input:
         tiles=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"),
@@ -145,7 +145,7 @@ rule map:
 
 rule map_secondary:
     """
-    Maps sequences. Tiles that align to more than 3 (-m) positions are filtered out.
+    Map near matches and retain repetitive queries for uncapped recovery.
     """
     input:
         tiles=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.fasta.gz"),
@@ -173,9 +173,34 @@ rule map_secondary:
         samtools view -bS {output.sam:q} -o {output.mapped:q}
         """
 
+rule recover_exact_overflow:
+    input:
+        overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.overflow.fasta"),
+        annotation=SECONDARY_ANNOTATION,
+    output:
+        recovered=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.exact_recovery.json"),
+    params:
+        script=os.path.join(TILING_SCRIPTS, "recover_overflow.py"),
+        index=BOWTIE_INDEX,
+    shell:
+        "python {params.script:q} --overflow {input.overflow:q} --index {params.index:q} --max-mismatches 0 --annotation {input.annotation:q} --output {output.recovered:q}"
+
+rule recover_near_overflow:
+    input:
+        overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_overflow.fasta"),
+        annotation=SECONDARY_ANNOTATION,
+    output:
+        recovered=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_recovery.json"),
+    params:
+        script=os.path.join(TILING_SCRIPTS, "recover_overflow.py"),
+        index=SECONDARY_INDEX,
+        mismatches=NUM_MISMATCHES,
+    shell:
+        "python {params.script:q} --overflow {input.overflow:q} --index {params.index:q} --max-mismatches {params.mismatches} --annotation {input.annotation:q} --output {output.recovered:q}"
+
 rule annotate_secondary:
     """
-    Maps sequences. Tiles that align to more than 3 (-m) positions are filtered out.
+    Annotate ordinary placements. Recovery annotates all overflow placements.
     """
     input:
         mapped=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam"),
@@ -211,6 +236,8 @@ rule convert_to_seq:
         near_unaligned=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_unaligned.fasta"),
         near_overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_overflow.fasta"),
         overflow=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.overflow.fasta"),
+        exact_recovery=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.exact_recovery.json"),
+        near_recovery=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.near_recovery.json"),
         assignments=os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped_secondary.bam.featureCounts"),
     output:
         fasta=temp(os.path.join(OUTPUT_FOLDER, "pipeline_outputs", "{sample}.mapped.fasta")),
@@ -220,6 +247,8 @@ rule convert_to_seq:
         max_mismatches = NUM_MISMATCHES,
         script = os.path.join(TILING_SCRIPTS, "filter_mapped.py"),
         same_reference = "--same-reference" if os.path.realpath(BOWTIE_INDEX) == os.path.realpath(SECONDARY_INDEX) else "",
+        exact_index = BOWTIE_INDEX,
+        near_index = SECONDARY_INDEX,
         error_file = os.path.join(OUTPUT_FOLDER, "stderr", "{sample}.convert.err"),
         out_file = os.path.join(OUTPUT_FOLDER, "stdout", "{sample}.convert.out"),
     resources:
@@ -227,7 +256,7 @@ rule convert_to_seq:
     shell:
         """
         
-        python {params.script:q} -s {input.mapped:q} -f {input.assignments:q} -o {output.fasta:q} --query-fasta {input.queries:q} --exact-unaligned {input.exact_unaligned:q} --near-unaligned {input.near_unaligned:q} --overflow {input.overflow:q} --near-sam {input.near_mapped:q} --near-overflow {input.near_overflow:q} --max-mismatches {params.max_mismatches} {params.same_reference}
+        python {params.script:q} -s {input.mapped:q} -f {input.assignments:q} -o {output.fasta:q} --query-fasta {input.queries:q} --exact-unaligned {input.exact_unaligned:q} --near-unaligned {input.near_unaligned:q} --overflow {input.overflow:q} --near-sam {input.near_mapped:q} --near-overflow {input.near_overflow:q} --max-mismatches {params.max_mismatches} {params.same_reference} --exact-recovery {input.exact_recovery:q} --near-recovery {input.near_recovery:q} --exact-index {params.exact_index:q} --near-index {params.near_index:q}
         """
 
 rule fold:

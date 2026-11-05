@@ -43,6 +43,8 @@ A failed download or inconsistent reference leaves the affected search incomplet
 
 A design can finish with incomplete off-target screening. Reports retain the screening status, missing counts and reference details for each requested species, and the completion record includes screening warnings. Child designs carry these details into composite reports. Missing counts remain unknown. Evaluation tasks that explicitly disable off-target screening retain that scope.
 
+Genomic tiling automatically repeats searches that exceed the initial 2,000-match limit. Recovery requests every placement, counts distinct loci on disk and searches duplicate sequences once. Each original query retains its own intended-site exclusion. Counts and gene annotations cover the full search; location previews show up to 100 matches per mismatch group. Recovery receipts record the query digest, reference index, search command, alignment-stream digest and completion status. If recovery fails, the design still finishes with the affected screening counts marked unknown.
+
 ## Import existing references
 
 ```bash

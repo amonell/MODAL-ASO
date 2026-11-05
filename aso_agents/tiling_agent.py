@@ -290,9 +290,9 @@ def _load_sequence_mapping(bed_path: str) -> Dict[str, str]:
     return mapping
 
 
-def _load_sequence_metadata(bed_path: str) -> Dict[str, Dict[str, str]]:
-    """Return mapping of sequence -> parsed scored BED metadata."""
-    mapping: Dict[str, Dict[str, str]] = {}
+def _load_sequence_metadata(bed_path: str) -> Dict[Any, Dict[str, str]]:
+    """Index metadata by query position, retaining a sequence-only fallback."""
+    mapping: Dict[Any, Dict[str, str]] = {}
     try:
         with open(bed_path, "r", encoding="utf-8") as handle:
             for line in handle:
@@ -305,6 +305,8 @@ def _load_sequence_metadata(bed_path: str) -> Dict[str, Dict[str, str]]:
                 seq = metadata.get("seq")
                 if seq:
                     mapping[seq.upper()] = metadata
+                    if len(parts) >= 6:
+                        mapping[(seq.upper(), parts[0], int(parts[1]), int(parts[2]), parts[5])] = metadata
     except Exception:
         return {}
     return mapping
@@ -843,7 +845,7 @@ def collect_results_json(
             col_types[c] = _widen_type(col_types.get(c, new_t), new_t)
 
     sequence_to_mapped: Dict[str, str] = {}
-    sequence_to_metadata: Dict[str, Dict[str, str]] = {}
+    sequence_to_metadata: Dict[Any, Dict[str, str]] = {}
     gene_index: Dict[str, Dict[str, List]] = {}
     bed_companion = _locate_scored_bed(os.path.dirname(result_path))
     if bed_companion:
@@ -932,7 +934,13 @@ def collect_results_json(
                     col_types[meta_k] = "string"
 
         seq_key = str(obj.get("Sequence") or obj.get("sequence") or "").upper()
-        seq_metadata = sequence_to_metadata.get(seq_key, {})
+        try:
+            metadata_key = (seq_key, str(obj.get('Chrom', obj.get('chrom', ''))),
+                int(obj.get('Start', obj.get('start'))), int(obj.get('End', obj.get('end'))),
+                str(obj.get('Strand', obj.get('strand', ''))))
+        except (TypeError, ValueError):
+            metadata_key = seq_key
+        seq_metadata = sequence_to_metadata.get(metadata_key, sequence_to_metadata.get(seq_key, {}))
         for field in ('Phastcon', 'PhyloP'):
             if field in obj:
                 obj[field] = _measurement_float_or_unknown(obj[field])
@@ -980,11 +988,15 @@ def collect_results_json(
         )
         if risk_value is not None:
             obj["Off_target_weighted_risk_score"] = _measurement_int_or_unknown(risk_value)
-        for key in ('off_target_search_status', 'off_target_exact_count_unit', 'off_target_position_convention'):
+        for key in ('off_target_search_status', 'off_target_exact_count_unit', 'off_target_position_convention',
+                    'off_target_positions_truncated', 'off_target_position_preview_limit',
+                    'off_target_search_method', 'off_target_gene_annotation_status'):
             if key in seq_metadata:
-                obj[key] = seq_metadata[key]
+                value = seq_metadata[key]
+                obj[key] = (value.lower() == 'true' if key == 'off_target_positions_truncated' else
+                            _measurement_int_or_unknown(value) if key == 'off_target_position_preview_limit' else value)
 
-        mapped_value = sequence_to_mapped.get(seq_key)
+        mapped_value = seq_metadata.get('mappedto', sequence_to_mapped.get(seq_key))
         mapped_gene_names: List[str] = []
         mapped_gene_ids: List[str] = []
         if mapped_value and gene_index:
@@ -1001,7 +1013,7 @@ def collect_results_json(
 
         mismatch_gene_names: Dict[str, List[str]] = {}
         mismatch_gene_ids: Dict[str, List[str]] = {}
-        if gene_index:
+        if gene_index or any(f'off_target_{mm}mm_genes' in seq_metadata for mm in range(4)):
             for mm in range(0, 4):
                 label = f"{mm}mm"
                 raw_positions = _first_present_value(
@@ -1020,6 +1032,14 @@ def collect_results_json(
                             names_for_bin.append(gene_name)
                         if gene_id:
                             ids_for_bin.append(gene_id)
+                # Recovery counts every locus and annotates every overlapping
+                # gene, even when the location preview is deliberately short.
+                recovered_names = seq_metadata.get(f'off_target_{label}_genes')
+                recovered_ids = seq_metadata.get(f'off_target_{label}_gene_ids')
+                if recovered_names is not None:
+                    names_for_bin = recovered_names.split(',')
+                if recovered_ids is not None:
+                    ids_for_bin = recovered_ids.split(',')
                 names_for_bin = _normalize_gene_set(names_for_bin, target_gene_symbol)
                 ids_for_bin = _normalize_id_set([], ids_for_bin)
                 mismatch_gene_names[label] = names_for_bin

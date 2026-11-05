@@ -19,6 +19,8 @@ import glob
 import pybedtools
 import pandas as pd
 import gzip
+import hashlib
+import json
 from Bio import SeqIO
 from Bio.Seq import Seq
 from collections import defaultdict
@@ -175,7 +177,7 @@ def build_mismatch_metadata(
 
 def reconcile_mapping_metadata(exact_df, near_df, query_keys, max_mismatches,
                                *, near_available, near_overflow=(), exact_overflow=(), same_reference=True,
-                               exact_unaligned=(), near_unaligned=()):
+                               exact_unaligned=(), near_unaligned=(), near_recovered=None, exact_recovered=None):
     """Keep censored/unsearched bins unknown, preserving independently known exact hits."""
     near = build_mismatch_metadata(near_df, max_mismatches)
     exact = build_mismatch_metadata(exact_df, 0) if same_reference else {}
@@ -187,19 +189,27 @@ def reconcile_mapping_metadata(exact_df, near_df, query_keys, max_mismatches,
         for key in exact_unaligned:
             exact[key] = zero_mismatch_metadata(0)
     near_overflow, exact_overflow = set(near_overflow), set(exact_overflow)
+    near_recovered, exact_recovered = near_recovered or {}, exact_recovered or {}
+    near.update({key: row['metadata'] for key, row in near_recovered.items()})
+    if same_reference:
+        exact.update({key: row['metadata'] for key, row in exact_recovered.items()})
     result = {}
     for key in query_keys:
         name, _sequence = key
         values = dict(near.get(key) or {})
-        complete = near_available and name not in near_overflow and key in near
+        complete = key in near_recovered or (near_available and name not in near_overflow and key in near)
         if not complete:
             values = {f'off_target_{label}_count':'NA' for label in ('exact','1mm','2mm','3mm')}
             values.update({f'off_target_{mm}mm_positions':'NA' for mm in range(4)})
             # An exact-only search is independently complete even when the
             # higher-mismatch search suppressed this query at its hit cap.
-            if same_reference and name not in exact_overflow and key in exact:
+            if same_reference and (name not in exact_overflow or key in exact_recovered) and key in exact:
                 values['off_target_exact_count'] = exact[key]['off_target_exact_count']
                 values['off_target_0mm_positions'] = exact[key]['off_target_0mm_positions']
+                for field in ('off_target_0mm_genes', 'off_target_0mm_gene_ids',
+                              'off_target_positions_truncated', 'off_target_position_preview_limit'):
+                    if field in exact[key]:
+                        values[field] = exact[key][field]
             values[f'off_target_total_upto_{max_mismatches}mm_count'] = 'NA'
             values['off_target_weighted_risk_score'] = 'NA'
             if max_mismatches == 0 and values['off_target_exact_count'] != 'NA':
@@ -237,6 +247,40 @@ def read_query_inventory(path):
                 raise ValueError('Conflicting sequences for query identity: ' + record.id)
             records[record.id] = sequence
     return records
+
+
+def read_recovery(path, overflow_path, overflow, budget, index):
+    """Accept only completed recovery bound to this input, reference and budget."""
+    if not path:
+        return {}
+    try:
+        with open(path) as handle:
+            receipt = json.load(handle)
+        if receipt.get('status') != 'complete':
+            return {}
+        with open(overflow_path, 'rb') as handle:
+            input_digest = hashlib.sha256(handle.read()).hexdigest()
+        if (receipt.get('schema_version') != 1 or receipt.get('mismatch_budget') != budget
+                or receipt.get('input_sha256') != input_digest
+                or not index or receipt.get('index') != os.path.realpath(index)):
+            raise ValueError('Recovery input, reference or mismatch budget differs')
+        recovered = {}
+        for row in receipt['rows']:
+            key = (row['qname'], row['qseq'])
+            if overflow.get(key[0]) != key[1] or key in recovered:
+                raise ValueError('Recovery queries differ from the overflow inventory')
+            metadata = row['metadata']
+            counts = [int(metadata[f'off_target_{"exact" if mm == 0 else str(mm) + "mm"}_count'])
+                      for mm in range(budget + 1)]
+            if min(counts) < 0 or sum(counts) != int(metadata[f'off_target_total_upto_{budget}mm_count']):
+                raise ValueError('Invalid recovered match counts')
+            recovered[key] = row
+        if set(recovered) != set(overflow.items()):
+            raise ValueError('Recovery is missing queries')
+        return recovered
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f'Overflow recovery could not be verified: {error}', file=sys.stderr)
+        return {}
 
 
 def validate_query_evidence(queries, alignments, unaligned, overflow):
@@ -389,6 +433,10 @@ def main(argv=None):  # IGNORE:C0111
     parser.add_argument('--query-fasta', help='Original tiled FASTA (plain or gzip); preserves queries without exact alignments.')
     parser.add_argument('--exact-unaligned', help='Explicit zero-hit query FASTA from exact Bowtie --un.')
     parser.add_argument('--near-unaligned', help='Explicit zero-hit query FASTA from near-match Bowtie --un.')
+    parser.add_argument('--exact-recovery', help='Completed overflow recovery for the exact search.')
+    parser.add_argument('--near-recovery', help='Completed overflow recovery for the near-match search.')
+    parser.add_argument('--exact-index', help='Configured exact-match index prefix.')
+    parser.add_argument('--near-index', help='Configured near-match index prefix.')
     
     print("Begin at:", datetime.now().strftime("%H:%M:%S"))
     args = parser.parse_args()
@@ -419,6 +467,8 @@ def main(argv=None):  # IGNORE:C0111
     near_unaligned = read_query_inventory(args.near_unaligned)
     exact_overflow = read_query_inventory(overflow_path)
     near_overflow = read_query_inventory(args.near_overflow)
+    exact_recovered = read_recovery(args.exact_recovery, overflow_path, exact_overflow, 0, args.exact_index)
+    near_recovered = read_recovery(args.near_recovery, args.near_overflow, near_overflow, max_mismatches, args.near_index)
     validate_query_evidence(queries, df, exact_unaligned, exact_overflow)
     validate_query_evidence(queries, near_df, near_unaligned, near_overflow)
     collapsed = restore_query_inventory(collapsed, queries, exact_unaligned, exact_overflow)
@@ -432,13 +482,14 @@ def main(argv=None):  # IGNORE:C0111
 
     overflow_records = []
     for qname, sequence in exact_overflow.items():
+        recovered = exact_recovered.get((qname, sequence))
         overflow_records.append({
                     "qname": qname,
                     "qseq": sequence,
-                    "mappednum": "mappednum=>2000",
-                    "position": "mappedto=overflow",
+                    "mappednum": f'mappednum={recovered["exact_mapped_count"]}' if recovered else "mappednum=>2000",
+                    "position": 'mappedto=' + (','.join(recovered['exact_mapped_preview']) or 'None') if recovered else "mappedto=overflow",
                     "secondary_gene_name": "None",
-                    "overflow_flag": "overflow=TRUE",
+                    "overflow_flag": None if recovered else "overflow=TRUE",
         })
     if overflow_records:
         overflow_df = pd.DataFrame(overflow_records)
@@ -461,7 +512,7 @@ def main(argv=None):  # IGNORE:C0111
         near_available=bool(near_sam and os.path.isfile(near_sam)),
         near_overflow=near_overflow, exact_overflow=exact_overflow,
         same_reference=args.same_reference, exact_unaligned=exact_unaligned.items(),
-        near_unaligned=near_unaligned.items())
+        near_unaligned=near_unaligned.items(), exact_recovered=exact_recovered, near_recovered=near_recovered)
 
     merged['header'] = merged['qname'] + '|' + merged["mappednum"] + '|' + merged["position"] + '|secondary_hit=' + merged['secondary_gene_name']
     def append_mismatch_metadata(row):

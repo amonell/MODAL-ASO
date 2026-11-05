@@ -9,6 +9,7 @@ with zipfile.ZipFile(wheels[0]) as archive:
     names = archive.namelist()
     required = ["aso_agents/cli.py", "aso_agents/encode_rbp_peaks.py", "aso_chemistry.py",
                 "aso_agents/resources/tiling/Snakefile", "aso_agents/resources/tiling/filter_mapped.py",
+                "aso_agents/resources/tiling/recover_overflow.py",
                 "aso_agents/resources/tiling/filter_seqs.py", "aso_agents/resources/tiling/tile_seqs.py",
                 "aso_agents/resources/scripts/download_ensembl_reference_assets.py",
                 "aso_agents/resources/scripts/run_openspliceai_eval.py",
