@@ -48,6 +48,9 @@ def predict(inputs, root, *, batch_size=16, device="auto"):
         raise ValueError("Unsupported inference device")
     if device != "cuda":
         raise RuntimeError("The released OligoAI giga checkpoint requires CUDA FlashAttention")
+    # The released encoder can overflow FP16 before the prediction head. BF16
+    # preserves the exponent range needed by these activations on supported GPUs.
+    inference_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     # Same host-global lock as SpliceTransformer. Wait, never assign a scientific
     # failure merely because another process owns the device.
     from .paths import shared_gpu_lock
@@ -95,7 +98,7 @@ def predict(inputs, root, *, batch_size=16, device="auto"):
                 tensors[3][tensors[3] == alphabet.unk_idx] = alphabet.mask_idx
                 dose = torch.tensor([i["dosage_nm"] for i in batch], dtype=torch.float32, device=device)
                 method = torch.tensor([METHODS[i["transfection_method"]] for i in batch], dtype=torch.long, device=device)
-                autocast = torch.autocast(device_type="cuda", dtype=torch.float16) if device == "cuda" else nullcontext()
+                autocast = torch.autocast(device_type="cuda", dtype=inference_dtype) if device == "cuda" else nullcontext()
                 with autocast:
                     scaled = model(*tensors, dose, method)
                     values = model.scaler.inverse_transform(scaled).float().cpu().tolist()
@@ -105,7 +108,7 @@ def predict(inputs, root, *, batch_size=16, device="auto"):
                     "torch_version": torch.__version__, "device": device, "batch_size": batch_size,
                     "duration_seconds": time.monotonic() - started,
                     "tokenization": "released ASODataset vocabularies; n-1 outgoing bonds then terminal pad",
-                    "precision": "float16_autocast" if device == "cuda" else "float32"}
+                    "precision": "bfloat16_autocast" if inference_dtype == torch.bfloat16 else "float16_autocast"}
         metadata["flash_attention_version"] = flash_attn.__version__
         metadata["compatibility"] = "unpad_input auxiliary fifth return ignored; original four tensors preserved"
         if device == "cuda":

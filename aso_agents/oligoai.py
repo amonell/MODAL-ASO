@@ -403,14 +403,20 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
             if len(ids) != len(set(ids)) or set(ids) != set(inputs):
                 raise ValueError("OligoAI output identity/coverage mismatch")
             by_id = {v["input_id"]: v["predicted_inhibition_percent"] for v in values}
-            if any(type(v) not in (int, float) or not math.isfinite(v) for v in by_id.values()):
-                raise ValueError("OligoAI returned a nonfinite/non-numeric prediction")
+            invalid = {key for key, value in by_id.items()
+                       if type(value) not in (int, float) or not math.isfinite(value)}
+            if invalid:
+                result["inference_error"] = f"OligoAI returned invalid activity estimates for {len(invalid)} of {len(by_id)} RNA contexts."
             result["runtime"] = {k: v for k, v in model.items() if k != "predictions"}
             for entry in result["candidates"]:
                 if entry["status"] == "pending":
                     entry["status"] = "predicted"
                     for context in entry["contexts"]:
-                        context["predicted_inhibition_percent"] = by_id[context["input_id"]]
+                        if context["input_id"] in invalid:
+                            context.update(status="error", reason="The model returned an invalid activity estimate for this RNA context.")
+                            entry.update(status="error", reason=context["reason"])
+                        else:
+                            context.update(status="predicted", predicted_inhibition_percent=by_id[context["input_id"]])
         except OligoAIUnavailable as exc:
             result["runtime_availability"] = {"status": "unavailable", "detail": str(exc)}
             for entry in result["candidates"]:
@@ -433,7 +439,8 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
         writer.writeheader()
         for entry in result["candidates"]:
             for context in entry["contexts"] or [{}]:
-                writer.writerow({**entry, **context, **entry.get("conditions", {})})
+                writer.writerow({**entry, **context, **entry.get("conditions", {}),
+                    "reason": context.get("reason", "") if context.get("status") else entry.get("reason", "")})
     for index, entry in enumerate(result["candidates"]):
         candidates[index][1]["oligoai_evaluation"] = deepcopy(entry)
     return result
@@ -469,8 +476,10 @@ def markdown_section(evaluation, *, report_dir=None):
             row_cond = entry.get("conditions") or {}
             condition_text = (f"{row_cond['dosage_nm']:g} / {row_cond['transfection_method']} "
                               f"(dose {basis(row_cond['dose_basis'])}; delivery {basis(row_cond['method_basis'])})") if row_cond else "—"
+            status = context.get("status") or entry["status"]
+            reason = context.get("reason") if context.get("status") else entry.get("reason")
             lines.append("| " + " | ".join([cell(entry['candidate_id']), cell(entry.get('antisense_5to3')), cell(reference),
-                                           cell(condition_text), value, cell(entry['status'] + (": " + entry['reason'] if entry.get('reason') else ""))]) + " |")
+                                           cell(condition_text), value, cell(status + (": " + reason if reason else ""))]) + " |")
     lines.extend(["", f"Model: `{MODEL_FILE}`; OligoAI source `{SOURCE_REVISION[:12]}`. "
                   f"Evaluated {evaluation.get('predicted_count', 0)}/{evaluation.get('candidate_count', 0)} gapmers."])
     for label, field in (("Complete OligoAI evidence", "artifact_json"), ("OligoAI predictions CSV", "artifact_csv")):

@@ -187,6 +187,42 @@ def test_out_of_range_prediction_is_kept_raw(tmp_path):
     assert "110.50" in html_section(result)
 
 
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), "invalid", None, True])
+def test_invalid_prediction_does_not_discard_other_candidates(tmp_path, invalid):
+    other = "AACGTACGATCAGTACGTCA"
+    def mixed(inputs, directory):
+        result = predictor(inputs, directory)
+        result["predictions"][1]["predicted_inhibition_percent"] = invalid
+        return result
+    result = evaluate_candidates([row(), row(other)], {}, tmp_path,
+        references=[reference(), reference(other)], predictor=mixed)
+    assert result["status"] == "incomplete"
+    assert result["predicted_count"] == 1
+    assert result["candidates"][0]["status"] == "predicted"
+    assert result["candidates"][1]["status"] == "error"
+    saved = list(csv.DictReader(Path(result["artifact_csv"]).open()))
+    assert float(saved[0]["predicted_inhibition_percent"]) == 73.125
+    assert saved[0]["status"] == "predicted" and not saved[0]["reason"]
+    assert saved[1]["predicted_inhibition_percent"] == ""
+    assert "73.12" in markdown_section(result) and "—" in markdown_section(result)
+
+
+def test_invalid_context_preserves_other_context_for_same_candidate(tmp_path):
+    other_context = {**reference(), "transcript_id": "other", "sequence": "A" * 50 + reverse_complement(SEQ) + "C" * 50}
+    def mixed(inputs, directory):
+        result = predictor(inputs, directory)
+        result["predictions"][1]["predicted_inhibition_percent"] = float("nan")
+        return result
+    result = evaluate_candidates([row()], {}, tmp_path,
+        references=[reference(), other_context], predictor=mixed)
+    assert result["status"] == "incomplete" and result["predicted_count"] == 0
+    contexts = result["candidates"][0]["contexts"]
+    assert contexts[0]["status"] == "predicted" and contexts[1]["status"] == "error"
+    saved = list(csv.DictReader(Path(result["artifact_csv"]).open()))
+    assert saved[0]["status"] == "predicted" and not saved[0]["reason"]
+    assert saved[1]["status"] == "error" and saved[1]["predicted_inhibition_percent"] == ""
+
+
 def test_reports_show_same_scores_and_scope_once(tmp_path):
     result=evaluate_candidates([row()],{},tmp_path,references=[reference()],predictor=predictor)
     md=markdown_section(result);ht=html_section(result)
