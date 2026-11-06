@@ -450,7 +450,7 @@ def test_apply_generic_clarification_clears_answered_pending_questions(tmp_path:
     ]
 
 
-def test_apply_transcript_scope_clarification_updates_splice_objectives(tmp_path: Path) -> None:
+def test_transcript_scope_clarification_returns_named_outcomes_to_semantic_intake(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     structured_goal = {
@@ -496,18 +496,16 @@ def test_apply_transcript_scope_clarification_updates_splice_objectives(tmp_path
     result = pipeline_tools.apply_clarification_to_goal(str(state_path))
     saved_state = pipeline_tools._load_state(str(state_path))
     saved_goal = json.loads(resolve_run_path(run_dir, "structured_goal.json").read_text(encoding="utf-8"))
-    by_tx = {objective["transcript_id"]: objective for objective in saved_goal["splice_isoform_objectives"]}
-
     assert result["status"] == "ok"
-    assert saved_state["status"] == "intake_ready"
-    assert saved_state["phase"] == "restart_resolution_pending"
+    assert saved_state["status"] == "initialized"
+    assert saved_state["phase"] == "restart_intake_pending"
     assert saved_state["pending_questions"] == []
-    assert set(by_tx) == {"ENST00000626847", "ENST00000380743"}
-    assert by_tx["ENST00000626847"]["desired_abundance"] == "decrease"
-    assert by_tx["ENST00000380743"]["desired_abundance"] == "increase"
+    assert saved_goal["splice_isoform_objectives"] == structured_goal["splice_isoform_objectives"]
+    assert saved_state["clarification_qa_history"] == [
+        {"question": question, "answer": answer, "request_effect": "augment"}]
 
 
-def test_apply_transcript_scope_clarification_accepts_all_other_isoforms_answer(tmp_path: Path) -> None:
+def test_transcript_scope_clarification_preserves_all_other_isoforms_for_semantic_intake(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     structured_goal = {
@@ -553,15 +551,13 @@ def test_apply_transcript_scope_clarification_accepts_all_other_isoforms_answer(
     result = pipeline_tools.apply_clarification_to_goal(str(state_path))
     saved_state = pipeline_tools._load_state(str(state_path))
     saved_goal = json.loads(resolve_run_path(run_dir, "structured_goal.json").read_text(encoding="utf-8"))
-    by_tx = {objective["transcript_id"]: objective for objective in saved_goal["splice_isoform_objectives"]}
-
     assert result["status"] == "ok"
-    assert saved_state["status"] == "intake_ready"
-    assert saved_state["phase"] == "restart_resolution_pending"
+    assert saved_state["status"] == "initialized"
+    assert saved_state["phase"] == "restart_intake_pending"
     assert saved_state["pending_questions"] == []
-    assert set(by_tx) == {"ENST00000380743"}
-    assert by_tx["ENST00000380743"]["desired_abundance"] == "increase"
-    assert by_tx["ENST00000380743"]["conversion_role"] == "to"
+    assert saved_goal["splice_isoform_objectives"] == structured_goal["splice_isoform_objectives"]
+    assert saved_state["clarification_qa_history"] == [
+        {"question": question, "answer": answer, "request_effect": "augment"}]
 
 
 def test_child_target_context_question_resolves_from_parent_history() -> None:
