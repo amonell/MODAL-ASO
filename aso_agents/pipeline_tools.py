@@ -3836,7 +3836,7 @@ def _program_isoform_abundance_directions(structured_goal, base_program):
             if value in {'increase', 'decrease'}:
                 directions.add(value)
     for target in structured_goal.get('evaluation_targets') or []:
-        if not isinstance(target, dict) or target.get('target_type') not in {'isoform', 'transcript', 'isoform_cohort'}:
+        if not isinstance(target, dict) or target.get('target_type') not in {'isoform', 'transcript'}:
             continue
         if identities & _program_isoform_identity_aliases(structured_goal, target):
             value = target.get('desired_delta')
@@ -35663,7 +35663,8 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
             ):
                 isoform_label = "SnapGene/GenBank artifact isoform"
                 objective["isoform_label"] = isoform_label
-            if not isoform_label and transcript_id:
+            if (not isoform_label and transcript_id
+                    and objective.get("objective_scope") not in {"aggregate_class", "default_exon_context"}):
                 isoform_label = transcript_id
                 objective["isoform_label"] = isoform_label
             if transcript_id and not str(objective.get("transcript_id") or "").strip():

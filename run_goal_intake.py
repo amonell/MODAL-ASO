@@ -13830,6 +13830,9 @@ def _compute_native_splice_site_plan(
         targeted_exons.setdefault(str(iso_label), set()).add(int(exon_idx))
 
     def _objective_direction(objective: Dict[str, Any]) -> str:
+        if (objective.get("objective_scope") == "aggregate_class"
+                or objective.get("aggregate_class")):
+            return ""
         direction = str(objective.get("desired_abundance") or "").strip().lower()
         return direction if direction in {"increase", "decrease"} else ""
 
@@ -15294,83 +15297,15 @@ def _simulate_ptc_after_skipping(
     return simulate_exon_skips(transcript, genome, exon_keys)
 
 
-def _normalized_splice_effect_text(*values: Any) -> str:
-    text_parts: List[str] = []
-    for value in values:
-        if value in (None, "", [], {}):
-            continue
-        if isinstance(value, (dict, list, tuple, set)):
-            try:
-                text_parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
-            except Exception:
-                text_parts.append(str(value))
-        else:
-            text_parts.append(str(value))
-    return " ".join(text_parts).strip().lower().replace("-", "_").replace(" ", "_")
-
-
-def _splice_effect_from_text(*values: Any) -> str:
-    text = _normalized_splice_effect_text(*values)
-    if not text:
-        return ""
-    if any(
-        token in text
-        for token in (
-            "decrease_poison_exon_inclusion",
-            "decrease_exon_inclusion",
-            "decreased_exon_inclusion",
-            "decrease_inclusion",
-            "decreased_inclusion",
-            "reduce_exon_inclusion",
-            "reduced_exon_inclusion",
-            "reduce_inclusion",
-            "reduced_inclusion",
-            "promote_skipping",
-            "increase_skipping",
-            "exon_skipping",
-            "skipping",
-            "skip",
-            "exclusion",
-            "exclude",
-        )
-    ):
-        return "skipping"
-    if any(
-        token in text
-        for token in (
-            "increase_exon_inclusion",
-            "increase_inclusion",
-            "increased_inclusion",
-            "promote_inclusion",
-            "exon_inclusion",
-            "include",
-            "inclusion",
-            "retention",
-            "retain",
-        )
-    ):
-        return "inclusion"
-    return ""
+def _typed_splice_effect(value: Any) -> str:
+    """Read the canonical outcome enum; biological prose is interpreted at intake."""
+    return value if isinstance(value, str) and value in {"skipping", "inclusion"} else ""
 
 
 def _splice_effect_from_objective(objective: Dict[str, Any]) -> str:
     if not isinstance(objective, dict):
         return ""
-    return _splice_effect_from_text(
-        objective.get("desired_splice_effect"),
-        objective.get("desired_effect"),
-        objective.get("desired_delta"),
-        objective.get("direction"),
-        objective.get("objective"),
-        objective.get("objective_kind"),
-        objective.get("action"),
-        objective.get("type"),
-        objective.get("intended_effects"),
-        objective.get("target_type"),
-        objective.get("objective_type"),
-        objective.get("rationale"),
-        objective.get("notes"),
-    )
+    return _typed_splice_effect(objective.get("desired_effect")) or _typed_splice_effect(objective.get("desired_splice_effect"))
 
 
 def _splice_objective_has_concrete_isoform_scope(objective: Dict[str, Any]) -> bool:
@@ -15397,7 +15332,7 @@ def _splice_objective_has_concrete_isoform_scope(objective: Dict[str, Any]) -> b
 def _default_splice_effect_for_placeholder_check(structured_goal: Dict[str, Any]) -> str:
     if not isinstance(structured_goal, dict):
         return ""
-    goal_effect = _splice_effect_from_text(structured_goal.get("desired_effect"))
+    goal_effect = _typed_splice_effect(structured_goal.get("desired_effect"))
     if goal_effect:
         return goal_effect
     raw_programs = structured_goal.get("design_programs")
@@ -15405,12 +15340,7 @@ def _default_splice_effect_for_placeholder_check(structured_goal: Dict[str, Any]
         for program in raw_programs:
             if not isinstance(program, dict):
                 continue
-            effect = _splice_effect_from_text(
-                program.get("desired_effect"),
-                program.get("desired_delta"),
-                program.get("direction"),
-                program.get("objective"),
-            )
+            effect = _typed_splice_effect(program.get("desired_effect"))
             if effect:
                 return effect
     return ""
@@ -15474,12 +15404,12 @@ def _collect_splice_target_exon_effects(structured_goal: Dict[str, Any]) -> List
 
     ordered_exons: List[int] = []
     effect_by_exon: Dict[int, str] = {}
-    goal_effect = _splice_effect_from_text(structured_goal.get("desired_effect"))
+    goal_effect = _typed_splice_effect(structured_goal.get("desired_effect"))
 
     def _add_exon_target(exon_label: Optional[int], desired_effect: Optional[str]) -> None:
         if not isinstance(exon_label, int) or exon_label <= 0:
             return
-        effect_norm = _splice_effect_from_text(desired_effect)
+        effect_norm = _typed_splice_effect(desired_effect)
         if effect_norm not in {"skipping", "inclusion"}:
             effect_norm = goal_effect if goal_effect in {"skipping", "inclusion"} else ""
         if exon_label not in effect_by_exon:
@@ -16091,7 +16021,7 @@ def _seed_default_splice_context_direction(
             hint_keys.add(hint_key)
             added_hint = True
 
-    if len(observed_effects) == 1 and not _splice_effect_from_text(structured_goal.get("desired_effect")):
+    if len(observed_effects) == 1 and not _typed_splice_effect(structured_goal.get("desired_effect")):
         structured_goal["desired_effect"] = next(iter(observed_effects))
     if added_objective:
         structured_goal["splice_isoform_objectives"] = objectives
@@ -31390,26 +31320,9 @@ def _resolve_isoform_transcripts(
         aggregate_class = _normalize_splice_aggregate_class(objective.get("aggregate_class"), objective)
         if scope != "aggregate_class" and not aggregate_class:
             return ""
-        for raw in (
-            objective.get("ensembl_transcript_id"),
-            objective.get("transcript_id"),
-            objective.get("target_transcript_id"),
-            objective.get("transcript"),
-            objective.get("reference_accession"),
-            isoform_label,
-        ):
-            text = str(raw or "").strip()
-            if not text:
-                continue
-            if _is_ensembl_transcript_id(_extract_stable_transcript_id(text) or ""):
-                return ""
-            if _looks_like_external_accession(text):
-                return ""
-        if _objective_uses_snapgene(objective, structured_goal):
-            return ""
         return (
-            "Objective is explicitly scoped as an aggregate isoform class without a concrete transcript ID; "
-            "leaving it as a qualitative class instead of selecting an inferred representative transcript."
+            "Objective is an aggregate isoform class. Its reference identifies the exon context; "
+            "membership remains a qualitative class."
         )
 
     def _resolution_interval_context() -> List[Dict[str, Any]]:
@@ -31962,6 +31875,12 @@ def _resolve_isoform_transcripts(
                 aggregate_classes[aggregate_key] = aggregate_reason
             continue
 
+        if objective.get("junction_changes"):
+            # This product is constructed from its typed changes after its
+            # parent reference has been verified. A public accession cannot
+            # stand in for the altered exon chain.
+            continue
+
         if not isoform_label:
             continue
 
@@ -32286,6 +32205,12 @@ def _resolve_isoform_transcripts(
                 structured_goal["default_exon_context_reference"] = deepcopy(context_reference)
                 final_payload["default_exon_context_reference"] = deepcopy(context_reference)
                 resolution_notes["default_exon_context_reference"] = context_reference
+
+    if any(isinstance(obj, dict) and obj.get("junction_changes") for obj in isoform_objectives):
+        from aso_agents.junction_products import materialize_junction_products
+        structured_goal["isoform_transcripts"] = isoform_transcripts
+        materialize_junction_products(sys.modules[__name__], structured_goal, final_payload)
+        isoform_transcripts = structured_goal["isoform_transcripts"]
 
     if not isoform_transcripts:
         print("[error] Isoform transcript resolution failed for all objectives; rerun with transcript IDs or SnapGene references.")

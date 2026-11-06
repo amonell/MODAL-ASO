@@ -305,6 +305,7 @@ CANONICAL_GOAL_COLLECTION_FIELDS = {
             "exon_label",
             "exon_labels",
             "isoform_label",
+            "junction_changes",
             "notes",
             "objective_scope",
             "rationale",
@@ -964,6 +965,25 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
             "default_exon_context",
         ],
     },
+    "junction_changes": {
+        "type": "array", "minItems": 1,
+        "description": "Explicit splice-boundary changes defining a requested product on reference_accession. Unchanged exons retain the verified reference geometry. Preserve the supplied coordinate convention and distinguish intronic splice dinucleotides from exonic boundary bases.",
+        "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["exon_label", "site_kind", "chrom", "strand", "coordinate_convention", "coordinate_role"],
+            "properties": {
+                "exon_label": {"type": "integer", "minimum": 1},
+                "site_kind": {"type": "string", "enum": ["acceptor", "donor"]},
+                "chrom": {"type": "string"},
+                "strand": {"type": "string", "enum": ["+", "-"]},
+                "coordinate_convention": {"type": "string", "enum": ["one_based_inclusive", "bed0_half_open"]},
+                "coordinate_role": {"type": "string", "enum": ["exon_boundary", "splice_dinucleotide"]},
+                "position": {"type": "integer", "minimum": 0},
+                "start": {"type": "integer", "minimum": 0},
+                "end": {"type": "integer", "minimum": 1},
+            },
+        },
+    },
     "objective_type": {
         "type": "string",
         "enum": list(EVALUATION_TARGET_ROLE_CONTRACT),
@@ -1175,7 +1195,8 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "preservation_target_type": "Whether a protected biological entity is a gene, isoform, or transcript.",
     "program_id": "Stable platform-generated identifier for one design branch within the request; it is not a user-supplied biological fact.",
     "rationale": "User-supported rationale for an isoform objective.",
-    "reference_accession": "Explicitly supplied reference accession for an isoform objective.",
+    "reference_accession": "Reference defining exon context. For a junction_changes product this is the unchanged parent template; the product has its own isoform_label.",
+    "junction_changes": "Typed junction coordinates defining a modified product on its parent reference.",
     "reference_transcript_id": "Transcript used to interpret a relative or exon-numbered region.",
     "role": "Whether an isoform is beneficial, pathogenic, or contextual.",
     "rows": "Explicit tabular region rows preserved from a supplied artifact or request.",
@@ -1545,6 +1566,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- Use patient_variant for a user-supplied variant that defines the patient, disease, or target sequence context, whether or not the requested ASO must discriminate between alleles. Preserve the supplied notation without inventing an accession; downstream authoritative resolution qualifies a bare or gene-qualified cDNA coordinate against an explicit reference accession when available or a source-backed canonical transcript otherwise. The presence of patient_variant alone does not imply allele-specific targeting. Add constraints.allele_specific only when request or clarification evidence explicitly requires selecting a target allele while avoiding a non-target allele; in that case, preserve target_allele, non_target_allele, and require_variant_overlap there.\n"
     "- Treat exon_label, exon_labels, and requested_exon_label as request-nomenclature fields. Preserve the exact biological label or ordered labels stated by the user; they are not storage for a resolver's structural transcript-exon index. Public annotation, declared artifacts, and resolved coordinates may map a requested label to a different internal exon index for execution, but they must not renumber the request-facing fields. Keep the requested label in the canonical goal and let explicit target coordinates or downstream resolution metadata carry the structural mapping. Change request nomenclature only when the user request or a later user clarification explicitly supplies the replacement label.\n"
     "- For either gapmer or steric programs, distinguish isoform identity from required ASO binding location. An exon-included or exon-skipped description identifies an isoform outcome; it does not require binding within that exon or the same ordinal on another transcript. Preserve the typed isoform/transcript outcome and use targeting_policy='default_exploratory' unless the user separately requires a binding region. For an explicit exon, feature, interval or junction binding requirement, use targeting_policy='explicit_user_region' and preserve its typed location/constraints. Do not manufacture exon-body containment from an isoform name.\n"
+    "- A requested splice product defined by an alternative acceptor or donor has its own specific_isoform objective with isoform_label, reference_accession for the parent template, and junction_changes for the changed boundaries. Preserve genomic motif intervals as coordinate_role='splice_dinucleotide' with start/end and the supplied coordinate_convention; preserve an explicitly supplied exon-edge base as coordinate_role='exon_boundary' with position. The host converts motif coordinates to exonic boundaries on the stated strand and derives the complete exon span from the verified reference. Do not assign the parent transcript_id to this product or resolve the product to an unchanged public transcript. Bind a program for that product through its isoform_label; keep the parent on transcript_lock. An aggregate exon-included/excluded class remains aggregate_class even when a transcript_id locates its exon.\n"
     "- An exon-to-exon junction named by its two endpoint exons must preserve both ordered exon labels at design_programs[*].exon_labels and as distinct evaluation_targets items with numeric exon_label values. Never collapse a junction pair into one endpoint or encode the pair as a compound exon_label string.\n"
     "- Copy explicitly supplied gene, species, and target context into the structured goal. Every design_new_asos task requires target_context for runtime execution even though the sparse construction schema permits it to be absent while clarification is pending. Apply the shared target-context permission contract: copy supplied context or materialize an explicitly delegated computational baseline in every affected structured goal. Do not leave that resolved permission only in assumptions, and do not request it again. If neither context nor applicable delegation is supplied, preserve one context clarification. When the user explicitly locks a transcript as the design reference, store it as transcript_policy='user_locked' and transcript_lock={value: the supplied identifier, source: 'user_request'}, and also put transcript_id on each program and evaluation target to which the evidence assigns that lock. If the supplied transcript identifier includes an explicit numeric version, also store that integer at transcript_lock.version; never leave an explicitly supplied version only in prose. Naming transcripts as biological outcomes does not by itself lock or assign a design-reference transcript. Do not create a top-level transcript_id key.\n"
     "- For a coupled multi-species design, species is one anchor organism used for primary reference resolution, while species_targets and cross_species_requirement.species preserve the complete requested organism set. The anchor must be one member of that set. Never concatenate, join, or invent a composite species name. Do not split a coupled conservation objective into separate tasks merely to represent its organisms.\n"

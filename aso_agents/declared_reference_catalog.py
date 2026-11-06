@@ -89,6 +89,11 @@ def complete_target_references(runtime, goal, final_payload=None):
         if isinstance(reference, str) and runtime._looks_like_refseq_transcript_accession(reference.strip()):
             requests.setdefault(reference.strip(), [])
     from .preservation_context import preservation_resolution_objectives
+    for objective in goal.get("splice_isoform_objectives") or []:
+        if isinstance(objective, dict) and objective.get("junction_changes"):
+            reference = objective.get("reference_accession")
+            if isinstance(reference, str) and reference.strip():
+                requests.setdefault(reference.strip(), [])
     for objective in preservation_resolution_objectives(goal):
         reference = objective.get("transcript_id")
         if isinstance(reference, str) and reference.strip():
