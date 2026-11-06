@@ -2941,9 +2941,11 @@ def test_splice_program_still_requires_biological_direction() -> None:
     )
 
 
+@pytest.mark.parametrize("clarification_kind", ["goal_intake", "isoform_transcript_scope"])
 def test_goal_intake_clarification_defers_to_complete_verified_intake_restart(
     tmp_path: Path,
     monkeypatch: Any,
+    clarification_kind: str,
 ) -> None:
     request_text = "Use an 18-nt steric design for the supplied target."
     envelope = {
@@ -2978,9 +2980,9 @@ def test_goal_intake_clarification_defers_to_complete_verified_intake_restart(
         "request": request_text,
         "request_envelope": envelope,
         "clarification": {
-            "kind": "goal_intake",
+            "kind": clarification_kind,
             "pending_apply": True,
-            "restart_stage": "intake",
+            "restart_stage": "intake" if clarification_kind == "goal_intake" else "resolution",
             "last_answers": [{"question": question, "answer": "reviewed cells"}],
         },
         "pending_questions": [],
@@ -5206,85 +5208,19 @@ def test_isoform_conversion_objective_accepts_desired_undesired_isoform_objects(
     assert by_tx["ENST00000380743"]["conversion_role"] == "to"
 
 
-def test_isoform_conversion_preseed_extracts_convert_toward_text() -> None:
-    preseed = pipeline_tools._request_isoform_conversion_preseed_from_text(
-        "Design ASOs to convert Ensembl transcript ENST00000626847 (exon 7 skipped) "
-        "toward Ensembl transcript ENST00000380743 by increasing exon 7 inclusion."
-    )
+@pytest.mark.parametrize("notes", [
+    "Previously converted ENST00000000001 toward ENST00000000002.",
+    "Do not increase the skipped transcript; retain the original coordinates.",
+    "All other transcripts decreased in the earlier experiment.",
+])
+def test_typed_isoform_conversion_is_unchanged_by_descriptive_prose(notes):
+    preseed = {"splice_isoform_objectives": [{
+        "from_transcript_id": "ENST00000000002", "to_transcript_id": "ENST00000000001",
+        "exon_label": 7, "notes": notes,
+    }]}
     objectives = pipeline_tools._normalized_design_objective_preseed(preseed)["splice_isoform_objectives"]
-    by_tx = {obj["transcript_id"]: obj for obj in objectives}
-
-    assert set(by_tx) == {"ENST00000626847", "ENST00000380743"}
-    assert by_tx["ENST00000626847"]["desired_abundance"] == "decrease"
-    assert by_tx["ENST00000380743"]["desired_abundance"] == "increase"
-    assert by_tx["ENST00000380743"]["exon_label"] == "exon 7"
-
-
-def test_isoform_conversion_preseed_extracts_skipped_and_included_text() -> None:
-    preseed = pipeline_tools._request_isoform_conversion_preseed_from_text(
-        "Use ENST00000626847 as the exon 7 skipped isoform to decrease and "
-        "ENST00000380743 as the exon 7 included isoform to increase."
-    )
-    objectives = pipeline_tools._normalized_design_objective_preseed(preseed)["splice_isoform_objectives"]
-    by_tx = {obj["transcript_id"]: obj for obj in objectives}
-
-    assert set(by_tx) == {"ENST00000626847", "ENST00000380743"}
-    assert by_tx["ENST00000626847"]["desired_abundance"] == "decrease"
-    assert by_tx["ENST00000380743"]["desired_abundance"] == "increase"
-    assert by_tx["ENST00000380743"]["exon_label"] == "exon 7"
-
-
-def test_isoform_conversion_preseed_accepts_named_increase_with_all_other_decrease_text() -> None:
-    preseed = pipeline_tools._request_isoform_conversion_preseed_from_text(
-        "Which transcript or isoform IDs should define the SMN2 exon 7 splice objective? "
-        "Ensembl ID ENST00000380743 is the isoform which needs to increase. "
-        "All other isoforms of SMN2 can decrease."
-    )
-    objectives = pipeline_tools._normalized_design_objective_preseed(preseed)["splice_isoform_objectives"]
-
-    assert len(objectives) == 1
-    objective = objectives[0]
-    assert objective["transcript_id"] == "ENST00000380743"
-    assert objective["desired_abundance"] == "increase"
-    assert objective["conversion_role"] == "to"
-    assert objective["conversion_pair"]["to_transcript_id"] == "ENST00000380743"
-    assert objective["conversion_pair"]["from_transcript_id"] is None
-    assert objective["exon_label"] == "exon 7"
-
-
-def test_isoform_conversion_preseed_accepts_named_increase_then_other_decrease_text() -> None:
-    preseed = pipeline_tools._request_isoform_conversion_preseed_from_text(
-        "Which transcript or isoform IDs should define the SMN2 exon 7 splice objective? "
-        "I want to increase the long isoform (ENST00000380743.9) and decrease the "
-        "other isoforms that dont have exon 7 present in this isoform."
-    )
-    objectives = pipeline_tools._normalized_design_objective_preseed(preseed)["splice_isoform_objectives"]
-
-    assert len(objectives) == 1
-    objective = objectives[0]
-    assert objective["transcript_id"] == "ENST00000380743.9"
-    assert objective["desired_abundance"] == "increase"
-    assert objective["conversion_role"] == "to"
-    assert objective["conversion_pair"]["to_transcript_id"] == "ENST00000380743.9"
-    assert objective["conversion_pair"]["from_transcript_id"] is None
-    assert objective["exon_label"] == "exon 7"
-
-
-def test_isoform_conversion_preseed_accepts_colon_labeled_increase_and_other_decrease_text() -> None:
-    preseed = pipeline_tools._request_isoform_conversion_preseed_from_text(
-        "Increase: ENST00000380743.9 (promote exon 7 inclusion). "
-        "Decrease: all other SMN2 isoforms/transcripts that do not include exon 7."
-    )
-    objectives = pipeline_tools._normalized_design_objective_preseed(preseed)["splice_isoform_objectives"]
-
-    assert len(objectives) == 1
-    objective = objectives[0]
-    assert objective["transcript_id"] == "ENST00000380743.9"
-    assert objective["desired_abundance"] == "increase"
-    assert objective["conversion_role"] == "to"
-    assert objective["conversion_pair"]["to_transcript_id"] == "ENST00000380743.9"
-    assert objective["conversion_pair"]["from_transcript_id"] is None
-    assert objective["exon_label"] == "exon 7"
+    assert {obj["transcript_id"]: obj["desired_abundance"] for obj in objectives} == {
+        "ENST00000000002": "decrease", "ENST00000000001": "increase"}
 
 
 def test_normalized_design_preseed_accepts_transcript_id_increase_field() -> None:
@@ -5596,7 +5532,6 @@ def test_scoped_design_request_excludes_sibling_task_text() -> None:
     assert "Mapt" in request
     assert "exon 10" in request
     assert "download them to the default location" in request
-    assert pipeline_tools._request_isoform_conversion_preseed_from_text(request) == {}
 
 
 def test_scoped_design_request_inherits_completed_dependency_results(tmp_path: Path) -> None:
@@ -5870,7 +5805,6 @@ def test_scoped_design_request_filters_parent_history_to_task_scope() -> None:
     assert "Increase inclusion of mouse Mapt exon 10" in request
     assert "ENST00000940690" not in request
     assert "ENST00000380743.9" not in request
-    assert pipeline_tools._request_isoform_conversion_preseed_from_text(request) == {}
 
 
 def test_per_site_request_requires_target_site_clarification_without_site_definitions() -> None:
@@ -10471,90 +10405,21 @@ def test_co_skipping_exon_context_does_not_fabricate_single_exon_isoforms() -> N
     assert not any("full-length" in label or "Δ" in label for label in labels)
 
 
-def test_co_skipping_request_overrides_compressed_single_exon_intake() -> None:
-    request_text = (
-        "Design splice-switching ASOs for human TTN NM_001267550.2 that induce either "
-        "exons 325-326 or exons 326-327 co-skipping to bypass the exon-326 frameshift mutation."
-    )
-    intake = run_goal_intake._normalize_intake_output(
-        {
-            "status": "ready",
-            "structured_goal": {
-                "gene_symbol": "TTN",
-                "species": "human",
-                "intent": "splice_modulation",
-                "target_context": "general human baseline context",
-                "transcript_policy": "user_locked",
-                "transcript_lock": {
-                    "kind": "reference_accession",
-                    "value": "NM_001267550.2",
-                    "version": 2,
-                    "note": "User explicitly specified using TTN transcript NM_001267550.2.",
-                },
-                "patient_variant": {
-                    "gene_symbol": "TTN",
-                    "kind": "cdna",
-                    "notation": "c.82273C>T",
-                },
-                "design_programs": [
-                    {
-                        "program_id": "ttn_exon_326_skipping",
-                        "modality": "steric",
-                        "intent": "splice_modulation",
-                        "desired_effect": "skipping",
-                        "exon_label": 326,
-                    }
-                ],
-                "splice_isoform_objectives": [
-                    {
-                        "objective_scope": "specific_transcript",
-                        "reference_accession": "NM_001267550.2",
-                        "isoform_label": "NM_001267550.2",
-                        "exon_label": 326,
-                        "desired_abundance": "decrease",
-                        "desired_effect": "skipping",
-                        "role": "pathogenic",
-                    },
-                    {
-                        "objective_scope": "aggregate_class",
-                        "aggregate_class": {
-                            "basis": "exon_presence",
-                            "exon_label": 326,
-                            "presence": "excluded",
-                        },
-                        "desired_abundance": "increase",
-                        "role": "beneficial",
-                    },
-                ],
-            },
-        },
-        request_text=request_text,
-    )
-
+def test_co_skipping_background_text_cannot_overwrite_reviewed_exon_objective():
+    request = "Previous work tried co-skipping exons 3-4. Now increase inclusion of exon 6."
+    intake = run_goal_intake._normalize_intake_output({"status": "ready", "structured_goal": {
+        "gene_symbol": "GENE", "species": "human", "intent": "splice_modulation",
+        "target_context": "general human baseline context",
+        "design_programs": [{"program_id": "include_exon", "modality": "steric", "intent": "splice_modulation",
+                             "exon_label": 6, "desired_effect": "inclusion", "desired_delta": "increase"}],
+        "splice_isoform_objectives": [{"objective_scope": "default_exon_context", "exon_label": 6,
+                                      "desired_effect": "inclusion", "desired_abundance": "increase"}],
+    }}, request_text=request)
     goal = intake["structured_goal"]
-    event_groups = [
-        objective.get("exon_labels")
-        for objective in goal["splice_isoform_objectives"]
-        if isinstance(objective, dict)
-    ]
-    programs = goal["design_programs"]
-
-    assert event_groups == [[325, 326], [326, 327]]
-    assert all(
-        objective.get("objective_scope") == "default_exon_context"
-        and objective.get("desired_effect") == "skipping"
-        and objective.get("desired_abundance") == "decrease"
-        and "direction" not in objective
-        for objective in goal["splice_isoform_objectives"]
-    )
-    assert all(objective.get("reference_accession") == "NM_001267550.2" for objective in goal["splice_isoform_objectives"])
-    assert goal["transcript_lock"]["value"] == "NM_001267550.2"
-    assert goal["patient_variant"]["notation"] == "c.82273C>T"
-    assert [program.get("exon_labels") for program in programs] == [[325, 326], [326, 327]]
-    assert all(
-        program.get("desired_delta") == "decrease" and "direction" not in program
-        for program in programs
-    )
+    assert len(goal["design_programs"]) == len(goal["splice_isoform_objectives"]) == 1
+    assert goal["design_programs"][0]["exon_label"] == 6
+    assert goal["design_programs"][0]["desired_effect"] == "inclusion"
+    assert goal["splice_isoform_objectives"][0]["desired_abundance"] == "increase"
 
 
 def test_co_skipping_splice_site_plan_keeps_outer_block_sites_only() -> None:
@@ -10675,6 +10540,9 @@ def test_explicit_refseq_lock_from_request_is_preserved_for_coskipping() -> None
         "intent": "splice_modulation",
         "target_context": "human heart / iPSC-derived cardiomyocytes",
     }
+    goal["splice_isoform_objectives"] = [{"objective_scope": "default_exon_context",
+        "exon_labels": group, "desired_effect": "skipping", "desired_abundance": "decrease"}
+        for group in [[325, 326], [326, 327]]]
     final_payload = {"structured_goal": goal}
 
     changed = run_goal_intake._apply_explicit_transcript_lock_from_request_text(
@@ -10682,7 +10550,6 @@ def test_explicit_refseq_lock_from_request_is_preserved_for_coskipping() -> None
         request,
         final_payload,
     )
-    run_goal_intake._apply_requested_co_skip_events_from_text(goal, request)
 
     assert changed is True
     assert goal["transcript_policy"] == "user_locked"

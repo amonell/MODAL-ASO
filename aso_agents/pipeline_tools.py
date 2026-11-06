@@ -41197,163 +41197,6 @@ def _request_coordinate_preseed_if_available(
     )
 
 
-def _request_isoform_conversion_preseed_from_text(text: Any) -> Dict[str, Any]:
-    request_text = str(text or "")
-    if not request_text.strip():
-        return {}
-    enst = r"\bENST\d+(?:\.\d+)?\b"
-    partial_objective: Dict[str, Any] = {}
-    patterns = (
-        re.compile(
-            rf"\bconvert\b(?:(?!\b(?:toward|towards|to)\b).)*?(?P<from>{enst})(?:(?!\b(?:toward|towards|to)\b).)*?\b(?:toward|towards|to)\b(?:(?!\.|;).)*?(?P<to>{enst})",
-            flags=re.IGNORECASE | re.DOTALL,
-        ),
-        re.compile(
-            rf"\bfrom\b(?:(?!\bto\b).)*?(?P<from>{enst})(?:(?!\bto\b).)*?\bto\b(?:(?!\.|;).)*?(?P<to>{enst})",
-            flags=re.IGNORECASE | re.DOTALL,
-        ),
-    )
-    from_tx = ""
-    to_tx = ""
-    for pattern in patterns:
-        match = pattern.search(request_text)
-        if not match:
-            continue
-        from_tx = str(match.group("from") or "").strip()
-        to_tx = str(match.group("to") or "").strip()
-        if from_tx and to_tx and from_tx != to_tx:
-            break
-    if not from_tx or not to_tx or from_tx == to_tx:
-        transcript_ids = _transcript_ids_from_text(request_text)
-        lowered = request_text.lower()
-        role_by_id: Dict[str, Set[str]] = {}
-        for transcript_id in transcript_ids:
-            match = re.search(re.escape(transcript_id), request_text, flags=re.IGNORECASE)
-            if not match:
-                continue
-            roles: Set[str] = set()
-            # Bind an explicit abundance direction to its own accession clause.
-            # A nearby description such as "included" or "skipped" alone is
-            # reference identity, not a requested conversion direction.
-            directional = re.search(
-                rf"{re.escape(transcript_id)}(?:(?!{enst}|[.;]).){{0,160}}?\b(?:isoform|transcript)\s+to\s+(?P<direction>increase|decrease|reduce)\b",
-                request_text, flags=re.IGNORECASE)
-            if directional:
-                roles.add("to" if directional.group("direction").lower() == "increase" else "from")
-            role_by_id[transcript_id] = roles
-        from_candidates = [tx for tx in transcript_ids if role_by_id.get(tx) == {"from"}]
-        to_candidates = [tx for tx in transcript_ids if role_by_id.get(tx) == {"to"}]
-        if len(from_candidates) == len(to_candidates) == 1:
-            from_tx = from_candidates[0]
-            to_tx = next((tx for tx in to_candidates if tx != from_tx), "")
-        # Accession order and a mention of inclusion never establish a
-        # conversion direction. Ambiguous prose stays with native intake.
-        if (not from_tx or not to_tx or from_tx == to_tx) and len(transcript_ids) == 1:
-            other_match = re.search(
-                r"\b(?:all\s+other|other|remaining)\b(?:\s+[A-Za-z0-9_-]+){0,4}\s+(?:isoforms?|transcripts?)\b",
-                request_text,
-                flags=re.IGNORECASE,
-            )
-            id_match = re.search(re.escape(transcript_ids[0]), request_text, flags=re.IGNORECASE)
-            if other_match and id_match:
-                if id_match.start() <= other_match.start():
-                    named_prefix = request_text[max(0, id_match.start() - 160) : id_match.start()]
-                    named_suffix = request_text[id_match.end() : other_match.start()]
-                    named_suffix = re.sub(
-                        r"(?:,|;|\band\b|\bbut\b|\bwhile\b|\bwhereas\b)\s+"
-                        r"(?:decreas(?:e|ed|ing)?|reduce|reduc(?:e|ed|ing)|down(?:regulat(?:e|ed|ing)?)?|"
-                        r"suppress(?:ed|ing)?|lower(?:ed|ing)?|increas(?:e|ed|ing)?|"
-                        r"promot(?:e|ed|ing)?|up(?:regulat(?:e|ed|ing)?)?)\b.*$",
-                        "",
-                        named_suffix,
-                        flags=re.IGNORECASE | re.DOTALL,
-                    )
-                    named_segment = f"{named_prefix} {transcript_ids[0]} {named_suffix}"
-                    other_segment = request_text[
-                        max(0, other_match.start() - 80) : min(len(request_text), other_match.end() + 140)
-                    ]
-                else:
-                    named_segment = request_text[other_match.end() : min(len(request_text), id_match.end() + 140)]
-                    other_segment = request_text[other_match.start() : id_match.start()]
-                named_lower = named_segment.lower()
-                other_lower = other_segment.lower()
-                named_increase = bool(
-                    re.search(
-                        r"\b(includ(?:ed|ing|e|s)?|increas(?:e|ed|ing)?|desired|beneficial|favor(?:ed)?)\b",
-                        named_lower,
-                    )
-                )
-                named_decrease = bool(
-                    re.search(
-                        r"\b(skipp(?:ed|ing)?|excluded?|decreas(?:e|ed|ing)?|reduce|reduc(?:e|ed|ing)|undesired|pathogenic)\b",
-                        named_lower,
-                    )
-                )
-                other_increase = bool(
-                    re.search(
-                        r"\b(increas(?:e|ed|ing)?|up|favor(?:ed)?|promot(?:e|ed|ing)?)\b",
-                        other_lower,
-                    )
-                )
-                other_decrease = bool(
-                    re.search(
-                        r"\b(decreas(?:e|ed|ing)?|reduce|reduc(?:e|ed|ing)|down|suppress(?:ed|ing)?)\b",
-                        other_lower,
-                    )
-                )
-                if named_increase and not named_decrease and other_decrease:
-                    partial_objective = {
-                        "to_transcript_id": transcript_ids[0],
-                        "notes": "User named the transcript to increase and described the decreasing side as all other isoforms without enumerating transcript IDs.",
-                    }
-                elif named_decrease and not named_increase and other_increase:
-                    partial_objective = {
-                        "from_transcript_id": transcript_ids[0],
-                        "notes": "User named the transcript to decrease and described the increasing side as all other isoforms without enumerating transcript IDs.",
-                    }
-                if not partial_objective:
-                    id_token = re.escape(transcript_ids[0])
-                    other_token = r"\b(?:all\s+other|other|remaining)\b(?:\s+[A-Za-z0-9_-]+){0,4}\s+(?:isoforms?|transcripts?)\b"
-                    named_increase_near_id = bool(
-                        re.search(
-                            rf"\b(?:increas(?:e|ed|ing)?|promot(?:e|ed|ing)?|includ(?:e|ed|ing|s)?)\b[^.;\n]{{0,160}}{id_token}"
-                            rf"|{id_token}[^.;\n]{{0,160}}\b(?:increas(?:e|ed|ing)?|promot(?:e|ed|ing)?|includ(?:e|ed|ing|s)?)\b",
-                            request_text,
-                            flags=re.IGNORECASE,
-                        )
-                    )
-                    other_decrease_near_class = bool(
-                        re.search(
-                            rf"\b(?:decreas(?:e|ed|ing)?|reduce|reduc(?:e|ed|ing)|suppress(?:ed|ing)?|down)\b[^.;\n]{{0,180}}{other_token}"
-                            rf"|{other_token}[^.;\n]{{0,180}}\b(?:decreas(?:e|ed|ing)?|reduce|reduc(?:e|ed|ing)|suppress(?:ed|ing)?|down)\b",
-                            request_text,
-                            flags=re.IGNORECASE,
-                        )
-                    )
-                    if named_increase_near_id and other_decrease_near_class:
-                        partial_objective = {
-                            "to_transcript_id": transcript_ids[0],
-                            "notes": "User named the transcript to increase and described the decreasing side as all other isoforms without enumerating transcript IDs.",
-                        }
-    if not from_tx or not to_tx or from_tx == to_tx:
-        if not partial_objective:
-            return {}
-        objective = dict(partial_objective)
-    else:
-        objective = {
-            "from_transcript_id": from_tx,
-            "to_transcript_id": to_tx,
-        }
-    exon_match = re.search(r"\bexon\s+([0-9]+[A-Za-z0-9_.-]*)\b", request_text, flags=re.IGNORECASE)
-    if exon_match:
-        objective["exon_label"] = f"exon {exon_match.group(1)}"
-    if re.search(r"\bincreas(?:e|ing)\b.*\binclusion\b|\binclusion\b", request_text, flags=re.IGNORECASE | re.DOTALL):
-        objective["direction"] = "increase_inclusion"
-    else:
-        objective["direction"] = "isoform_conversion"
-    return {"splice_isoform_objectives": [objective]}
-
-
 def _request_text_defines_distinct_target_sites(text: Any) -> bool:
     request_text = str(text or "").lower()
     if not request_text.strip():
@@ -46774,21 +46617,6 @@ def tool_resolve_isoforms_and_sites(
         state.get("design_objective_preseed"),
     ):
         _save_goal_payload(run_dir, payload, structured_goal, final_payload)
-
-    request_conversion_preseed = _request_isoform_conversion_preseed_from_text(state.get("request"))
-    if request_conversion_preseed:
-        state["design_objective_preseed"] = _merge_design_objective_preseed(
-            state.get("design_objective_preseed"),
-            request_conversion_preseed,
-        )
-        state["request_extracted_isoform_conversion_preseed"] = deepcopy(request_conversion_preseed)
-        if _restore_design_objective_preseed_to_payload(
-            structured_goal,
-            final_payload,
-            state.get("design_objective_preseed"),
-        ):
-            _save_goal_payload(run_dir, payload, structured_goal, final_payload)
-        _save_state(state_path, state, snapshot_reason="request_isoform_conversion_preseed_applied")
 
     normalized_isoform_objectives = _normalized_design_objective_preseed(structured_goal).get("splice_isoform_objectives")
     if isinstance(normalized_isoform_objectives, list) and normalized_isoform_objectives:
@@ -57743,32 +57571,10 @@ def apply_clarification_to_goal(
         )
         clarification["extracted_design_objective_preseed"] = deepcopy(clarification_preseed)
 
-    conversion_answer_text = " ".join(
-        " ".join((str(item.get("question") or ""), str(item.get("answer") or "")))
-        for item in normalized_answers
-        if isinstance(item, dict)
-    )
-    conversion_preseed = _request_isoform_conversion_preseed_from_text(conversion_answer_text)
-    if conversion_preseed:
-        state["design_objective_preseed"] = _merge_design_objective_preseed(
-            state.get("design_objective_preseed"),
-            conversion_preseed,
-        )
-        clarification["extracted_isoform_conversion_preseed"] = deepcopy(conversion_preseed)
-        if isinstance(run_dir, str) and run_dir.strip():
-            try:
-                context = _load_goal_context_from_run_dir(run_dir.strip())
-                payload = context["payload"] if isinstance(context.get("payload"), dict) else {}
-                final_payload = context["final_payload"] if isinstance(context.get("final_payload"), dict) else {}
-                structured_goal = context["structured_goal"] if isinstance(context.get("structured_goal"), dict) else {}
-                if structured_goal and final_payload and _restore_design_objective_preseed_to_payload(
-                    structured_goal,
-                    final_payload,
-                    state.get("design_objective_preseed"),
-                ):
-                    _save_goal_payload(run_dir.strip(), payload, structured_goal, final_payload)
-            except Exception:
-                pass
+    # Free-form changes to splice outcomes return to semantic intake. The
+    # reviewed typed goal is never rewritten by a prose conversion matcher.
+    if str(clarification.get("kind") or "").strip().lower() == "isoform_transcript_scope":
+        restart_stage = "intake"
 
     applied_cross_species_ortholog_confirmations = _apply_cross_species_ortholog_clarification_to_goal(
         state,

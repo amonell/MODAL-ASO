@@ -61,9 +61,9 @@ def test_existing_exact_exon_does_not_create_modified_reference_or_false_absence
 
 def test_reference_descriptions_do_not_guess_conversion_direction_from_accession_order():
     text='Increase exon inclusion using ENST00000000001 exon numbering; ENST00000000002 lacks this exon.'
-    assert pipeline_tools._request_isoform_conversion_preseed_from_text(text) == {}
-    text='Use ENST00000000001 as the skipped isoform to decrease and ENST00000000002 as the included isoform to increase.'
-    result=pipeline_tools._normalized_design_objective_preseed(pipeline_tools._request_isoform_conversion_preseed_from_text(text))
+    assert not pipeline_tools._normalized_design_objective_preseed({'notes': text}).get('splice_isoform_objectives')
+    result=pipeline_tools._normalized_design_objective_preseed({'splice_isoform_objectives': [{
+        'from_transcript_id':'ENST00000000001', 'to_transcript_id':'ENST00000000002', 'notes':text}]})
     objectives={o['transcript_id']:o['desired_abundance'] for o in result['splice_isoform_objectives']}
     assert objectives=={'ENST00000000001':'decrease','ENST00000000002':'increase'}
 

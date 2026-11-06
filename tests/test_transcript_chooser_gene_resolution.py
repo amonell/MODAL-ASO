@@ -280,7 +280,6 @@ def test_tool_resolve_isoforms_marks_ensembl_outage_retryable(monkeypatch: Any, 
         },
     )
     monkeypatch.setattr(pipeline_tools, "_restore_design_objective_preseed_to_payload", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(pipeline_tools, "_request_isoform_conversion_preseed_from_text", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(pipeline_tools, "_normalized_design_objective_preseed", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(pipeline_tools, "_goal_runtime_module", lambda: FakeRuntime())
     monkeypatch.setattr(pipeline_tools, "_save_state", lambda *_args, **_kwargs: None)
@@ -356,11 +355,6 @@ def test_tool_resolve_isoforms_preserves_typed_transcript_service_outage(
         pipeline_tools,
         "_restore_design_objective_preseed_to_payload",
         lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        pipeline_tools,
-        "_request_isoform_conversion_preseed_from_text",
-        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         pipeline_tools,

@@ -127,6 +127,15 @@ def test_aggregate_reference_does_not_become_transcript_abundance_objective():
     assert pipeline_tools._program_isoform_abundance_directions(goal, {"transcript_id": REFERENCE}) == set()
 
 
+def test_preserving_a_request_accession_does_not_rename_its_derived_product():
+    goal = example()
+    goal.pop("transcript_lock")
+    assert native._apply_explicit_transcript_lock_from_request_text(goal, "Use " + REFERENCE)
+    product = goal["splice_isoform_objectives"][0]
+    assert product["reference_accession"] == REFERENCE
+    assert "transcript_id" not in product
+
+
 @pytest.mark.parametrize("text", ["decrease skipping", "retain original coordinate values", "increase inclusion"])
 def test_execution_does_not_infer_splice_effect_from_prose(text):
     assert native._splice_effect_from_objective({"objective": text, "notes": text}) == ""

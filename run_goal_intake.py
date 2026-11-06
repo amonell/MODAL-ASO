@@ -1931,7 +1931,7 @@ def _apply_explicit_transcript_lock_from_request_text(
         for objective in objectives:
             if not isinstance(objective, dict):
                 continue
-            if kind == "reference_accession":
+            if kind == "reference_accession" or objective.get("junction_changes"):
                 objective.setdefault("reference_accession", accession)
             else:
                 objective.setdefault("transcript_id", accession)
@@ -1944,160 +1944,6 @@ def _apply_explicit_transcript_lock_from_request_text(
             final_payload["structured_goal"]["transcript_policy"] = structured_goal["transcript_policy"]
             final_payload["structured_goal"]["transcript_lock"] = deepcopy(lock)
     return True
-
-
-def _request_mentions_co_skipping(request_text: Any) -> bool:
-    text = str(request_text or "").strip().lower()
-    if not text:
-        return False
-    normalized = re.sub(r"[\s_-]+", " ", text)
-    if any(token in normalized for token in ("co skip", "co skipping", "co skipped", "coskip", "coskipping")):
-        return True
-    return bool(re.search(r"\bco\s*[-_ ]?\s*skip(?:ping|ped)?\b", text, flags=re.IGNORECASE))
-
-
-def _extract_requested_co_skip_exon_groups(request_text: Any) -> List[List[int]]:
-    if not _request_mentions_co_skipping(request_text):
-        return []
-    text = str(request_text or "")
-    groups: List[List[int]] = []
-    seen: Set[Tuple[int, ...]] = set()
-
-    def _add_group(values: List[int]) -> None:
-        normalized: List[int] = []
-        for value in values:
-            if isinstance(value, int) and value > 0 and value not in normalized:
-                normalized.append(value)
-        if len(normalized) < 2:
-            return
-        key = tuple(normalized)
-        if key in seen:
-            return
-        seen.add(key)
-        groups.append(normalized)
-
-    range_sep = r"(?:[-\u2010-\u2015]|\bto\b|\bthrough\b|\bthru\b)"
-    for match in re.finditer(
-        rf"\bexons?\s+(\d+)\s*{range_sep}\s*(\d+)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        start = _coerce_positive_int(match.group(1))
-        end = _coerce_positive_int(match.group(2))
-        if start is None or end is None:
-            continue
-        low, high = sorted((start, end))
-        if high - low > 20:
-            continue
-        _add_group(list(range(low, high + 1)))
-
-    for match in re.finditer(
-        r"\bexons?\s+(\d+)\s*(?:,|\band\b|&|\+|/)\s*(\d+)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        first = _coerce_positive_int(match.group(1))
-        second = _coerce_positive_int(match.group(2))
-        if first is not None and second is not None:
-            _add_group([first, second])
-
-    return groups
-
-
-def _format_exon_group_label(exon_group: List[int]) -> str:
-    values = [int(value) for value in exon_group if isinstance(value, int)]
-    if not values:
-        return ""
-    if len(values) == 1:
-        return str(values[0])
-    if values == list(range(values[0], values[-1] + 1)):
-        return f"{values[0]}-{values[-1]}"
-    return ", ".join(str(value) for value in values)
-
-
-def _apply_requested_co_skip_events_from_text(
-    structured_goal: Optional[Dict[str, Any]],
-    request_text: Any,
-) -> None:
-    if not isinstance(structured_goal, dict):
-        return
-    if str(structured_goal.get("intent") or "").strip().lower() != "splice_modulation":
-        return
-    exon_groups = _extract_requested_co_skip_exon_groups(request_text)
-    if not exon_groups:
-        return
-
-    transcript_lock = structured_goal.get("transcript_lock") if isinstance(structured_goal.get("transcript_lock"), dict) else {}
-    reference_accession = ""
-    if isinstance(transcript_lock, dict) and str(transcript_lock.get("kind") or "").strip().lower() == "reference_accession":
-        reference_accession = str(transcript_lock.get("value") or "").strip()
-
-    objectives: List[Dict[str, Any]] = []
-    for exon_group in exon_groups:
-        label = _format_exon_group_label(exon_group)
-        objective: Dict[str, Any] = {
-            "objective_scope": "default_exon_context",
-            "exon_labels": exon_group,
-            "desired_abundance": "decrease",
-            "desired_effect": "skipping",
-            "role": "context",
-            "rationale": f"User explicitly requested co-skipping of exons {label}.",
-        }
-        if reference_accession:
-            objective["reference_accession"] = reference_accession
-        objectives.append(objective)
-
-    structured_goal["splice_isoform_objectives"] = objectives
-    structured_goal["isoform_scope_source"] = "default_exon_splice_context"
-    structured_goal["focus_exons_only"] = True
-    structured_goal["desired_effect"] = "skipping"
-    structured_goal["exon_labels"] = list(
-        dict.fromkeys(exon for group in exon_groups for exon in group)
-    )
-
-    raw_programs = structured_goal.get("design_programs")
-    existing_programs = [deepcopy(item) for item in raw_programs if isinstance(item, dict)] if isinstance(raw_programs, list) else []
-
-    def _is_splice_program(program: Dict[str, Any]) -> bool:
-        intent = str(program.get("intent") or "").strip().lower()
-        if intent == "splice_modulation":
-            return True
-        if _coerce_bool(program.get("run_splice_eval")) is True or _coerce_bool(program.get("run_splice_router")) is True:
-            return True
-        text = _design_program_text(program)
-        return "splice" in text or "skip" in text
-
-    base_program: Dict[str, Any] = {}
-    for program in existing_programs:
-        if _is_splice_program(program):
-            base_program = deepcopy(program)
-            break
-    retained_programs = [program for program in existing_programs if not _is_splice_program(program)]
-
-    for exon_group in exon_groups:
-        label = _format_exon_group_label(exon_group)
-        program = deepcopy(base_program)
-        for stale_key in ("exon_label", "target_exon"):
-            program.pop(stale_key, None)
-        program.update(
-            {
-                "program_id": f"steric_exons_{'_'.join(str(exon) for exon in exon_group)}_coskipping",
-                "label": f"Co-skip exons {label}",
-                "modality": "steric",
-                "intent": "splice_modulation",
-                "objective": f"Design steric ASOs to induce co-skipping of exons {label}.",
-                "desired_delta": "decrease",
-                "desired_effect": "skipping",
-                "exon_labels": exon_group,
-                "run_splice_router": True,
-                "run_splice_eval": True,
-                "focus_exons_only": True,
-                "selection_source": "explicit_user_co_skipping_request",
-            }
-        )
-        retained_programs.append(program)
-
-    structured_goal["design_programs"] = retained_programs
 
 
 def _design_program_modality(program: Any) -> str:
@@ -2842,9 +2688,6 @@ def _normalize_intake_output(intake_out: Dict[str, Any], request_text: Any = "")
         _apply_explicit_transcript_lock_from_request_text(structured_goal, request_text)
         _apply_region_overlap_hints_from_request_text(structured_goal, request_text)
         _normalize_region_constraints_in_goal(structured_goal)
-        _normalize_design_programs_in_goal(structured_goal)
-        _apply_requested_co_skip_events_from_text(structured_goal, request_text)
-        _apply_explicit_transcript_lock_from_request_text(structured_goal, request_text)
         _normalize_design_programs_in_goal(structured_goal)
         _synthesize_default_gapmer_program_if_needed(structured_goal)
         _supplement_splice_context_from_exon_targets(structured_goal)
