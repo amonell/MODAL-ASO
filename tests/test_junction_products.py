@@ -62,8 +62,11 @@ def test_motif_coordinates_become_exonic_boundary_on_both_strands(kind, strand, 
 
 
 @pytest.mark.parametrize("strand", ["+", "-"])
-def test_constructed_product_preserves_parent_and_separate_junctions(strand):
+@pytest.mark.parametrize("supplied_strand", [True, False])
+def test_constructed_product_preserves_parent_and_separate_junctions(strand, supplied_strand):
     goal = example(strand)
+    if not supplied_strand:
+        goal["splice_isoform_objectives"][0]["junction_changes"][0].pop("strand")
     parent = deepcopy(goal["isoform_transcripts"][REFERENCE])
     final = {}
     assert materialize_junction_products(native, goal, final)

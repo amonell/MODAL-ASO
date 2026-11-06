@@ -47,7 +47,7 @@ def changed_exon_spans(runtime, objective, base_label, base_entry, goal):
         if not isinstance(change, dict):
             raise ValueError("junction_product_invalid_change")
         if (str(change.get("chrom") or "").removeprefix("chr") != chrom.removeprefix("chr")
-                or change.get("strand") != strand):
+                or ("strand" in change and change["strand"] != strand)):
             raise ValueError("junction_product_reference_orientation_conflict")
         requested = change.get("exon_label")
         if type(requested) is not int or requested < 1:
@@ -69,7 +69,7 @@ def changed_exon_spans(runtime, objective, base_label, base_entry, goal):
             "base_isoform_label": base_label, "source": "typed_junction_change",
         })
         endpoint = "start" if (kind, strand) in {("acceptor", "+"), ("donor", "-")} else "end"
-        target[endpoint] = boundary_position(change)
+        target[endpoint] = boundary_position({**change, "strand": strand})
     for ordinal, target in targets.items():
         original = next(e for e in exons if e.get("index") == ordinal)
         start, end = target["start"], target["end"]
