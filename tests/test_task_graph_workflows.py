@@ -10960,7 +10960,7 @@ def test_exon_only_splice_objective_seeds_default_splice_plan(monkeypatch) -> No
         "intent": "splice_modulation",
         "target_context": "mouse cortical neurons in a tauopathy model",
         "splice_isoform_objectives": [
-            {"exon_label": "10", "direction": "increase_inclusion"}
+            {"exon_label": "10", "desired_effect": "inclusion", "desired_abundance": "increase"}
         ],
     }
     final_payload = deepcopy(goal)
