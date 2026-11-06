@@ -136,7 +136,7 @@ def test_design_renderer_preserves_payload_exactly_including_literal_template_to
     assert json.loads(embedded) == before == payload
     assert '</script><script>UNTRUSTED</script>' not in page
     assert 'Supporting value: 0' in page and 'prediction unavailable.' in page
-    assert 'ASOs produced during design' in page
+    assert 'Complete design table' in page
 
 
 def test_legacy_design_without_markdown_never_drops_its_results():

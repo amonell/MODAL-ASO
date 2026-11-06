@@ -123,3 +123,48 @@ async def repair_audit_quotes(audit, source, evidence, run, parse):
     except Exception as exc:
         receipt['error_type'] = type(exc).__name__
         return audit, receipt
+
+
+async def reaudit_unattested_fields(audit, source, evidence, run, parse):
+    """Re-extract wholly unsupported objects without changing verified siblings.
+
+    Quote-only repair cannot fix a hallucinated value. A fresh extraction gets
+    one opportunity to correct those objects from the original user evidence.
+    """
+    eligible = _eligible_retractions(audit, source)
+    receipt = {'status': 'unresolved', 'model_calls': 0,
+               'eligible_fields': sorted(eligible)}
+    if not eligible:
+        return audit, receipt
+    from .request_obligation_agent import request_obligation_agent
+    fields = {path[1:] for path in eligible}
+    receipt['model_calls'] = 1
+    try:
+        response = await run(request_obligation_agent, input=json.dumps({
+            **evidence,
+            'validation_feedback': {
+                'reason': 'These extracted objects have no verified quotation from the user evidence. Their values may be incorrect; quote-only repair could not resolve them.',
+                'prior_audit': audit,
+                'fields_to_reextract': sorted(fields),
+                'instruction': 'Return the complete audit with the same keys. Re-extract only fields_to_reextract from the original request and clarification answers. Preserve every other field exactly. Retain real user requirements with their correct typed values and exact supporting quotations; use null only for an obligation the user did not request.',
+            },
+        }, ensure_ascii=False), max_steps=2)
+        proposed = parse(response.final_output)
+        if not isinstance(proposed, dict) or set(proposed) != set(audit):
+            return audit, receipt
+        if any(proposed[key] != value for key, value in audit.items() if key not in fields):
+            return audit, receipt
+        if any(proposed[key] is not None and not isinstance(proposed[key], dict) for key in fields):
+            return audit, receipt
+        if invalid_quote_paths(proposed, source):
+            return audit, receipt
+        # Every replacement object needs an explicit evidence quote; an empty
+        # object cannot erase an unresolved requirement while appearing valid.
+        if any(isinstance(proposed[key], dict) and not invalid_quote_paths(proposed[key], '')
+               for key in fields):
+            return audit, receipt
+        receipt.update(status='repaired', replacements={key: proposed[key] for key in sorted(fields)})
+        return proposed, receipt
+    except Exception as exc:
+        receipt['error_type'] = type(exc).__name__
+        return audit, receipt

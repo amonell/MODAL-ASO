@@ -303,6 +303,8 @@ def test_tool_resolve_isoforms_preserves_typed_transcript_service_outage(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
+    from aso_agents import transcript_rules
+    monkeypatch.setattr(transcript_rules, "resolve_transcript_rule", lambda *_a, **_k: {"status": "not_required"})
     state = {
         "run_dir": str(tmp_path),
         "stage_attempts": {},

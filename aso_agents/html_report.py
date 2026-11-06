@@ -1676,6 +1676,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
       const panels = Array.from(document.querySelectorAll(".tab-panel"));
       tabs.forEach((tab) => {
         tab.addEventListener("click", () => {
+          initializeReportTab(tab.dataset.tab);
           tabs.forEach((node) => node.classList.toggle("active", node === tab));
           panels.forEach((panel) => panel.classList.toggle("active", panel.id === tab.dataset.tab));
           if (tab.dataset.tab === "results") document.querySelectorAll('.reader-explore').forEach(node => node.open = false);
@@ -1983,14 +1984,14 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         `;
       }
 
-      function setupModalityTab(tabId, payload) {
+      function setupModalityTab(tabId, payload, renderContent = true) {
         const button = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
         const panel = document.getElementById(tabId);
         if (!button || !panel) return;
         const visible = Boolean(payload || (tabId === "gapmer" && (((reportData.oligoai_evaluation || {}).candidates || []).length || (reportData.oligoai_evaluations || []).length)));
         button.classList.toggle("is-hidden", !visible);
         panel.classList.toggle("is-hidden", !visible);
-        if (visible && payload) {
+        if (visible && payload && renderContent) {
           renderModalityExplanation(`${tabId}-content`, payload);
         }
       }
@@ -3730,7 +3731,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
           root.innerHTML = '<div class="empty">No targets matched this filter.</div>';
           return;
         }
-        root.innerHTML = visible.map((target) => {
+        root.innerHTML = visible.map((target, index) => {
           const targetHelp = buildTargetHelpText(target);
           const facts = [
             { label: "Direction", value: target.direction },
@@ -3760,16 +3761,27 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
               <div class="record-body">
                 ${facts.length ? renderFacts(facts) : ""}
                 ${renderAsoTables(target)}
-                <details class="record">
+                <details class="record" data-target-record="${index}">
                   <summary class="record-title">All target details</summary>
                   <div class="record-body">
-                    ${renderRecordValue(target)}
                   </div>
                 </details>
               </div>
             </details>
           `;
         }).join("");
+        root.querySelectorAll('[data-target-record]').forEach(detail => {
+          detail.addEventListener('toggle', () => {
+            if (detail.open) fillTargetRecord(detail, visible);
+          });
+        });
+        root.fillTargetRecords = () => root.querySelectorAll('[data-target-record]').forEach(detail => fillTargetRecord(detail, visible));
+      }
+
+      function fillTargetRecord(detail, records) {
+        if (detail.dataset.loaded) return;
+        detail.querySelector('.record-body').innerHTML = renderRecordValue(records[Number(detail.dataset.targetRecord)]);
+        detail.dataset.loaded = 'true';
       }
 
       function renderDataViews() {
@@ -3816,15 +3828,31 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
 
       renderHero();
       renderQuickOverview();
-      renderWorkflowGraph();
-      renderWorkflowPanels();
-      setupModalityTab("gapmer", ((reportData.modality_explanations || {}).gapmer) || null);
-      setupModalityTab("steric-binding", ((reportData.modality_explanations || {}).steric_binding) || null);
-      renderTargetSummary();
-      buildTargetMapGroups();
-      buildSafeguardMapGroups();
-      renderTargets("");
+      setupModalityTab("gapmer", ((reportData.modality_explanations || {}).gapmer) || null, false);
+      setupModalityTab("steric-binding", ((reportData.modality_explanations || {}).steric_binding) || null, false);
       hydrateStaticHelpIcons();
+
+      const initializedReportTabs = new Set(['results']);
+      function initializeReportTab(name) {
+        if (initializedReportTabs.has(name)) return;
+        if (name === 'workflow') { renderWorkflowGraph(); renderWorkflowPanels(); }
+        if (name === 'gapmer') setupModalityTab(name, ((reportData.modality_explanations || {}).gapmer) || null);
+        if (name === 'steric-binding') setupModalityTab(name, ((reportData.modality_explanations || {}).steric_binding) || null);
+        if (name === 'targets') { renderTargetSummary(); buildTargetMapGroups(); renderTargets(''); }
+        if (name === 'safeguards') buildSafeguardMapGroups();
+        initializedReportTabs.add(name);
+        hydrateStaticHelpIcons();
+      }
+      window.prepareReportAnchor = id => {
+        for (const tab of tabs) {
+          initializeReportTab(tab.dataset.tab);
+          if (document.getElementById(id)) return;
+        }
+      };
+      addEventListener('beforeprint', () => {
+        tabs.forEach(tab => initializeReportTab(tab.dataset.tab));
+        document.getElementById('target-grid')?.fillTargetRecords?.();
+      });
 
       const targetSearch = document.getElementById("target-search");
       if (targetSearch) {

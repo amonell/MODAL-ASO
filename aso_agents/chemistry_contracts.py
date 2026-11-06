@@ -8,6 +8,14 @@ class ChemistryResolutionError(ValueError):
     """An explicit capability or selection failure, never a default substitution."""
 
 
+class UnsupportedChemistryError(ChemistryResolutionError):
+    """The requested chemistry requires a user decision before design."""
+
+    def __init__(self, reason):
+        self.reason = str(reason)
+        super().__init__("unsupported_chemistry: " + self.reason)
+
+
 def chemistry_selection_schema(requested_length=None):
     architecture = {"kind": {"type": "string", "enum": ["gapmer", "steric_blocker"]},
                     "sugar": {"type": "string", "enum": ["2MOE", "2OME", "MORPHOLINO"]},
@@ -39,7 +47,7 @@ def compile_chemistry_proposal(payload):
     if not isinstance(payload, dict):
         return payload
     if payload.get("unsupported_reason"):
-        raise ChemistryResolutionError("unsupported_chemistry: " + str(payload["unsupported_reason"]))
+        raise UnsupportedChemistryError(payload["unsupported_reason"])
     recommendation = payload.get("recommendation")
     if not isinstance(recommendation, dict) or "architecture" not in recommendation:
         return payload  # Backward-compatible canonical proposals stay validated.

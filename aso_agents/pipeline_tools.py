@@ -1136,7 +1136,8 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
     if chemistry_agent_obj is None or not isinstance(goal, dict):
         return {}
     from .chemistry_contracts import (
-        chemistry_contract_errors, chemistry_selection_schema, compile_chemistry_proposal, ChemistryResolutionError,
+        chemistry_contract_errors, chemistry_selection_schema, compile_chemistry_proposal,
+        ChemistryResolutionError, UnsupportedChemistryError,
     )
     from .chemistry_mechanism import (
         chemistry_mechanism_audit_agent, chemistry_mechanism_errors, recommendation_digest,
@@ -1159,7 +1160,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
         try:
             require_native_requirement_capabilities(requirements)
         except ValueError as exc:
-            raise ChemistryResolutionError("unsupported_chemistry: " + str(exc)) from exc
+            raise UnsupportedChemistryError(str(exc)) from exc
     schema = chemistry_selection_schema(requested_length)
     if isinstance(chemistry_agent_obj, Agent):
         chemistry_agent_obj = _agent_with_strict_output_schema(
@@ -15342,179 +15343,9 @@ def _render_request_workbench_history(qa_history: List[Dict[str, Any]]) -> str:
     return "\n".join(lines) if lines else "(none)"
 
 
-def _text_looks_like_short_option_choice(text: Any) -> bool:
-    raw = str(text or "").strip()
-    if not raw or len(raw) > 48:
-        return False
-    return bool(re.fullmatch(r"(?:option\s+)?[a-d](?:\b|[.)])\s*$", raw, flags=re.IGNORECASE))
-
-
-def _text_looks_like_aso_task_request(text: Any) -> bool:
-    raw = str(text or "").strip()
-    if not raw or _text_looks_like_short_option_choice(raw) or _text_declines_aso_work(raw):
-        return False
-    if _text_looks_like_greeting(raw) or _text_looks_like_non_aso_query(raw):
-        return False
-    if _text_looks_like_artifact_analysis_request(raw):
-        return True
-    has_modality = bool(
-        re.search(
-            r"\b(?:gapmers?|steric|oligos?(?:nucleotide)?s?|antisense|\basos?\b|snrnas?|"
-            r"morpholinos?|pmos?|lnas?)\b",
-            raw,
-            flags=re.IGNORECASE,
-        )
-    )
-    has_action = bool(
-        re.search(
-            r"\b(?:design|tile|tiling|evaluate|analy[sz]e|inspect|compare|trace|"
-            r"knock\s*down|knockdown|splice[-\s]?switch(?:ing)?|generate|candidates?|"
-            r"block|modulat(?:e|ion)|skip(?:ping)?|inclusion)\b",
-            raw,
-            flags=re.IGNORECASE,
-        )
-    )
-    if has_modality:
-        return True
-    return has_action and _text_has_aso_domain_terms(raw)
-
-
-def _text_declines_aso_work(text: Any) -> bool:
-    lowered = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
-    if not lowered:
-        return False
-    decline_phrases = (
-        "nah no aso request",
-        "no aso request",
-        "no aso related request",
-        "no aso related",
-        "not an aso request",
-        "do not want an aso",
-        "dont want an aso",
-        "close this aso intake",
-        "close this intake",
-        "no aso tasks",
-        "unrelated to aso",
-        "no aso",
-        "no design",
-    )
-    if any(phrase in lowered for phrase in decline_phrases):
-        return True
-    return lowered in {"nah", "nope"}
-
-
-def _text_looks_like_non_aso_query(text: Any) -> bool:
-    lowered = str(text or "").lower()
-    if not lowered.strip():
-        return False
-    if re.search(r"\b\d+\s*\+\s*\d+\b", lowered):
-        return True
-    return "math problem" in lowered
-
-
-_ASO_DOMAIN_TERM_RE = re.compile(
-    r"\b(?:asos?|antisense|oligos?(?:nucleotide)?s?|snrnas?|"
-    r"gapmers?|steric|morpholinos?|pmo|lnas?|cets?|moe|"
-    r"knock\s*down|knockdown|splice[-\s]?switch(?:ing)?|splicing|"
-    r"exons?|introns?|isoforms?|transcripts?|tiling|tiles?|motifs?|junctions?|"
-    r"off[-\s]?targets?|phylop|rnase|nmd|ptc|"
-    r"eclip|rbps?|targetscan|mirnas?|micrornas?|"
-    r"ensembl|enst|refseq|cellxgene|bowtie)\b",
-    flags=re.IGNORECASE,
-)
-_ASO_QUESTION_CUE_RE = re.compile(
-    r"\b(?:what|why|how|explain|meaning|mean|difference|does|is|are)\b|\?",
-    flags=re.IGNORECASE,
-)
 _ASO_INTAKE_RESTATEMENT_QUESTION = (
-    "This doesn't look like an ASO design, evaluation, or analysis request yet. "
-    "Please describe the ASO task you want (for example a gene, species, and whether you want "
-    "gapmer knockdown, splice modulation, evaluation of existing oligos, or analysis of a prior run)."
+    "Please describe the ASO task you want, including the target and desired effect."
 )
-
-
-def _text_looks_like_greeting(text: Any) -> bool:
-    lowered = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
-    if not lowered:
-        return True
-    if lowered in {
-        "hi",
-        "hello",
-        "hey",
-        "yo",
-        "sup",
-        "hiya",
-        "howdy",
-        "thanks",
-        "thank you",
-        "ok",
-        "okay",
-        "test",
-        "testing",
-        "hello there",
-        "hi there",
-        "hey there",
-    }:
-        return True
-    return bool(re.fullmatch(r"(?:hi|hello|hey|yo)(?: there| all| team)?", lowered))
-
-
-def _text_has_aso_domain_terms(text: Any) -> bool:
-    return bool(_ASO_DOMAIN_TERM_RE.search(str(text or "")))
-
-
-def _text_looks_like_artifact_analysis_request(text: Any) -> bool:
-    raw = str(text or "").strip()
-    if not raw:
-        return False
-    if not re.search(
-        r"\b(?:analy[sz]e|inspect|explain|compare|trace|look(?:ing)? at|open)\b",
-        raw,
-        flags=re.IGNORECASE,
-    ):
-        return False
-    if re.search(
-        r"\b(?:artifact|report|run directory|run dir|run folder|goal_\d+)\b",
-        raw,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    if re.search(r"(?:^|[\s`])(?:/|\./|~/|[A-Za-z]:\\)", raw):
-        return True
-    return bool(re.search(r"\b(?:runs/|report\.md|goal_intake|request_envelope)\b", raw, flags=re.IGNORECASE))
-
-
-def _text_looks_like_aso_related_question(text: Any) -> bool:
-    raw = str(text or "").strip()
-    if (
-        not raw
-        or _text_looks_like_short_option_choice(raw)
-        or _text_declines_aso_work(raw)
-        or _text_looks_like_non_aso_query(raw)
-        or _text_looks_like_greeting(raw)
-    ):
-        return False
-    if not _text_has_aso_domain_terms(raw):
-        return False
-    return bool(_ASO_QUESTION_CUE_RE.search(raw))
-
-
-def _text_looks_like_in_scope_intake_request(text: Any) -> bool:
-    raw = str(text or "").strip()
-    if (
-        not raw
-        or _text_looks_like_short_option_choice(raw)
-        or _text_declines_aso_work(raw)
-        or _text_looks_like_non_aso_query(raw)
-        or _text_looks_like_greeting(raw)
-    ):
-        return False
-    return (
-        _text_looks_like_aso_task_request(raw)
-        or _text_looks_like_aso_related_question(raw)
-        or _text_has_aso_domain_terms(raw)
-        or _text_looks_like_artifact_analysis_request(raw)
-    )
 
 
 def _clarification_question_is_aso_restatement(question: Any) -> bool:
@@ -15525,16 +15356,6 @@ def _clarification_question_is_aso_restatement(question: Any) -> bool:
         return True
     return "doesn t look like an aso" in text or (
         "aso" in text and "task" in text and ("describe" in text or "related" in text)
-    )
-
-
-def _intake_already_asked_aso_restatement(qa_history: Any) -> bool:
-    if not isinstance(qa_history, list):
-        return False
-    return any(
-        _clarification_question_is_aso_restatement(item.get("question"))
-        for item in qa_history
-        if isinstance(item, dict)
     )
 
 
@@ -15554,48 +15375,31 @@ def _effective_intake_request_text(original: str, qa_history: Any) -> str:
 
 
 def _intake_should_close_out_of_scope(original: str, qa_history: Any) -> bool:
-    if _text_looks_like_in_scope_intake_request(_effective_intake_request_text(original, qa_history)):
+    """Use the audited clarification decision; prose alone cannot close a run."""
+    if not isinstance(qa_history, list):
         return False
-    if not isinstance(qa_history, list) or not qa_history:
-        return False
-    answers = [
-        str(item.get("answer") or "").strip()
-        for item in qa_history
-        if isinstance(item, dict)
-    ]
-    if any(_text_declines_aso_work(answer) for answer in answers):
-        return True
-    latest = answers[-1] if answers else ""
-    if _text_looks_like_non_aso_query(latest):
-        return True
-    if _intake_already_asked_aso_restatement(qa_history) and not _text_looks_like_in_scope_intake_request(latest):
-        return True
+    for item in reversed(qa_history):
+        if not isinstance(item, dict):
+            continue
+        effect = str(item.get("request_effect") or "").strip().lower()
+        if effect == "replace":
+            return False
+        if effect == "close":
+            return True
     return False
 
 
 def _intake_should_ask_aso_restatement(original: str, qa_history: Any) -> bool:
-    if _intake_should_close_out_of_scope(original, qa_history):
-        return False
-    effective = _effective_intake_request_text(original, qa_history)
-    if _text_looks_like_in_scope_intake_request(effective):
-        return False
-    if _intake_already_asked_aso_restatement(qa_history):
-        return False
-    return True
+    """Handle an empty greeting locally; classify substantive requests semantically.
 
-
-def _envelope_uses_answer_question_as_missing_request_placeholder(
-    request_envelope: Any,
-    request_text: str,
-) -> bool:
-    if _text_looks_like_in_scope_intake_request(request_text):
+    Chemistry notation, exclusions and unfamiliar wording must reach the request
+    workbench. Clarification history also belongs to that semantic review.
+    """
+    if qa_history:
         return False
-    envelope = request_envelope if isinstance(request_envelope, dict) else {}
-    tasks = [task for task in (envelope.get("tasks") or []) if isinstance(task, dict)]
-    task_types = {_normalize_task_type_value(task.get("task_type")) for task in tasks}
-    if tasks and task_types != {"answer_question"}:
-        return False
-    return True
+    return str(original or "").strip().casefold() in {
+        "", "hi", "hello", "hey", "hello there", "hi there", "hey there",
+    }
 
 
 def _finish_intake_out_of_scope(
@@ -44131,12 +43935,6 @@ def tool_parse_goal_request(
         if isinstance(request_parse_out.get("request_envelope"), dict)
         else {}
     )
-    if _envelope_uses_answer_question_as_missing_request_placeholder(request_envelope, request_text):
-        return _pause_intake_for_aso_restatement(
-            state=state,
-            state_path=state_path,
-            tool_name="tool_parse_goal_request",
-        )
     request_questions = _normalize_questions_input(request_parse_out.get("questions")) if request_status != "ready" else []
     final_payload: Dict[str, Any] = {"status": "ready"}
     if request_envelope:
@@ -44266,8 +44064,10 @@ def tool_parse_goal_request(
                         state=state, state_path=state_path,
                         tool_name="tool_parse_goal_request", stage_name="intake",
                         phase="tool_parse_goal_failed", error_kind="request_obligation_audit_failed",
-                        error_message="request_obligation_audit_invalid_status",
-                        details={"request_obligation_audit_result": deepcopy(audited)},
+                        error_message=(str(audited.get("reason") or "request_obligation_audit_invalid_status")
+                                       if isinstance(audited, dict) else "request_obligation_audit_invalid_status"),
+                        details={"request_obligation_audit_result": deepcopy(audited),
+                                 "candidate_request_envelope": deepcopy(request_envelope)},
                     )
                 if isinstance(audited.get("request_obligation_audit"), dict):
                     final_payload["request_obligation_audit"] = deepcopy(
@@ -44327,6 +44127,15 @@ def tool_parse_goal_request(
                     phase="tool_parse_goal_failed",
                     error_kind="tool_parse_goal_failed",
                     error_message="goal_intake_step_invalid_payload",
+                )
+            if intake_out.get("status") == "model_failure":
+                return _tool_failure(
+                    state=state, state_path=state_path,
+                    tool_name="tool_parse_goal_request", stage_name="intake",
+                    phase="tool_parse_goal_failed", error_kind="request_obligation_audit_failed",
+                    error_message=str(intake_out.get("reason") or "request_obligation_audit_failed"),
+                    details={"request_obligation_audit_result": deepcopy(intake_out),
+                             "candidate_request_envelope": deepcopy(request_envelope)},
                 )
             final_payload.update(dict(intake_out))
             structured_goal = (
@@ -47004,6 +46813,42 @@ def tool_resolve_isoforms_and_sites(
                 "requires_transcript_scope": False,
             },
         )
+
+    from .transcript_rules import resolve_transcript_rule
+    try:
+        rule_resolution = resolve_transcript_rule(
+            runtime, structured_goal, final_payload, "\n".join(verified_user_evidence))
+    except Exception as exc:
+        return _tool_failure(
+            state=state, state_path=state_path, tool_name="tool_resolve_isoforms_and_sites",
+            stage_name="resolution", phase="tool_resolve_isoforms_failed",
+            error_kind="tool_resolve_isoforms_failed",
+            error_message=f"transcript_rule_resolution_failed: {exc}",
+            details=_ensembl_resolution_failure_details(exc, run_dir))
+    if rule_resolution["status"] == "needs_clarification":
+        _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+        return request_clarification(
+            state_path=state_path, questions=rule_resolution["questions"],
+            reason="The transcript selection rule needs a unique annotated reference.",
+            clarification_kind="goal_intake", restart_stage="intake")
+    if rule_resolution["status"] == "resolved":
+        for envelope in (payload.get("request_envelope"), state.get("request_envelope"),
+                         state.get("canonical_request_envelope"), state.get("task_graph")):
+            tasks = envelope.get("tasks") if isinstance(envelope, dict) else None
+            if isinstance(tasks, list) and len(tasks) == 1 and isinstance(tasks[0], dict):
+                context = tasks[0].get("context")
+                if isinstance(context, dict):
+                    context["structured_goal"] = deepcopy(structured_goal)
+                    context["transcript_id"] = structured_goal["transcript_id"]
+        contexts = state.get("task_contexts")
+        if isinstance(contexts, dict) and len(contexts) == 1:
+            context = next(iter(contexts.values()))
+            if isinstance(context, dict):
+                context["structured_goal"] = deepcopy(structured_goal)
+                context["transcript_id"] = structured_goal["transcript_id"]
+        final_payload["structured_goal"] = structured_goal
+        _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+        _save_state(state_path, state, snapshot_reason="transcript_rule_resolved")
 
     resolve_isoforms = getattr(runtime, "_resolve_isoform_transcripts", None)
     if not callable(resolve_isoforms):

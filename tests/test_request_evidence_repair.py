@@ -177,3 +177,64 @@ def test_native_audit_applies_supported_count_after_retracting_unrequested_objec
     assert result['structured_goal']['candidate_limit'] == 3
     assert result['request_obligation_audit']['quote_repair']['status'] == 'repaired'
     assert len(calls) == 2
+
+
+def test_native_audit_reextracts_hallucinated_value_from_the_original_request(monkeypatch):
+    import run_goal_intake as intake
+    source = 'Design four 25-nt steric ASOs in the coding region.'
+    audit = {'candidate_count': {'count': 21, 'scope': 'global', 'kind': 'exact',
+                                'quote': 'Design 21 distinct antisense oligonucleotides'},
+             'target_feature': {'feature': 'cds', 'applies_to_all_candidates': True,
+                                'quote': 'in the coding region'}}
+    corrected = deepcopy(audit)
+    corrected['candidate_count'].update(count=4, quote='Design four 25-nt steric ASOs')
+    replies = [audit, {'repairs': [], 'unresolved_paths': ['/candidate_count/quote']}, corrected]
+    calls = []
+    async def run(agent, **kwargs):
+        calls.append(json.loads(kwargs['input']))
+        return SimpleNamespace(final_output=json.dumps(replies[len(calls)-1]))
+    monkeypatch.setattr(intake.Runner, 'run', run)
+    goal = {'candidate_limit': 4, 'design_programs': [{'program_id': 'primary', 'modality': 'steric', 'intent': 'binding'}]}
+    result = asyncio.run(intake._audit_request_obligations({'status':'ready','structured_goal':goal},source,[]))
+    assert result['status'] == 'ready'
+    assert result['structured_goal']['candidate_limit'] == 4
+    assert result['structured_goal']['target_region'] == 'cds'
+    assert calls[-1]['original_request'] == source
+    assert calls[-1]['validation_feedback']['fields_to_reextract'] == ['candidate_count']
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('change', ['supported_sibling', 'invalid_quote', 'missing_quote', 'extra_field'])
+def test_reextraction_cannot_change_verified_objects_or_accept_unattested_results(change):
+    from aso_agents.request_evidence_repair import reaudit_unattested_fields
+    audit = {'candidate_count': {'count':21,'scope':'global','kind':'exact','quote':'invented'},
+             'target_feature': {'feature':'cds','quote':'coding region'}}
+    corrected = deepcopy(audit)
+    corrected['candidate_count'].update(count=4,quote='Design four ASOs')
+    if change == 'supported_sibling': corrected['target_feature']['feature'] = 'utr3'
+    elif change == 'invalid_quote': corrected['candidate_count']['quote'] = 'Design five ASOs'
+    elif change == 'missing_quote': corrected['candidate_count'] = {}
+    else: corrected['invented'] = True
+    calls = []
+    async def run(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(final_output=json.dumps(corrected))
+    result, receipt = asyncio.run(reaudit_unattested_fields(audit,'Design four ASOs in the coding region.',{},run,json.loads))
+    assert result == audit and receipt['status'] == 'unresolved'
+    assert len(calls) == 1
+
+
+def test_unresolved_model_audit_is_not_a_question_for_the_user(monkeypatch):
+    import run_goal_intake as intake
+    audit = {'candidate_count': {'count':21,'scope':'global','kind':'exact','quote':'invented'}}
+    calls = []
+    async def run(agent, **kwargs):
+        calls.append(agent.name)
+        value = {'repairs': [], 'unresolved_paths': ['/candidate_count/quote']} if len(calls)==2 else audit
+        return SimpleNamespace(final_output=json.dumps(value))
+    monkeypatch.setattr(intake.Runner,'run',run)
+    goal = {'candidate_limit':4,'design_programs':[{'program_id':'primary','modality':'steric','intent':'binding'}]}
+    result = asyncio.run(intake._audit_request_obligations({'status':'ready','structured_goal':goal},'Design four ASOs.',[]))
+    assert result['status'] == 'model_failure' and result['questions'] == []
+    assert result['structured_goal']['candidate_limit'] == 4
+    assert len(calls) == 3

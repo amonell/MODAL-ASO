@@ -638,9 +638,15 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
                 content += '<details><summary>Selection counts</summary>' + markdown_html('\n'.join(counts), report_dir) + '</details>'
             if key == 'selected physical panel':
                 from .report_candidate_view import candidate_reading_view
+                from .report_orientation import _candidate_summary, section_tables
                 reading_view = candidate_reading_view(section)
                 if reading_view:
-                    content = reading_view + '<details><summary>Full selected-ASO table</summary>' + content + '</details>'
+                    counts_view = _candidate_summary([section], [(0, table) for table in section_tables(section)])
+                    preview = counts_view and counts_view['shown'] < counts_view['distinct']
+                    table_label = 'Preview table' if preview else 'Full selected-ASO table'
+                    content = reading_view + '<details><summary>' + table_label + '</summary>' + content + '</details>'
+                    if preview and inventory_html:
+                        content += '<p><a href="#reader-design-inventory">Browse the complete design table</a></p>'
             elif key == 'oligoai gapmer efficacy prediction':
                 from .report_candidate_view import prediction_reading_view
                 reading_view = prediction_reading_view(section)
@@ -672,7 +678,9 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     if (context or {}).get('kind') == 'design':
         evidence = _group_design_evidence(evidence, sections)
     if inventory_html:
-        details.append('<details><summary>ASOs produced during design</summary>' + friendly_tables(inventory_html) + '</details>')
+        evidence.append((-1, 'reader-design-inventory', 'Complete design table',
+            _disclosure('reader-design-inventory', 'Complete design table', friendly_tables(inventory_html),
+                        'Browse ASO sequences, chemistry and recorded results.')))
     blocks = [item for _, item in visible]
     limits = next((item for priority, item in visible if priority == 1), None)
     if limits and orientation_data['notices']:
@@ -707,16 +715,19 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
         blocks = [item for item in blocks if item not in main_findings]
     else:
         opening = orientation + lead
-    return readable_prose(opening + ''.join(item[3] for item in blocks)
+    from .report_tables import page_large_tables
+    return page_large_tables(readable_prose(opening + ''.join(item[3] for item in blocks)
             + tools
             + ''.join(item[3] for item in evidence) + ''.join(item[3] for item in downloads)
-            + detail_html + terms)
+            + detail_html + terms))
 
 
 READER_SCRIPT = """<script>
 // In-page links can point to a folded explanation or a nested source section.
 function revealReaderAnchor(hash=location.hash){
   let anchor=hash.slice(1);try{anchor=decodeURIComponent(anchor);}catch(_error){}
+  if(anchor && !document.getElementById(anchor))window.revealReaderTableAnchor?.(anchor);
+  if(anchor && !document.getElementById(anchor))window.prepareReportAnchor?.(anchor);
   const target=document.getElementById(anchor);
   if(!target)return;
   const panel=target.closest('.tab-panel');
@@ -758,6 +769,10 @@ addEventListener('beforeprint',()=>{readerPrintState=[...document.querySelectorA
 addEventListener('afterprint',()=>{readerPrintState.forEach(([item,open])=>item.open=open);readerPrintState=[];readerPrintTables.forEach(table=>table.classList.add('reader-table-compact'));readerPrintTables=[];});
 </script><noscript><style>.reader-tools button,.reader-column-toggle,.tabs{display:none}</style></noscript>"""
 
+from .report_tables import TABLE_CSS, TABLE_SCRIPT
+READER_CSS += TABLE_CSS
+READER_SCRIPT = TABLE_SCRIPT + READER_SCRIPT
+
 
 def concise_title(title, *, fallback='ASO analysis'):
     value = str(title or '').strip()
@@ -795,10 +810,11 @@ def design_results(payload):
     It must not be relabelled as the user's final selection or used to infer a
     new success count. The original scope explanation stays with its table.
     """
+    from .report_tables import page_large_tables
     saved = payload.get('results_html') or ''
     markdown = (payload.get('overview') or {}).get('report_markdown') or ''
     if not markdown:
-        return saved or '<p>Final results are not recorded.</p>'
+        return page_large_tables(saved) if saved else '<p>Final results are not recorded.</p>'
     meta = payload.get('meta') or {}
     from .report_orientation import design_reader_context
     reader_context = payload.get('reader_context')
@@ -815,7 +831,7 @@ def design_results(payload):
     if saved and not separator:
         # Older or unknown payload layouts are never silently discarded.
         body += '<details><summary>Additional saved results</summary>' + saved + '</details>'
-    return body
+    return page_large_tables(body)
 
 
 DESIGN_CSS = READER_CSS + """

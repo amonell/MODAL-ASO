@@ -16,11 +16,10 @@ DESIGN_REQUEST = "design human MAPT gapmers that reduce 4R"
 def test_hi_with_empty_history_does_not_close() -> None:
     assert pipeline_tools._intake_should_close_out_of_scope("hi", []) is False
     assert pipeline_tools._intake_should_close_out_of_scope("hi", None) is False
-    assert pipeline_tools._text_looks_like_aso_task_request("hi") is False
     assert pipeline_tools._intake_should_ask_aso_restatement("hi", []) is True
 
 
-def test_unrelated_non_aso_text_asks_restatement() -> None:
+def test_substantive_text_reaches_semantic_scope_review() -> None:
     unrelated = [
         "what's the weather in Paris?",
         "Write a python script to sort files",
@@ -28,8 +27,7 @@ def test_unrelated_non_aso_text_asks_restatement() -> None:
         "2+2",
     ]
     for text in unrelated:
-        assert pipeline_tools._text_looks_like_in_scope_intake_request(text) is False, text
-        assert pipeline_tools._intake_should_ask_aso_restatement(text, []) is True, text
+        assert pipeline_tools._intake_should_ask_aso_restatement(text, []) is False, text
 
 
 def test_aso_work_and_aso_questions_do_not_force_restatement() -> None:
@@ -41,37 +39,26 @@ def test_aso_work_and_aso_questions_do_not_force_restatement() -> None:
         "How do gapmers work?",
     ]
     for text in in_scope:
-        assert pipeline_tools._text_looks_like_in_scope_intake_request(text) is True, text
         assert pipeline_tools._intake_should_ask_aso_restatement(text, []) is False, text
 
 
-def test_unrelated_answer_after_restatement_closes() -> None:
+def test_reviewed_unrelated_answer_after_restatement_closes() -> None:
     history = [
         {
             "question": pipeline_tools._ASO_INTAKE_RESTATEMENT_QUESTION,
             "answer": "what's the weather in Paris?",
+            "request_effect": "close",
         }
     ]
     assert pipeline_tools._intake_should_close_out_of_scope("hi", history) is True
     assert pipeline_tools._intake_should_ask_aso_restatement("hi", history) is False
 
 
-def test_greeting_answer_question_envelope_is_treated_as_placeholder() -> None:
-    envelope = {
-        "request_summary": "Clarify requested ASO-related task (no actionable ASO request provided yet).",
-        "request_classifications": ["intake", "needs_user_goal", "aso_unspecified", "answer_question"],
-        "tasks": [
-            {
-                "task_id": "t1_answer",
-                "task_type": "answer_question",
-                "label": "Clarify ASO-related request",
-            }
-        ],
-    }
-    assert (
-        pipeline_tools._envelope_uses_answer_question_as_missing_request_placeholder(envelope, "hi")
-        is True
-    )
+@pytest.mark.parametrize("answer", ["2+2", "hello", "nah no aso request", "option a"])
+def test_unreviewed_answer_cannot_close_intake(answer) -> None:
+    history = [{"question": pipeline_tools._ASO_INTAKE_RESTATEMENT_QUESTION, "answer": answer}]
+    assert not pipeline_tools._intake_should_close_out_of_scope("hi", history)
+    assert not pipeline_tools._intake_should_ask_aso_restatement("hi", history)
 
 
 def test_parse_greeting_pauses_for_restatement_instead_of_answering(
@@ -115,9 +102,18 @@ def test_parse_greeting_pauses_for_restatement_instead_of_answering(
     assert planning["terminal_status"] == "needs_user_input"
 
 
+@pytest.mark.parametrize('request_text', [
+    'Design a steric ASO for a supplied target in reviewed cells.',
+    'Design four 18-nt human MAPT gapmers with a 4+10+4 MOE/DNA/MOE architecture.',
+    'Design PCSK9 ASOs; make sure no ASO contains a CpG dinucleotide.',
+    'Evaluate these existing molecules only; no design is needed.',
+    'Target exons 7+8 with separate steric panels in human cells.',
+    'Silence PCSK9 in human hepatocytes with modified antisense molecules.',
+])
 def test_parse_model_incomplete_is_retryable_failure_not_clarification(
     tmp_path: Path,
     monkeypatch: Any,
+    request_text: str,
 ) -> None:
     monkeypatch.setattr(
         pipeline_tools,
@@ -126,6 +122,7 @@ def test_parse_model_incomplete_is_retryable_failure_not_clarification(
     )
 
     async def incomplete_workbench(_prompt: str) -> dict[str, Any]:
+        assert _prompt == request_text
         return {
             "error": "incomplete_response",
             "status": "incomplete",
@@ -143,7 +140,7 @@ def test_parse_model_incomplete_is_retryable_failure_not_clarification(
         "version": "2",
         "status": "initialized",
         "phase": "initialized",
-        "request": "Design a steric ASO for a supplied target in reviewed cells.",
+        "request": request_text,
         "run_dir": str(run_dir),
         "flags": {},
         "last_error": None,
@@ -169,11 +166,12 @@ def test_parse_model_incomplete_is_retryable_failure_not_clarification(
     )
 
 
-def test_second_greeting_after_restatement_closes() -> None:
+def test_reviewed_second_greeting_after_restatement_closes() -> None:
     history = [
         {
             "question": pipeline_tools._ASO_INTAKE_RESTATEMENT_QUESTION,
             "answer": "hello",
+            "request_effect": "close",
         }
     ]
     assert pipeline_tools._intake_should_close_out_of_scope("hi", history) is True
@@ -436,21 +434,18 @@ def test_preseeded_intake_does_not_execute_after_unresolved_obligation_audit(
 def test_option_choice_does_not_become_effective_request() -> None:
     history = [{"question": "Which option?", "answer": "option a"}]
 
-    assert pipeline_tools._text_looks_like_short_option_choice("option a") is True
-    assert pipeline_tools._text_looks_like_aso_task_request("option a") is False
     assert pipeline_tools._effective_intake_request_text("hi", history) == "hi"
     assert pipeline_tools._intake_should_close_out_of_scope("hi", history) is False
 
 
-def test_decline_and_math_answers_close_intake() -> None:
+def test_reviewed_decline_and_math_answers_close_intake() -> None:
     decline_history = [
-        {"question": "Please restate an ASO-related task.", "answer": "nah no aso request"}
+        {"question": "Please restate an ASO-related task.", "answer": "nah no aso request", "request_effect": "close"}
     ]
-    math_history = [{"question": "Please restate an ASO-related task.", "answer": "2+2"}]
+    math_history = [{"question": "Please restate an ASO-related task.", "answer": "2+2", "request_effect": "close"}]
 
     assert pipeline_tools._intake_should_close_out_of_scope("hi", decline_history) is True
     assert pipeline_tools._intake_should_close_out_of_scope("hi", math_history) is True
-    assert pipeline_tools._text_looks_like_aso_task_request("2+2") is False
 
 
 def test_math_does_not_close_an_in_scope_design_request() -> None:

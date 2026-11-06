@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, Optional
 
 from agents import Runner
+from .chemistry_contracts import UnsupportedChemistryError
 
 from .pipeline_controller_agent import pipeline_controller_agent
 from .pipeline_tools import (
@@ -505,6 +506,14 @@ def _run_planned_next_action_once(state_path: Path) -> Optional[Dict[str, Any]]:
             message=f"controller received signal {exc.signum}",
         )
         raise KeyboardInterrupt(f"controller received signal {exc.signum}") from exc
+    except UnsupportedChemistryError as exc:
+        live_path = _live_state_path(state_path)
+        tool_result = tool_module.request_clarification(
+            state_path=str(live_path),
+            questions=["The requested chemistry cannot be used with these design requirements. "
+                       "Which chemistry or design requirement would you like to change?"],
+            reason=exc.reason, context=exc.reason,
+            clarification_kind="goal_intake", restart_stage="intake")
     except Exception as exc:
         live_path = _live_state_path(state_path)
         _mark_deterministic_tool_failed(

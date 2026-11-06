@@ -10,6 +10,27 @@ from aso_agents import agentic_runner
 from aso_agents import pipeline_tools
 
 
+def test_unsupported_chemistry_pauses_for_a_user_decision(tmp_path, monkeypatch):
+    from aso_agents.chemistry_contracts import UnsupportedChemistryError
+    path = tmp_path / "run_state.json"
+    path.write_text(json.dumps({"status": "isoforms_resolved", "phase": "isoforms_resolved",
+        "run_dir": str(tmp_path), "request": "Use full MOE for an RNase-H gapmer.",
+        "pending_questions": [], "stage_attempts": {}, "events": []}))
+    monkeypatch.setattr(agentic_runner, "_derive_next_actions", lambda state: pipeline_tools._derive_next_actions(state) if state.get("pending_questions") else {
+        "terminal_status": "in_progress", "next_actions": [{"tool": "tool_build_gapmer_regions"}],
+        "allowed_next_tools": ["tool_build_gapmer_regions"]})
+    def unsupported(**kwargs):
+        raise UnsupportedChemistryError("The requested mechanism requires a DNA gap.")
+    monkeypatch.setattr(pipeline_tools, "tool_build_gapmer_regions", unsupported)
+    result = agentic_runner._run_planned_next_action_once(path)
+    saved = json.loads(path.read_text())
+    assert result["status"] == "needs_user_input"
+    assert saved["pending_questions"] and saved["last_error"] is None
+    assert saved["clarification"]["restart_stage"] == "intake"
+    assert saved["active_runner"] is None
+    assert "DNA gap" in saved["clarification"]["reason"]
+
+
 def test_unplanned_branch_tool_cannot_advance_steric_tiling_state(tmp_path: Path) -> None:
     state_path = tmp_path / "run_state.json"
     state = {
