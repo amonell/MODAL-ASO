@@ -2639,9 +2639,8 @@ def _candidate_shortfall_lines(
                 "to infer distinct available ASOs."
             )
     lines.append(
-        "- This is a shortfall within the recorded computational search and filters, "
-        "not evidence that no other viable ASOs exist outside that search. Unselected "
-        "tiles are not validated replacement recommendations."
+        "- The shortfall applies to the search and filters used in this run. "
+        "Additional designs would require a broader search and their own checks."
     )
     return lines
 
@@ -2722,7 +2721,7 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
             ]
         )
     else:
-        lines.append("- Candidates are ranked binding-site blockers. Inspect the requested site overlaps, sequence constraints, chemistry and measured screening annotations. Splice-route ranks and splice deltas are not evidence for this mechanism.")
+        lines.append("- Candidates are ranked binding-site blockers. Their relevant results are the requested site overlaps, sequence constraints, chemistry and sequence-screening checks. Blocking activity requires experimental measurement.")
     lines.extend(["", "## Main Files To Open"])
     emitted_path = False
     if gapmer:
@@ -2912,7 +2911,7 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
             else:
                 lines.append("- No retained candidate has `variant_in_gap=true`. Review the filter trace and filtered candidates, and consider a different oligo architecture, length, or chemistry before promoting the wing-mismatch candidates.")
         else:
-            lines.append("- Use the recorded `selection_rank` and eligibility filters. Inspect off-target counts within their stated search scope and interpret `isoform_uniqueness_score` using its recorded definition. A screening count does not introduce an additional cutoff. Do not filter `Times_mapped` or `isoform_uniqueness_count` as if they were off-targets.")
+            lines.append("- Follow the selection rank and the recorded eligibility filters. Off-target counts describe matches outside the intended gene, within the stated search scope. Target-isoform counts describe how many RNA versions of that gene contain the binding site. The score definitions below explain how these measures contribute to selection.")
         lines.append(f"- Use `{gapmer_csv}` for spreadsheet workflows and the scored JSON for scripted review.")
         if conservation["required"]:
             lines.append("- Keep the cross-species fields visible; final choices should preserve the required species evidence.")
@@ -2927,7 +2926,7 @@ def _build_design_output_summary_markdown(report_payload: Dict[str, Any]) -> str
             lines.append(f"- Start with `{_relative_report_path(binding_sets.get('artifact_path'), run_root)}` and the candidate panel. Apply the stated containment/overlap rule for each requested physical region.")
         lines.append(f"- Review predicted splice responses in `{router_rel}` and the rank-ordered response CSV/XLSX files under `{routes_rel}/`.")
         lines.append("- The response-site coordinate identifies the splice site whose model score changed. Each ASO also has its own binding interval.")
-        lines.append("- Favor routes with strong directional delta, low opposite-direction signal, non-empty candidate counts, and confidence/rationale consistent with the biology.")
+        lines.append("- Compare approaches using the predicted change toward the goal, the strongest change in the opposite direction, the available candidates and the explanation of the ranking.")
     else:
         lines.append("- Use the delivered candidate CSV/JSON/XLSX tables and target-site annotations. No ranked splice-route output was produced.")
     lines.append("")

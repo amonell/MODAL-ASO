@@ -20,7 +20,8 @@ def test_shortfall_reports_actual_panel_deficit_and_bounded_funnel():
     assert "5 passed to scoring but were not selected" in text
     assert "5 lacked recorded route eligibility" in text
     assert "3, 2" in text and "must not be summed" in text
-    assert "not evidence that no other viable ASOs exist" in text
+    assert "shortfall applies to the search and filters used in this run" in text
+    assert "Additional designs would require a broader search and their own checks" in text
 
 
 def test_met_or_unverifiable_minimum_does_not_invent_a_shortfall():

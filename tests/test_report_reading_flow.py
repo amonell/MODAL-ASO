@@ -25,11 +25,12 @@ def test_sequence_view_preserves_strand_positions_zero_and_missing_results():
     assert 'ACGT' in view and 'chr1:10–14 (zero-based; end excluded)' in view
     assert '<dt>Exact matches</dt><dd>0 genes</dd>' in view
     assert 'Matches with 1 base difference' in view
-    assert 'Matches with 2 base differences' not in view
+    assert '<dt>Matches with 2 base differences</dt><dd>Count absent from this summary</dd>' in view
     assert section == before
     missing = candidate_reading_view(_sections(panel(screening='unknown; searched ≤2 mismatch(es)'))[0])
-    assert 'This report does not say whether the off-target search finished.' in missing
-    assert 'Search for other sequences this ASO may bind' in missing and 'Exact matches' not in missing
+    assert 'The search completion record is missing.' in missing
+    assert 'Search for other sequences this ASO may bind' in missing
+    assert '<dt>Exact matches</dt><dd>Count absent from this summary</dd>' in missing
     assert 'Recorded search limit' in missing
 
 
@@ -46,7 +47,7 @@ def test_unknown_screening_fields_remain_available_verbatim():
 
 def test_missing_completion_record_is_distinct_from_missing_results_or_a_failed_search():
     unknown = screening_fields('unknown; searched ≤2 mismatch(es); exact=0 genes')
-    assert unknown[0][1] == 'This report does not say whether the off-target search finished.'
+    assert unknown[0][1] == 'The search completion record is missing.'
     assert ('Exact matches', '0 genes') in unknown
     assert screening_fields('unavailable')[0][1] == 'This report is missing the off-target search result.'
     assert screening_fields('failed')[0][1] == 'The off-target search failed.'

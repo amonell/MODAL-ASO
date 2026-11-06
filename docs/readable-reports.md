@@ -28,10 +28,12 @@ demand. Checked status summaries and the source's limitations share one section.
 Missing results never become zero, and a missing exact match is called out only
 when its search is recorded as complete.
 
-Design reports have three main reading paths: **Selected ASOs**, **Chemistry,
-predictions and checks**, and **Other designs considered**. A recognized selected
-panel opens as individual ASO sequences, with positions and search details under
-each one. The complete table remains available below. Predictions with the same
+Design reports open **Selected ASOs**, with chemistry beside the sequences.
+**Predictions and selection checks** and **Explore the wider search** open on
+demand. A recognized selected panel shows individual ASO sequences, with positions
+and search details under each one. Identical check summaries appear once above the
+displayed sequences; differing summaries stay beside the affected ASO. The complete
+table remains available below. Predictions with the same
 candidate identity, sequence and assay conditions are grouped for reading; all
 reference-context rows remain in the full prediction table. Differing predictions
 are never averaged. Unrecognized layouts use the complete original table.
@@ -49,6 +51,33 @@ retain their exact endpoints and state that numbering starts at zero and
 excludes the end. Missing values, empty lists, empty objects, zero and false
 remain distinct. Full tables and target details use this same reading format.
 The original JSON remains embedded for provenance and downloads.
+
+The design goal retains typed intron-retention/excision events. A saved objective
+preserves alternate-product and other detailed splicing requests that an exon-only
+label would flatten. The renderer never infers intent from gene names or keywords.
+Preview counts describe distinct molecules; repeated binding records do not create
+an apparent shortfall in the sequence preview.
+
+New shortlist Markdown names missing evidence and explains prediction-review flags
+from the saved per-molecule assessment. Motif notes state when study chemistry
+differs from the designed chemistry. Inapplicable safeguard columns and empty
+review-note columns are omitted from this reading table; complete assessment
+records remain in JSON and CSV. Joining these checks to sequence cards requires
+matching complete panel order and unique sequence identities. Ambiguous, partial,
+reordered and repeated-sequence panels keep separate source tables.
+
+The panel export includes every available mismatch bin. Older summaries explicitly
+mark absent bins as missing from that summary, preserving the recorded search
+completion status and count units. Missing exon-skipping consequence calculations
+appear in the opening with a link to their source; they describe that calculation's
+scope and never imply a failure of transcript resolution for the entire design.
+
+Download links are present in the saved HTML. JavaScript leaves portable export
+URLs intact. Primary links use the run's current outputs; copies nested inside
+earlier export bundles stay out of the primary menu. Additional formats open on
+demand, and file sizes appear when recorded. Requested deliverables and primary
+output files receive the bounded embedding budget before supporting evidence,
+even when evidence links occur earlier in the document.
 
 Known native codes receive readable labels in structured fields and prose.
 Unknown field names get spaces between words; unknown values and scientific

@@ -333,28 +333,10 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         writer.writeheader()
         for record in records:
             writer.writerow({k:json.dumps(v) if isinstance(v,(list,dict)) else v for k,v in record.items()})
-    lines = ["# Recommended shortlist", "", f"{len(records)} distinct molecules selected; {payload['pool_molecule_count']} in the assessed eligible pool.", "",
-        *SHORTLIST_EXPLANATION,
-        "| Order | ASO (5′→3′) | Status | Splice safeguards | Off-target screen | Motif flags | Reference Tm (°C) | Reference ΔG (kcal/mol) |",
-        "|---|---|---|---|---|---|---|---|"]
-    for record in records:
-        lines.append("| " + " | ".join(str(record.get(k) if record.get(k) is not None else "unavailable") for k in
-            ("recommendation_order","antisense_5to3","recommendation_status","safeguard_status","off_target_status","motif_flags","reference_tm_c","reference_delta_g_kcal_mol")) + " |")
-    if pending:
-        lines.extend(["", "Shortlist size has not been specified; the full assessed pool is preserved while awaiting the user's preference."])
-    elif shortfall:
-        lines.extend(["", f"The requested minimum is unmet by {shortfall} distinct molecules under the retained constraints."])
-    md_path.write_text("\n".join(lines) + "\n")
+    from .report_assessment import render_shortlist_markdown
+    md_path.write_text(render_shortlist_markdown(shortlist, payload['pool_molecule_count']))
     return {"candidate_assessments_json":str(pool_path),"recommended_shortlist_json":str(shortlist_path),
             "recommended_shortlist_csv":str(csv_path),"recommended_shortlist_md":str(md_path)}
-
-
-SHORTLIST_EXPLANATION = [
-        "Selection applies the requested filters, then uses the design ranking, comparable off-target checks and sequence motifs relevant to the chosen chemistry. Requested panel roles take priority.", "",
-        "Off-targets are other sequences an ASO may also bind. Motif flags identify short sequence patterns for review in the relevant chemistry and biological context.", "",
-        "Tm (melting temperature) and ΔG (binding free energy) describe a perfectly matched, unmodified RNA/DNA duplex at 1 M sodium. They provide a common reference for comparing sequences.", "",
-        "When splicing was modeled, the CSV/JSON also lists predicted increases at unannotated splice sites, with positions and before/after scores.", "",
-]
 
 
 def shortlist_size_specified(goal):

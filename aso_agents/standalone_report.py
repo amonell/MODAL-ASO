@@ -78,7 +78,11 @@ def standalone_html(document: str, *, source_path: Path, source_root: Path):
         raise ValueError('standalone_report_source_outside_run:'+str(source))
     files, admitted, omitted, replacements = {}, {}, [], []
     total = 0
-    for start, end, value, _ in _HTMLLinks(document).links:
+    links = _HTMLLinks(document)
+    # Reserve the bounded download budget for the reader's main output files.
+    # Detailed evidence links can appear earlier in the document.
+    ordered_links = sorted(links.links, key=lambda link: (link[0] not in links.primary_downloads, link[0]))
+    for start, end, value, _ in ordered_links:
         ref = _reference(source, root, value)
         if ref is None:
             continue
@@ -123,7 +127,7 @@ def standalone_html(document: str, *, source_path: Path, source_root: Path):
             else:
                 target='data:'+files[key]['mime']+';base64,'+files[key]['base64']
         replacements.append((start,end,target))
-    for start,end,target in reversed(replacements):
+    for start,end,target in sorted(replacements, reverse=True):
         document=document[:start]+html.escape(target,quote=True)+document[end:]
     packet={'files':files,'omitted':omitted}
     payload=json.dumps(packet,separators=(',',':')).replace('<','\\u003c').replace('&','\\u0026')

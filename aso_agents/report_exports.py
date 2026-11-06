@@ -80,6 +80,7 @@ class _HTMLLinks(HTMLParser):
         self.offsets = [0]
         self.offsets.extend(match.end() for match in re.finditer("\n", text))
         self.links = []
+        self.primary_downloads = set()
         self.feed(text)
 
     def handle_starttag(self, tag, attrs):
@@ -96,6 +97,8 @@ class _HTMLLinks(HTMLParser):
                 raise ValueError("native_report_export_html_base_unsupported")
             self.links.append((offset + match.start(group), offset + match.end(group),
                                html.unescape(match.group(group)), True))
+            if tag.lower() == 'a' and dict(attrs).get('data-download-priority') == 'primary':
+                self.primary_downloads.add(offset + match.start(group))
 
     handle_startendtag = handle_starttag
 

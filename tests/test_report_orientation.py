@@ -69,7 +69,7 @@ Selected candidate rows: {total}. Distinct molecules (antisense sequence plus ch
 def test_partial_candidate_preview_does_not_become_a_claim_of_complete_delivery():
     summary = build_orientation(_sections(candidate_text(7, 2)), {'kind': 'design', 'gene': 'GENE'})
     assert summary['title'] == '7 ASOs for GENE'
-    assert 'previews 2 of 7' in summary['meaning']
+    assert 'preview shows 2 of 7 molecules' in summary['meaning']
     assert summary['facts'] == []
     assert 'successful' not in str(summary)
 

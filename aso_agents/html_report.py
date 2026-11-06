@@ -1581,7 +1581,6 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         <section class="tab-panel active panel reader-content report-content" id="results">
           <div id="quick-overview-alerts">__READER_ALERTS__</div>
           __RESULTS_SECTION__
-          <details><summary>More downloads</summary><div class="artifact-links" id="quick-overview-artifacts"></div></details>
         </section>
         <section class="tab-panel workflow-section" id="workflow">
           <div class="panel panel--strong">
@@ -1924,19 +1923,8 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
 
       function renderQuickOverview() {
         const overview = reportData.overview || {};
-        const labels = {"Native candidate panel (CSV)":"Design candidates (CSV)",
-          "Complete native candidate evidence":"All candidate details (JSON)",
-          "Scored steric pool (Excel)":"All scored steric candidates (Excel)",
-          "Scored gapmer pool (Excel)":"All scored gapmer candidates (Excel)"};
-        const artifactsRoot = document.getElementById("quick-overview-artifacts");
-        const artifacts = overview.primary_artifacts || [];
-        artifactsRoot.innerHTML = artifacts.length
-          ? artifacts.map(item=>`<a class="artifact-link" href="${escapeHtml(item.href)}">${escapeHtml(labels[item.label] || item.label)}</a>`).join("")
-          : '<p>No additional downloads are recorded.</p>';
-        const moreDownloads = artifactsRoot.closest('details');
-        moreDownloads.hidden = !artifacts.length;
-        const downloads = document.querySelector('#results .reader-downloads');
-        if(downloads && artifacts.length)downloads.append(moreDownloads);
+        // Download links are rendered into the file so they work offline and
+        // keep the embedded URLs added by the portable exporter.
         const alerts = (overview.alerts || []).filter(Boolean);
         const alertsRoot = document.getElementById("quick-overview-alerts");
         alertsRoot.innerHTML = alerts.length
@@ -5512,11 +5500,17 @@ def _collect_artifacts(run_path: Path) -> Dict[str, Any]:
     }
 
 
-def _select_primary_artifacts(artifact_inventory: Dict[str, Any]) -> List[Dict[str, str]]:
+def _select_primary_artifacts(artifact_inventory: Dict[str, Any]) -> List[Dict[str, Any]]:
     items = artifact_inventory.get("items") if isinstance(artifact_inventory, dict) else []
     if not isinstance(items, list):
         return []
-    selected: List[Dict[str, str]] = []
+    # Embedded copies of earlier exports can contain the same familiar names.
+    # Primary links should lead to this run's outputs, before its export history.
+    items = [item for item in items if isinstance(item, dict) and item.get('relative_path')
+             and not any(part.endswith('.assets') for part in Path(item['relative_path']).parts)
+             and 'child_runs' not in Path(item['relative_path']).parts]
+    items.sort(key=lambda item: (len(Path(item['relative_path']).parts), item['relative_path']))
+    selected: List[Dict[str, Any]] = []
     seen: Set[str] = set()
     # Start with readable scientific deliverables. Intake/controller traces are
     # supporting implementation records, not the files a recipient should open.
@@ -5530,18 +5524,20 @@ def _select_primary_artifacts(artifact_inventory: Dict[str, Any]) -> List[Dict[s
         ('gapmer_scored_uniqueness.xlsx', 'Scored gapmer pool (Excel)'),
     ]
     for basename, label in priorities:
-        for item in items:
+        matches = [item for item in items if Path(item['relative_path']).name == basename]
+        for number, item in enumerate(matches, 1):
             path = item.get('relative_path') if isinstance(item, dict) else None
             if path and Path(path).name == basename and path not in seen:
                 if basename == 'report.md' and path != 'report.md':
                     continue
-                selected.append({'label': label, 'href': item.get('href')})
+                selected.append({'label': label, 'href': item.get('href'), 'size_label': item.get('size_label') or '',
+                                 'secondary': len(matches) > 1, 'variant': f'{number} of {len(matches)}' if len(matches) > 1 else ''})
                 seen.add(path)
     for item in items:
         path = item.get("relative_path")
         if not path or path in seen or item.get("kind") not in {"excel", "genbank"}:
             continue
-        selected.append({"label": Path(path).name.replace('_', ' '), "href": item.get("href")})
+        selected.append({"label": Path(path).name.replace('_', ' '), "href": item.get("href"), 'secondary': True})
         if len(selected) >= 10:
             break
     return selected[:10]

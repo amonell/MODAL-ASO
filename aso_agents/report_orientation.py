@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import math
+import json
 import re
 from collections import Counter
 
@@ -145,7 +146,7 @@ def _activity_summary(evaluations):
         if (all(type(n) in (int, float) and math.isfinite(n) for n in estimates)
                 and type(dose) in (int, float) and math.isfinite(dose) and dose > 0 and method):
             assumption = 'assuming' if 'assumed_reference_scenario' in (conditions.get('dose_basis'), conditions.get('method_basis')) else 'at'
-            summary['prediction'] = f"OligoAI predicts {min(estimates):.0f}–{max(estimates):.0f}% RNA inhibition, {assumption} {dose:g} nM with {str(method).lower()}."
+            summary['prediction'] = f"OligoAI predicts {min(estimates):.0f}–{max(estimates):.0f}% RNA inhibition across the evaluated ASOs and RNA references, {assumption} {dose:g} nM with {str(method).lower()}."
     return summary
 
 
@@ -168,10 +169,21 @@ def _recorded_cautions(sections, tables):
             own = [table for i, table in tables if i == index and 'off-target screen' in table['headers']]
             if len(own) == 1:
                 table = own[0]; col = table['headers'].index('off-target screen')
-                incomplete = sum(_key(row[col]) == 'incomplete_or_unavailable' for row in table['rows'])
+                incomplete = sum(_key(row[col]) in {'incomplete_or_unavailable', 'incomplete or unavailable'} for row in table['rows'])
                 if incomplete:
                     affected = f'all {incomplete} ASOs' if incomplete == len(table['rows']) else f"{incomplete} of {len(table['rows'])} ASOs"
                     cautions.append((f"Off-targets are other sequences an ASO may also bind. The search is incomplete for {affected}.", source))
+        elif key == 'conditional exon-skipping sequence consequences':
+            try:
+                scenarios = json.loads('\n'.join(section['lines']).strip())
+            except (TypeError, ValueError):
+                scenarios = []
+            if isinstance(scenarios, list):
+                missing = sum(isinstance(item, dict) and item.get('status') in
+                              {'unresolved_reference', 'reference_consequence_unavailable'} for item in scenarios)
+                if missing:
+                    cautions.append((f"Exon-skipping sequence consequences are unavailable for {missing} requested "
+                                     + ('scenario.' if missing == 1 else 'scenarios.'), source))
         elif key == 'oligoai gapmer efficacy prediction':
             own = [table for i, table in tables if i == index and
                    {'candidate', 'status', 'predicted inhibition (%)'} <= set(table['headers'])]
@@ -204,7 +216,7 @@ def design_reader_context(goal, routing=None):
     """Carry typed intent into the view; never infer a goal from a gene name."""
     goal = goal if isinstance(goal, dict) else {}
     programs = [p for p in goal.get('design_programs') or [] if isinstance(p, dict)]
-    fields = ('intent', 'desired_effect', 'exon_label', 'target_region', 'isoform_label')
+    fields = ('intent', 'desired_effect', 'exon_label', 'target_region', 'isoform_label', 'objective')
     context = {}
     for field in fields:
         values = {str(p[field]) for p in programs if p.get(field) is not None}
@@ -212,6 +224,11 @@ def design_reader_context(goal, routing=None):
             context[field] = next(iter(values))
         elif not values and goal.get(field) is not None:
             context[field] = str(goal[field])
+    # Keep event-specific intent intact. A single incomplete program must not
+    # turn a multi-program request into a claim about the whole design.
+    events = [p.get('splice_event') for p in programs] if programs else [goal.get('splice_event')]
+    if events and isinstance(events[0], dict) and all(event == events[0] for event in events):
+        context['splice_event'] = dict(events[0])
     context['routes'] = [row for row in (routing or {}).get('goals') or [] if isinstance(row, dict)]
     return context
 
@@ -221,6 +238,18 @@ def _design_purpose(context, gene):
     target = gene or 'the target'
     exon = str(context.get('exon_label') or '').strip()
     exon_name = f'exon {exon}' if exon else 'the requested exon'
+    event = context.get('splice_event') or {}
+    if isinstance(event, dict) and event.get('event_type') in {'intron_retention', 'intron_excision'}:
+        number = event.get('intron_number')
+        intron = f'intron {number}' if type(number) is int and number > 0 else 'the requested intron'
+        action = 'retain' if event['event_type'] == 'intron_retention' else 'remove'
+        return f'Goal: help {target} RNA {action} {intron} during splicing.'
+    # An alternate splice product or a less common goal can carry several
+    # requirements. Use its saved objective verbatim, without a keyword guess.
+    objective = context.get('objective')
+    if (intent == 'splice_modulation' and (not effect or context.get('isoform_label'))
+            and isinstance(objective, str) and objective.strip() and not objective.endswith('...')):
+        return 'Goal: ' + objective.strip()
     if intent == 'knockdown':
         target = context.get('isoform_label') or target
         return f'Goal: lower {target} RNA.'
@@ -263,8 +292,8 @@ def build_orientation(sections, context=None):
         if candidate:
             result['title'] = f"{candidate['distinct']} " + ('ASO' if candidate['distinct'] == 1 else 'ASOs') + (f' for {gene}' if gene else '')
             note = ''
-            if candidate['shown'] != candidate['total']:
-                note = f"The table previews {candidate['shown']} of {candidate['total']} entries."
+            if candidate['shown'] < candidate['distinct']:
+                note = f"The selected-ASO preview shows {candidate['shown']} of {candidate['distinct']} molecules."
             result['meaning'] = note
             if candidate['total']:
                 result['source_links'].append(('View the ASOs', candidate['source']))
@@ -285,6 +314,7 @@ def build_orientation(sections, context=None):
                 result['notices'].append(f"OligoAI activity predictions are unavailable for {missing} of {activity['total']} ASOs.")
             elif source and activity.get('prediction'):
                 result['meaning'] = ' '.join(part for part in (result['meaning'], activity['prediction']) if part)
+                result['source_links'].append(('Individual activity predictions', source))
         low_routes = [r for r in context.get('routes') or [] if r.get('rank') == 1 and r.get('ranking_confidence') == 'low']
         if low_routes:
             notice = 'Confidence in the leading splicing approach is low.'
@@ -383,6 +413,9 @@ def orientation_html(orientation, *, findings, downloads=None, limitations=None,
                + notice_list_html(orientation) + '</div>') if orientation['notices'] else ''
     first_link = next(iter(orientation.get('source_links') or []), ('Explore the results', findings))
     actions = '<a class="reader-action" href="#' + esc(first_link[1], quote=True) + '">' + esc(first_link[0]) + '</a>'
+    for label, source in (orientation.get('source_links') or [])[1:]:
+        if source != first_link[1]:
+            actions += '<a href="#' + esc(source, quote=True) + '">' + esc(label) + '</a>'
     if downloads:
         actions += '<a href="#' + esc(downloads, quote=True) + '">Get the files</a>'
     if compact:

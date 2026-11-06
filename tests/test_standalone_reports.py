@@ -68,6 +68,24 @@ def test_many_small_downloads_cannot_exceed_the_total_budget(tmp_path, monkeypat
     assert receipt['omitted_links'] == [{'name':'c.csv','reason':'download_size_limit','bytes':8}]
 
 
+def test_primary_downloads_get_the_budget_before_earlier_supporting_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(standalone_report, 'MAX_DOWNLOAD_TOTAL_BYTES', 16)
+    for name in ['detail_a.csv', 'detail_b.csv', 'panel.csv']:
+        (tmp_path/name).write_bytes(b'12345678')
+    source = tmp_path/'report.html'
+    source.write_text('<html><body><p>Scientific result: 0</p><a href="detail_a.csv">First details</a>'
+                      '<a href="detail_b.csv">Second details</a>'
+                      '<a data-download-priority="primary" href="panel.csv">Selected ASOs</a></body></html>')
+    page, receipt = standalone_report.standalone_html(source.read_text(), source_path=source, source_root=tmp_path)
+    assert receipt['embedded_bytes'] == 16
+    assert receipt['omitted_links'] == [{'name': 'detail_b.csv', 'reason': 'download_size_limit', 'bytes': 8}]
+    packet = json.loads(re.search(r'<script id="modal-portable-assets" type="application/json">(.*?)</script>', page, re.S)[1])
+    assert {item['name'] for item in packet['files'].values()} == {'panel.csv', 'detail_a.csv'}
+    assert 'Scientific result: 0' in page
+    assert page.index('First details') < page.index('Second details') < page.index('Selected ASOs')
+    assert re.search(r'href="#portable-file-[^"]+">Selected ASOs</a>', page)
+
+
 def test_legacy_bundle_does_not_copy_unlinked_genome_or_symlink(tmp_path):
     source = tmp_path/'legacy'/'report.md'; source.parent.mkdir()
     source.write_text('[Data](report.md.assets/data.csv)')

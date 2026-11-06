@@ -457,7 +457,8 @@ def test_gapmer_report_does_not_treat_isoform_hits_as_offtargets(tmp_path) -> No
     assert "| 1 | ENST00000262410_cdna238-257 | ACCATGCACCAAGACCAAGA (unverified_source_sequence); synthesized ASO: unverified | gene_wide | 0.8909 | 49 / NA | NA | NA | NA / NA |" in markdown
     assert "| exact off-targets |" not in markdown
     assert "1/1 scored rows have 0 off-target gene hits" not in markdown
-    assert "Do not filter `Times_mapped`" in markdown
+    assert "Target-isoform counts describe how many RNA versions of that gene contain the binding site" in markdown
+    assert "Off-target counts describe matches outside the intended gene" in markdown
     assert "legacy alias for that same target-isoform hit count" in markdown
 
 

@@ -91,6 +91,8 @@ body{margin:0;background:#f7f9f7;color:var(--reader-ink);font:16px/1.65 system-u
 .reader-candidate summary{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .reader-candidate summary>span{min-width:4em}.reader-candidate .reader-aso-sequence{display:block;margin-top:6px;font-size:.95rem;font-weight:400;overflow-wrap:anywhere;width:fit-content;max-width:100%}
 .reader-candidate dl{margin:0}.reader-candidate dt{font-size:.85rem;color:var(--reader-muted);margin-top:10px}.reader-candidate dd{margin:0;overflow-wrap:anywhere}
+.reader-candidate summary>.reader-candidate-check{flex-basis:100%;font-size:.85rem;font-weight:400;color:var(--reader-muted);line-height:1.5}
+.reader-panel-chemistry{font-size:.92rem;margin:0 0 18px}.reader-panel-chemistry h3{margin:0 0 6px}.reader-panel-chemistry p{margin:6px 0}
 @media(max-width:600px){.reader-facts{gap:8px}.reader-fact{padding:12px;flex-basis:calc(50% - 4px);max-width:none}.reader-fact-value{font-size:1.6rem}.reader-fact-label{font-size:.9rem}.reader-orientation h2{font-size:1.35rem}}
 :focus-visible{outline:3px solid #23624e;outline-offset:3px}
 @media(max-width:600px){.reader-page{padding:20px 12px 40px}.reader-content{padding:18px 14px}.reader-header h1{font-size:1.6rem}.reader-glossary dl{display:block}.reader-glossary dd{margin:0 0 14px}.reader-content details{padding:10px}}
@@ -151,7 +153,7 @@ HEADING_LABELS = {
     "suggested follow-up": "Suggested follow-up",
     "original intervals and assembly conversion evidence": "Requested regions and genome coordinates",
     "translation-start evidence for the selected panel": "Binding near the start codon",
-    "recommended shortlist": "Selection and checks",
+    "recommended shortlist": "Selection checks for each ASO",
     "source search evidence": "Binding-site datasets",
     "protected-transcript sequence discrimination": "Matches to the isoform to preserve",
 }
@@ -248,6 +250,9 @@ TABLE_LABELS = {
     'exact antisense records': 'Recorded exact matches',
     'minimum retained antisense mismatches': 'Fewest base differences in retained matches',
     'other-gene screening count': 'Other genes matched',
+    'route': 'Predicted splice-site response',
+    'candidates': 'ASOs in this group',
+    'confidence': 'Confidence in this approach',
 }
 # Redundant arithmetic and input-row bookkeeping can be opened on demand.
 # Unknown columns and all decision/result/limitation columns remain visible.
@@ -271,10 +276,13 @@ STATUS_LABELS = {
     'not_requested': 'Outside this analysis',
     'incomplete_or_unavailable': 'Incomplete',
     'complete_within_declared_scope': 'Completed',
-    'provisional': 'Review needed',
+    'provisional': 'Some evidence unavailable',
+    'computational_candidate': 'Computational checks available',
+    'exploratory': 'Prediction requires review',
     'not attested': 'Not verified',
     'not_screened': 'Search not performed',
     'complete': 'Complete',
+    'unmeasured': 'Measurements unavailable',
     'unavailable': 'Unavailable',
     'retained': 'Kept',
     'excluded': 'Excluded',
@@ -288,11 +296,7 @@ MISSING_RESULT_COLUMNS = {
     'offtarget_hits', 'predicted inhibition (%)', 'minimum retained antisense mismatches',
     'coverage fraction', 'reference tm (°c)', 'reference δg (kcal/mol)',
 }
-MOTIF_LABELS = {
-    'lna_383_tgc': 'TGC motif (study in LNA 3–8–3 gapmers)',
-    'lna_383_tcc': 'TCC motif (study in LNA 3–8–3 gapmers)',
-    'cpg_immune_context': 'CG (CpG) motif',
-}
+from .report_candidate_view import MOTIF_LABELS
 
 
 def _reason_label(value):
@@ -340,12 +344,15 @@ def friendly_tables(fragment):
                             + ' · group details</summary><p>Design group: <code>'
                             + html.escape(rank[2]) + '</code></p></details></td>')
                 if key == 'genomic screening':
-                    from .report_candidate_view import screening_fields
+                    from .report_candidate_view import screening_fields, screening_summary
                     if fields := screening_fields(raw):
                         return ('<td data-recorded-value="' + html.escape(raw, quote=True) + '">'
-                                + value_html(dict(fields)) + '</td>')
+                                + '<details><summary>' + html.escape(screening_summary(raw)) + '</summary>'
+                                + value_html(dict(fields)) + '</details></td>')
                 if key in {'status', 'outcome', 'retention_status', 'off-target screen', 'splice safeguards', 'screening status'}:
-                    label = STATUS_LABELS.get(raw, VALUE_LABELS.get(raw, raw))
+                    label = ({'passed': 'Within the specified limits', 'failed': 'Outside the specified limits'}[raw]
+                             if key == 'splice safeguards' and raw in {'passed', 'failed'}
+                             else STATUS_LABELS.get(raw, VALUE_LABELS.get(raw, raw)))
                 elif key in MISSING_RESULT_COLUMNS and raw in {'None', 'null', 'NA', 'N/A', 'unknown'}:
                     label = 'Not reported'
                 elif key == 'motif flags':
@@ -388,6 +395,9 @@ def friendly_tables(fragment):
 
 TERMS = (
     (r"\bASOs?\b|antisense", "ASO", "An antisense oligonucleotide: a short synthetic strand designed to bind RNA."),
+    (r"\bloci\b|\blocus\b", "Locus / loci", "A locus is one position in a reference genome. Loci are counted as positions; several can belong to the same gene."),
+    (r"\bPMO\b|morpholino", "PMO", "Phosphorodiamidate morpholino oligomer: an ASO with morpholino units and phosphorodiamidate links."),
+    (r"safeguard", "Splice safeguard", "A check that predicted changes at a specified splice site stay within the requested limits."),
     (r"\bRNA\b|transcript", "RNA / transcript", "RNA carries or helps use genetic instructions. A transcript is one RNA product of a gene; different versions can contain different regions."),
     (r"splic", "Splicing", "How pieces of RNA are joined. Changes in splicing can change which RNA version is produced."),
     (r"gapmer", "Gapmer", "An ASO with a central DNA segment and modified ends, designed to recruit RNase H to cut the target RNA."),
@@ -517,8 +527,8 @@ def _evidence_body(lines, report_dir):
     return ''.join(parts)
 
 
-def _disclosure(section_id, label, body, hint=''):
-    return ('<details class="reader-evidence" id="' + section_id + '"><summary>' + html.escape(label)
+def _disclosure(section_id, label, body, hint='', *, opened=False):
+    return ('<details class="reader-evidence" id="' + section_id + '"' + (' open' if opened else '') + '><summary>' + html.escape(label)
             + ('<span class="reader-detail-hint">' + html.escape(hint) + '</span>' if hint else '')
             + '</summary><div>' + body + '</div></details>')
 
@@ -579,15 +589,15 @@ def _group_design_evidence(evidence, sections):
         key = sections[item[0]]['heading'].casefold()
         (reasons if key in rationale else other if key in alternatives else primary).append(item)
     for group, anchor, label, hint in (
-        (reasons, 'reader-rationale', 'Chemistry, predictions and checks', ''),
-        (other, 'reader-other-designs', 'Other designs considered', 'The wider search, grouped by ranking or binding site.'),
+        (reasons, 'reader-rationale', 'Predictions and selection checks', 'Model results, selection reasons and checks on each ASO.'),
+        (other, 'reader-other-designs', 'Explore the wider search', 'Additional candidate groups and their original rankings.'),
     ):
         if group:
             primary.append((-1, anchor, label, _disclosure(anchor, label, ''.join(item[3] for item in group), hint)))
     return primary
 
 
-def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None, context=None, inventory_html=''):
+def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None, context=None, inventory_html='', downloads_html=''):
     """Reorganize saved text for reading without editing its evidence blocks.
 
     Reordering is limited to known result/limitation sections. Every original
@@ -597,7 +607,12 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     from .report_orientation import build_orientation, orientation_html
     orientation_data = build_orientation(sections, context)
     visible, details, evidence, intro, downloads = [], [], [], [], []
+    panel_indices = [i for i, s in enumerate(sections) if s['heading'].casefold() == 'selected physical panel']
+    chemistry_indices = [i for i, s in enumerate(sections) if s['heading'].casefold() == 'physical chemistry']
+    inline_chemistry = chemistry_indices[0] if len(panel_indices) == len(chemistry_indices) == 1 else None
     for index, section in enumerate(sections):
+        if index == inline_chemistry:
+            continue
         heading = section['heading']; key = heading.casefold()
         label = HEADING_LABELS.get(key, heading)
         body = friendly_tables(markdown_html('\n'.join(section['lines']), report_dir))
@@ -637,22 +652,41 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
             if counts:
                 content += '<details><summary>Selection counts</summary>' + markdown_html('\n'.join(counts), report_dir) + '</details>'
             if key == 'selected physical panel':
-                from .report_candidate_view import candidate_reading_view
+                from .report_candidate_view import candidate_reading_view, panel_check_records
                 from .report_orientation import _candidate_summary, section_tables
-                reading_view = candidate_reading_view(section)
+                reading_view = candidate_reading_view(section, checks=panel_check_records(section, sections))
                 if reading_view:
                     counts_view = _candidate_summary([section], [(0, table) for table in section_tables(section)])
                     preview = counts_view and counts_view['shown'] < counts_view['distinct']
                     table_label = 'Preview table' if preview else 'Full selected-ASO table'
                     content = reading_view + '<details><summary>' + table_label + '</summary>' + content + '</details>'
                     if preview and inventory_html:
-                        content += '<p><a href="#reader-design-inventory">Browse the complete design table</a></p>'
+                        content += '<p><a href="#reader-design-inventory">Browse all design records</a></p>'
+                if inline_chemistry is not None:
+                    chemistry_lines = sections[inline_chemistry]['lines']
+                    chemistry = _evidence_body(chemistry_lines, report_dir)
+                    # Keep the concise physical identity beside the sequences;
+                    # remaining chemistry paragraphs retain their own disclosure.
+                    first, closing, rest = chemistry.partition('</p>')
+                    specifications = sum(line.strip().startswith('Sugars (5′→3′):') for line in chemistry_lines)
+                    if specifications > 1:
+                        chemistry = ('<p>This panel includes multiple chemistry specifications.</p>'
+                                     '<details><summary>View the chemistry specifications</summary>' + chemistry + '</details>')
+                    elif specifications == 1 and closing and first.lstrip().startswith('<p>'):
+                        chemistry = first + closing + ('<details><summary>Chemistry details</summary>' + rest + '</details>' if rest.strip() else '')
+                    content = ('<section class="reader-panel-chemistry" id="reader-section-' + str(inline_chemistry)
+                               + '"><h3>ASO chemistry</h3>' + chemistry + '</section>' + content)
             elif key == 'oligoai gapmer efficacy prediction':
                 from .report_candidate_view import prediction_reading_view
                 reading_view = prediction_reading_view(section)
                 if reading_view:
                     content = reading_view + '<details><summary>All prediction records and model details</summary>' + content + '</details>'
-            disclosure = _disclosure(section_id, label, content, EVIDENCE_HEADINGS[key])
+            elif key == 'predicted splice-response candidate sets':
+                content = ('<p>Acceptor sites mark the start of an exon; donor sites mark its end. '
+                           'Each row groups ASOs by their predicted effect on one splice site. '
+                           'The changes are unitless model scores. Confidence describes the ranking of these approaches.</p>' + content)
+            disclosure = _disclosure(section_id, label, content, EVIDENCE_HEADINGS[key],
+                                     opened=key == 'selected physical panel')
             if key == 'conditional exon-skipping sequence consequences':
                 details.append(disclosure)
             else:
@@ -666,6 +700,8 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
                 body = _limitation_body(section['lines'], report_dir)
             elif key in {'practical interpretation', 'main finding', 'bottom line'}:
                 body = _evidence_body(section['lines'], report_dir)
+            elif key == 'requested output files':
+                body = body.replace('<a ', '<a data-download-priority="primary" ')
             content = '<h2>' + html.escape(label) + '</h2>' + body
             item = (index, section_id, label, '<section class="reader-section' + cls + '" id="' + section_id + '">' + content + '</section>')
             if key == 'requested output files':
@@ -678,9 +714,9 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     if (context or {}).get('kind') == 'design':
         evidence = _group_design_evidence(evidence, sections)
     if inventory_html:
-        evidence.append((-1, 'reader-design-inventory', 'Complete design table',
-            _disclosure('reader-design-inventory', 'Complete design table', friendly_tables(inventory_html),
-                        'Browse ASO sequences, chemistry and recorded results.')))
+        evidence.append((-1, 'reader-design-inventory', 'All design records',
+            _disclosure('reader-design-inventory', 'All design records', friendly_tables(inventory_html),
+                        'Searchable tables with every saved design entry. Each table states its scope.')))
     blocks = [item for _, item in visible]
     limits = next((item for priority, item in visible if priority == 1), None)
     if limits and orientation_data['notices']:
@@ -699,10 +735,18 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     detail_html = (_disclosure('reader-details', 'Methods, references and run details', ''.join(details),
                               'How the analysis was done, which references were used, and the complete run context.')
                    if details else '')
+    if downloads and downloads_html:
+        # Existing requested deliverables and supplemental output links share
+        # one destination. Retain the original requested-files source anchor.
+        first = downloads[0]
+        before, closing, after = first[3].rpartition('</section>')
+        downloads_html = downloads_html.replace('<h2>Download files</h2>', '<h3>Additional output files</h3>', 1)
+        downloads[0] = (*first[:3], before + downloads_html + closing + after)
+        downloads_html = ''
     main_findings = [item for item in blocks if sections[item[0]]['heading'].casefold() in {'main finding', 'bottom line'}]
     compact = orientation_data['kind'] != 'design' and bool(main_findings or lead)
     orientation = orientation_html(orientation_data, findings='reader-findings',
-                                   downloads=downloads[0][1] if downloads else None,
+                                   downloads=downloads[0][1] if downloads else 'reader-output-files' if downloads_html else None,
                                    limitations=limits[1] if limits else None, compact=compact)
     # A specific finding already introduces an unstructured analysis. Do not
     # put a second, generic "this is an analysis" preamble in front of it.
@@ -718,7 +762,7 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
     from .report_tables import page_large_tables
     return page_large_tables(readable_prose(opening + ''.join(item[3] for item in blocks)
             + tools
-            + ''.join(item[3] for item in evidence) + ''.join(item[3] for item in downloads)
+            + ''.join(item[3] for item in evidence) + ''.join(item[3] for item in downloads) + downloads_html
             + detail_html + terms))
 
 
@@ -803,6 +847,39 @@ def basic_document(title, markdown, report_dir=None):
             + '</header><main class="reader-content report-content">' + body + '</main></div>' + READER_SCRIPT + '</body></html>')
 
 
+def design_downloads(payload):
+    """Keep local output links usable before JavaScript, including portable HTML."""
+    from urllib.parse import urlsplit
+    labels = {'Native candidate panel (CSV)': 'Design ASOs and chemistry (CSV)',
+              'Complete native candidate evidence': 'All candidate details (JSON)',
+              'Scored steric pool (Excel)': 'Scored steric candidates (Excel)',
+              'Scored gapmer pool (Excel)': 'Scored gapmer candidates (Excel)'}
+    links, secondary, seen = [], [], set()
+    artifacts = (payload.get('overview') or {}).get('primary_artifacts') or []
+    inventory = (payload.get('outputs') or {}).get('artifacts') or {}
+    if inventory.get('items'):
+        from .html_report import _select_primary_artifacts
+        artifacts = _select_primary_artifacts(inventory)
+    for item in artifacts:
+        href = item.get('href')
+        if not isinstance(href, str) or not href or href in seen or urlsplit(href).scheme not in {'', 'file', 'http', 'https'}:
+            continue
+        seen.add(href)
+        label = labels.get(item.get('label'), item.get('label') or 'Output file')
+        if item.get('variant'):
+            label += ' · ' + str(item['variant'])
+        size = ' · ' + str(item['size_label']) if item.get('size_label') else ''
+        priority = '' if item.get('secondary') else ' data-download-priority="primary"'
+        (secondary if item.get('secondary') else links).append('<a class="artifact-link"' + priority + ' href="' + html.escape(href, quote=True) + '" title="' + html.escape(href, quote=True)
+                                                              + '">' + html.escape(label + size) + '</a>')
+    if not links and not secondary:
+        return ''
+    return ('<section class="reader-section reader-downloads" id="reader-output-files"><h2>Download files</h2>'
+            '<p>The CSV opens in spreadsheet software. JSON files contain the full analysis records.</p>'
+            '<div class="artifact-links" id="quick-overview-artifacts">' + ''.join(links) + '</div>'
+            + ('<details><summary>Additional analysis files</summary><div class="artifact-links">' + ''.join(secondary) + '</div></details>' if secondary else '') + '</section>')
+
+
 def design_results(payload):
     """Render the saved narrative first, retaining the complete design inventory.
 
@@ -814,7 +891,7 @@ def design_results(payload):
     saved = payload.get('results_html') or ''
     markdown = (payload.get('overview') or {}).get('report_markdown') or ''
     if not markdown:
-        return page_large_tables(saved) if saved else '<p>Final results are not recorded.</p>'
+        return (page_large_tables(saved) if saved else '<p>Final results are not recorded.</p>') + design_downloads(payload)
     meta = payload.get('meta') or {}
     from .report_orientation import design_reader_context
     reader_context = payload.get('reader_context')
@@ -827,7 +904,7 @@ def design_results(payload):
     body = readable_markdown_html(markdown, payload.get('oligoai_report_dir'), header_request=meta.get('user_request'),
                                   context={**reader_context, 'kind': 'design', 'gene': meta.get('gene_symbol') or meta.get('gene_id'),
                                            'evaluations': payload.get('oligoai_evaluations') or []},
-                                  inventory_html=inventory if separator else '')
+                                  inventory_html=inventory if separator else '', downloads_html=design_downloads(payload))
     if saved and not separator:
         # Older or unknown payload layouts are never silently discarded.
         body += '<details><summary>Additional saved results</summary>' + saved + '</details>'

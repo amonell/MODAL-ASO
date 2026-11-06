@@ -579,18 +579,20 @@ def molecule_chemistry_summary(molecule):
     """Describe the stored chemical identity without inferring modifications."""
     from itertools import groupby
     sugars = molecule['nucleotide_sugars_5to3']
-    sugar_names = {'2MOE': '2′-MOE', 'DNA': 'DNA', 'LNA': 'LNA', 'RNA': 'RNA'}
+    sugar_names = {'2MOE': '2′-MOE', 'DNA': 'DNA', 'LNA': 'LNA', 'RNA': 'RNA', 'MORPHOLINO': 'morpholino'}
     groups = [(key, len(list(items))) for key, items in groupby(sugars)]
     sugar_text = ' – '.join(f"{count} {sugar_names.get(key, key)}" for key, count in groups)
     links = molecule['linkages_5to3']
-    backbone_names = {'PS': 'phosphorothioate (PS)', 'PO': 'phosphodiester (PO)'}
+    backbone_names = {'PS': 'phosphorothioate (PS)', 'PO': 'phosphodiester (PO)', 'PHOSPHORODIAMIDATE': 'phosphorodiamidate'}
     backbone = ', '.join(backbone_names.get(key, key) for key in sorted(set(links))) or 'no internucleotide bonds'
     modifications = sorted({mod for base, mod in zip(molecule['antisense_5to3'], molecule['base_modifications_5to3']) if base == 'C'})
     modifications = [{'5mC': '5-methylcytosine (5mC)', 'none': 'unmodified'}.get(mod, mod) for mod in modifications]
     stereo = {'not_stereodefined': 'unspecified'}.get(molecule['PS_stereochemistry'], molecule['PS_stereochemistry'])
-    status = {'attested': 'checked against the chemistry record'}.get(molecule['ordering_status'], molecule['ordering_status'])
+    status = {'attested': 'checked against the chemistry record',
+              'vendor_notation_unsupported': 'supplier-specific notation unavailable; use the full chemistry specification',
+              'unavailable': 'unavailable'}.get(molecule['ordering_status'], molecule['ordering_status'])
     return (f"Sugars (5′→3′): {sugar_text}. Backbone: {backbone}. "
-            f"Cytosines: {', '.join(modifications) or 'none'}. PS stereochemistry: {stereo}. Ordering string: {status}.")
+            f"\n\nCytosines: {', '.join(modifications) or 'none'}. PS stereochemistry: {stereo}. Ordering string: {status}.")
 
 
 def write_design_panel(candidate_set, goal, output_directory):
@@ -716,13 +718,14 @@ def write_design_panel(candidate_set, goal, output_directory):
             screen = str(record['off_target_search_status'] or 'unknown')
             budget = record['off_target_mismatch_budget']
             exact = record['off_target_exact_count']
-            one_mm = record['off_target_1mm_count']
             if budget is not None:
                 screen += f"; searched ≤{budget} mismatch(es)"
             if exact is not None:
                 screen += f"; exact={exact} {record['off_target_exact_count_unit'] or 'hits'}"
-            if one_mm is not None:
-                screen += f"; 1mm={one_mm} recorded hits"
+            for mismatches in (1, 2, 3):
+                count = record[f'off_target_{mismatches}mm_count']
+                if count is not None:
+                    screen += f"; {mismatches}mm={count} recorded hits"
             lines.append(f"| {index} | {rank} / {scope} | {record['antisense_5to3'] or 'unverified'} | {record['physical_binding_intervals_bed0']} | {record['target_genomic_strand'] or 'unresolved'} | {record['physical_element_explanation'] or 'No annotated boundary crossing established'} | {record['predicted_response_site']} | {screen} |")
     if exported:
         with csv_path.open("w", newline="") as handle:
@@ -738,7 +741,7 @@ def write_design_panel(candidate_set, goal, output_directory):
         chemistry_summaries.add(molecule_chemistry_summary(molecule))
     if chemistry_summaries:
         lines.extend(["", "## Physical chemistry", "", *sorted(chemistry_summaries), "",
-                      "The CSV and JSON list every sugar, base modification and linkage, with the ordering string for each molecule."])
+                      "The CSV and JSON list every sugar, base modification and linkage. Supplier ordering notation is included where available."])
     if ordered_roles:
         lines.extend(["", "## Requested role selection", "",
             "Selection status: " + str(role_selection.get("status") or "unresolved") + ". "
@@ -752,7 +755,7 @@ def write_design_panel(candidate_set, goal, output_directory):
             lines.extend(["", "Unresolved selection: " + str(role_selection["reason"]) + "."])
         lines.extend(["", "Exact ranking values, skipped reused molecules and role assignments are recorded in "
             "[generated_aso_set.json](generated_aso_set.json). The complete pool after hard eligibility is retained in "
-            "[role_selection_eligible_pool.json](role_selection_eligible_pool.json); it is not the unfiltered tiling library."])
+            "[role_selection_eligible_pool.json](role_selection_eligible_pool.json). This pool contains the candidates that passed the eligibility filters."])
     lines.extend(["", "## Selection and evidence", "",
                   "Selection policy: " + str((candidate_set.get("candidate_selection") or {}).get("method") or "recorded native ranking") + ".",
                   "", "The preview shows each distinct ASO once. The CSV includes all binding sites and prediction results for each molecule. Ranks apply within the named design group. Splice-element labels identify the exons, introns or boundaries covered by an ASO. Response coordinates identify the splice site whose model score changed; binding coordinates identify where the ASO pairs with RNA.",
