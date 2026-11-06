@@ -3845,6 +3845,57 @@ def _program_isoform_abundance_directions(structured_goal, base_program):
     return directions
 
 
+def _junction_product_reference_binding(entry, structured_goal, base_program, identity_aliases):
+    """Keep a reference-scoped exon program connected to its defined products.
+
+    The reference supplies exon geometry. Product abundance remains attached to
+    the product's own identity and never becomes reference-transcript abundance.
+    """
+    catalog = structured_goal.get("isoform_transcripts") or {}
+    requested_exons = set(base_program.get("exon_labels") or [])
+    if base_program.get("exon_label") is not None:
+        requested_exons.add(base_program["exon_label"])
+    if not requested_exons:
+        return None
+    for objective in structured_goal.get("splice_isoform_objectives") or []:
+        if not isinstance(objective, dict) or not objective.get("junction_changes"):
+            continue
+        label = objective.get("isoform_label")
+        product = catalog.get(label) or {}
+        metadata = product.get("metadata") or {}
+        parent_label = metadata.get("base_isoform_label")
+        parent = catalog.get(parent_label) or {}
+        reference = objective.get("reference_accession")
+        if (metadata.get("source") != "junction_defined_product"
+                or metadata.get("parent_reference_accession") != reference
+                or metadata.get("junction_changes") != objective["junction_changes"]
+                or metadata.get("base_transcript_id") != parent.get("transcript_id")
+                or not reference or reference.casefold() not in identity_aliases):
+            continue
+        ordinals = {target["exon_label"] for target in metadata.get("junction_exon_changes") or []
+                    if target.get("requested_exon_label") in requested_exons}
+        for model_label, model, direction in (
+            (label, product, objective.get("desired_abundance")),
+            (parent_label, parent, "context"),
+        ):
+            if direction not in {"increase", "decrease", "context"}:
+                continue
+            if not _exploratory_site_matches_program_scope(
+                entry, identity_aliases={model_label.casefold()}, desired_delta=direction,
+            ):
+                continue
+            for site in model.get("sites") or []:
+                kind = entry.get("site")
+                if (kind in {"acceptor", "donor"} and site.get("exon_index") in ordinals
+                        and site.get(kind) == entry.get("position")
+                        and site.get("strand") == entry.get("strand")
+                        and _chrom_aliases(site.get("chrom")) & _chrom_aliases(entry.get("chrom"))):
+                    return {"product_identity": label, "parent_reference": reference,
+                            "exon_ordinal": site["exon_index"],
+                            "source": "typed_junction_product_on_reference_exon"}
+    return None
+
+
 def _scope_exploratory_sites_to_program(
     *,
     structured_goal: Dict[str, Any],
@@ -3864,6 +3915,13 @@ def _scope_exploratory_sites_to_program(
     identity_direction = next(iter(abundance_directions), desired_delta)
     scoped = []
     for entry in site_entries:
+        if not abundance_directions:
+            binding = _junction_product_reference_binding(
+                entry, structured_goal, base_program or {}, identity_aliases,
+            )
+            if binding:
+                scoped.append({**entry, "junction_product_reference_binding": binding})
+                continue
         if _exploratory_site_matches_program_scope(
             entry,
             identity_aliases=identity_aliases,
@@ -4496,6 +4554,14 @@ def _derive_exploratory_steric_programs(
     if explicit_bindings:
         derived_program["explicit_target_model_bindings"] = explicit_bindings
         derivation_meta["explicit_target_model_bindings"] = deepcopy(explicit_bindings)
+    junction_bindings = []
+    for entry in site_entries:
+        binding = entry.get("junction_product_reference_binding")
+        if binding and binding not in junction_bindings:
+            junction_bindings.append(deepcopy(binding))
+    if junction_bindings:
+        derived_program["junction_product_reference_bindings"] = junction_bindings
+        derivation_meta["junction_product_reference_bindings"] = deepcopy(junction_bindings)
     return [derived_program], derivation_meta
 
 

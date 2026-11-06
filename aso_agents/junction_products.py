@@ -113,6 +113,7 @@ def materialize_junction_products(runtime, goal, final_payload=None):
         metadata.update(id=product_id, display_name=label, source="junction_defined_product",
                         reference_source="junction_defined_product", junction_defined_product=True,
                         junction_changes=deepcopy(objective["junction_changes"]),
+                        junction_exon_changes=deepcopy(targets),
                         parent_reference_accession=reference, geometry_sha256=fingerprint,
                         description="Constructed splice product using the requested junction changes and the verified parent reference.")
         existing = catalog.get(label)

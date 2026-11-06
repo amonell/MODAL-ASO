@@ -127,6 +127,62 @@ def test_aggregate_reference_does_not_become_transcript_abundance_objective():
     assert pipeline_tools._program_isoform_abundance_directions(goal, {"transcript_id": REFERENCE}) == set()
 
 
+@pytest.mark.parametrize("strand", ["+", "-"])
+def test_reference_scoped_program_keeps_requested_junction_product_sites(strand):
+    goal = example(strand)
+    materialize_junction_products(native, goal)
+    goal["splice_site_plan"], _ = native._compute_splice_site_plan(
+        goal["splice_isoform_objectives"], goal["isoform_transcripts"], goal)
+    program = {**goal["design_programs"][0], "transcript_id": REFERENCE,
+               "desired_effect": "inclusion"}
+    program.pop("isoform_label")
+    original = deepcopy(goal)
+    derived, _ = pipeline_tools._derive_exploratory_steric_programs(
+        structured_goal=goal, base_program=program)
+    assert len(derived) == 1
+    assert set(derived[0]["candidate_sites"]) == (
+        {"acceptor@301", "acceptor@304", "donor@399"} if strand == "+" else
+        {"acceptor@399", "acceptor@396", "donor@301"})
+    assert derived[0]["transcript_id"] == REFERENCE
+    assert derived[0]["desired_delta"] == "increase"
+    assert derived[0]["junction_product_reference_bindings"][0]["product_identity"] == "shorter_exon_product"
+    assert goal == original
+
+
+@pytest.mark.parametrize("fault", ["other_reference", "other_exon", "unmaterialized_product",
+                                  "changed_definition", "wrong_position", "wrong_strand", "wrong_chrom",
+                                  "opposite_product_direction", "reference_abundance_objective"])
+def test_reference_product_binding_preserves_identity_geometry_and_direction(fault):
+    goal = example()
+    materialize_junction_products(native, goal)
+    plan, _ = native._compute_splice_site_plan(
+        goal["splice_isoform_objectives"], goal["isoform_transcripts"], goal)
+    alternative = next(s for s in plan if s["position"] == 304)
+    program = {"transcript_id": REFERENCE, "exon_label": 2, "desired_delta": "increase"}
+    product = goal["isoform_transcripts"]["shorter_exon_product"]
+    if fault == "other_reference":
+        program["transcript_id"] = "ENST00000000002.2"
+    elif fault == "other_exon":
+        program["exon_label"] = 3
+    elif fault == "unmaterialized_product":
+        product["metadata"]["source"] = "reference_annotation"
+    elif fault == "changed_definition":
+        goal["splice_isoform_objectives"][0]["junction_changes"][0]["start"] += 1
+    elif fault == "wrong_position":
+        alternative["position"] += 1
+    elif fault == "wrong_strand":
+        alternative["strand"] = "-"
+    elif fault == "wrong_chrom":
+        alternative["chrom"] = "chr9"
+    elif fault == "opposite_product_direction":
+        alternative["delta_per_isoform"]["shorter_exon_product"] = "decrease"
+    elif fault == "reference_abundance_objective":
+        goal["splice_isoform_objectives"].append({"objective_scope": "specific_isoform",
+            "transcript_id": REFERENCE, "desired_abundance": "increase"})
+    assert pipeline_tools._scope_exploratory_sites_to_program(
+        structured_goal=goal, site_entries=[alternative], base_program=program) == []
+
+
 def test_preserving_a_request_accession_does_not_rename_its_derived_product():
     goal = example()
     goal.pop("transcript_lock")
