@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
+from functools import lru_cache
 import sys
 import importlib.util
 from functools import lru_cache
@@ -133,13 +133,15 @@ def _parse_requests(payload: Dict[str, object]) -> Tuple[str, int, List[EvalRequ
                 donor_index = int(site["donor_index"])
             except Exception as exc:
                 raise ValueError(f"request[{idx}].sites[{site_idx}] missing indices: {exc}") from exc
-            window = int(site.get("window") or 50)
+            window = int(site.get("window", 50))
             sites.append(
                 {
                     "key": str(site.get("key") or f"site_{site_idx}"),
                     "acceptor_index": acceptor_index,
                     "donor_index": donor_index,
                     "window": window,
+                    "acceptor_window": int(site.get("acceptor_window", window)),
+                    "donor_window": int(site.get("donor_window", window)),
                 }
             )
 
@@ -150,7 +152,9 @@ def _parse_requests(payload: Dict[str, object]) -> Tuple[str, int, List[EvalRequ
                 primary = {
                     "acceptor_index": int(primary_raw["acceptor_index"]),
                     "donor_index": int(primary_raw["donor_index"]),
-                    "window": int(primary_raw.get("window") or 50),
+                    "window": int(primary_raw.get("window", 50)),
+                    "acceptor_window": int(primary_raw.get("acceptor_window", primary_raw.get("window", 50))),
+                    "donor_window": int(primary_raw.get("donor_window", primary_raw.get("window", 50))),
                 }
             except Exception:
                 primary = None
@@ -192,38 +196,24 @@ class OpenSpliceAIModel:
         return flat[:length, :].numpy()
 
 
-def _window_max(arr: np.ndarray, index: int, window: int, column: int) -> float:
-    if index < 0 or index >= arr.shape[0]:
-        return 0.0
-    lo = max(0, index - window)
-    hi = min(arr.shape[0], index + window + 1)
-    if hi <= lo:
-        return 0.0
-    return float(np.max(arr[lo:hi, column]))
+@lru_cache(maxsize=1)
+def _measurement_calculator():
+    # The model worker can run in an interpreter without harness dependencies.
+    import importlib.util
+    script = Path(__file__).resolve()
+    candidates = [script.parents[1] / "aso_agents" / "splice_measurement_windows.py",
+                  script.parents[2] / "splice_measurement_windows.py"]
+    path = next((path for path in candidates if path.is_file()), None)
+    if path is None:
+        raise FileNotFoundError("Packaged splice measurement helper is missing")
+    spec = importlib.util.spec_from_file_location("modal_splice_measurement_windows", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.delta_metrics
 
 
-def _compute_metrics(
-    pred_ref: np.ndarray,
-    pred_alt: np.ndarray,
-    acc_idx: int,
-    don_idx: int,
-    window: int,
-) -> Dict[str, Optional[float]]:
-    metrics: Dict[str, Optional[float]] = {"pair": None, "acceptor": None, "donor": None}
-    if pred_ref.shape[0] == 0 or pred_alt.shape[0] == 0:
-        return metrics
-
-    acc_ref = _window_max(pred_ref, acc_idx, window, column=1)
-    acc_alt = _window_max(pred_alt, acc_idx, window, column=1)
-    don_ref = _window_max(pred_ref, don_idx, window, column=2)
-    don_alt = _window_max(pred_alt, don_idx, window, column=2)
-
-    metrics["acceptor"] = acc_alt - acc_ref
-    metrics["donor"] = don_alt - don_ref
-    I_ref = math.sqrt(max(acc_ref, 0.0) * max(don_ref, 0.0))
-    I_alt = math.sqrt(max(acc_alt, 0.0) * max(don_alt, 0.0))
-    metrics["pair"] = I_alt - I_ref
-    return metrics
+def _compute_metrics(pred_ref, pred_alt, acc_idx, don_idx, window, donor_window=None):
+    return _measurement_calculator()(pred_ref, pred_alt, acc_idx, don_idx, window, donor_window)
 
 
 def evaluate_requests(model_path: str, flanking_size: int, requests: List[EvalRequest]) -> Dict[str, object]:
@@ -239,9 +229,10 @@ def evaluate_requests(model_path: str, flanking_size: int, requests: List[EvalRe
         for site in req.sites:
             acc_idx = site["acceptor_index"]
             don_idx = site["donor_index"]
-            window = site["window"]
-            del_metrics = _compute_metrics(pred_ref, pred_del, acc_idx, don_idx, window)
-            rep_metrics = _compute_metrics(pred_ref, pred_rep, acc_idx, don_idx, window)
+            acc_window = site.get("acceptor_window", site["window"])
+            don_window = site.get("donor_window", site["window"])
+            del_metrics = _compute_metrics(pred_ref, pred_del, acc_idx, don_idx, acc_window, don_window)
+            rep_metrics = _compute_metrics(pred_ref, pred_rep, acc_idx, don_idx, acc_window, don_window)
             site_results.append(
                 {
                     "key": site["key"],
@@ -257,9 +248,10 @@ def evaluate_requests(model_path: str, flanking_size: int, requests: List[EvalRe
         if req.primary:
             acc_idx = req.primary["acceptor_index"]
             don_idx = req.primary["donor_index"]
-            window = req.primary["window"]
-            primary_metrics["deletion"] = _compute_metrics(pred_ref, pred_del, acc_idx, don_idx, window)
-            primary_metrics["replacement"] = _compute_metrics(pred_ref, pred_rep, acc_idx, don_idx, window)
+            acc_window = req.primary.get("acceptor_window", req.primary["window"])
+            don_window = req.primary.get("donor_window", req.primary["window"])
+            primary_metrics["deletion"] = _compute_metrics(pred_ref, pred_del, acc_idx, don_idx, acc_window, don_window)
+            primary_metrics["replacement"] = _compute_metrics(pred_ref, pred_rep, acc_idx, don_idx, acc_window, don_window)
 
         results.append(
             {

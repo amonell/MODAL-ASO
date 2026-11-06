@@ -14,6 +14,7 @@ from Bio.Seq import Seq
 from pyfaidx import Fasta  # type: ignore
 from .species_config import get_species_config, normalize_species, try_normalize_species
 from .cryptic_splice_evidence import annotation_sites, paired_evidence
+from .splice_measurement_windows import delta_metrics, separate_measurement_windows
 
 # Optional progress callback (set by UI/orchestrator)
 PROGRESS_CALLBACK: Optional[Callable[[str], None]] = None
@@ -504,13 +505,15 @@ def _evaluate_with_openspliceai(
                     continue
                 acc_idx = roi_rel_index(acc_pos, roi_left_row, roi_right_row, strand_char)
                 don_idx = roi_rel_index(don_pos, roi_left_row, roi_right_row, strand_char)
-                window_radius = int(site.get("window_bp") or default_site_window)
+                window_radius = int(site.get("window_bp", default_site_window))
                 site_entries.append(
                     {
                         "key": f"{idx}_{idx_site}",
                         "acceptor_index": acc_idx,
                         "donor_index": don_idx,
                         "window": window_radius,
+                        "acceptor_window": int(site["acceptor"].get("window_bp", window_radius)),
+                        "donor_window": int(site["donor"].get("window_bp", window_radius)),
                         "metadata": site,
                     }
                 )
@@ -532,6 +535,8 @@ def _evaluate_with_openspliceai(
                     "acceptor_index": chosen["acceptor_index"],
                     "donor_index": chosen["donor_index"],
                     "window": chosen["window"],
+                    "acceptor_window": chosen["acceptor_window"],
+                    "donor_window": chosen["donor_window"],
                 }
             elif acc_j is not None and don_j is not None:
                 primary_entry = {
@@ -1070,7 +1075,7 @@ def evaluate_splice_shifts_on_tiles(
         _ex = ex_tx[exon_index - 1]
         fixed_acc, fixed_don = exon_junctions_for(_ex)
 
-    default_site_window = max(1, int(site_window_bp if site_window_bp is not None else pad or 50))
+    default_site_window = max(0, int(site_window_bp if site_window_bp is not None else pad or 50))
 
     parsed_sites: List[Dict[str, Any]] = []
     if splice_sites_json:
@@ -1097,7 +1102,7 @@ def evaluate_splice_shifts_on_tiles(
         for key in ("window_bp", "window", "half_window_bp", "pad", "padding"):
             if key in info:
                 win = _safe_int(info.get(key))
-                if win and win > 0:
+                if win is not None and win >= 0:
                     return win
         return None
 
@@ -1159,7 +1164,7 @@ def evaluate_splice_shifts_on_tiles(
             raise ValueError("Explicit splice-site chromosome conflicts with the evaluated transcript.")
 
         def _window_obj(position: int, win_override: Optional[int], chrom_val: Optional[str]) -> Dict[str, Any]:
-            win = win_override if (win_override and win_override > 0) else combined_window
+            win = win_override if win_override is not None else combined_window
             left = max(1, position - win)
             right = position + win
             return {
@@ -1234,6 +1239,8 @@ def evaluate_splice_shifts_on_tiles(
             "acceptor": _fallback_window_obj(fixed_acc),
             "donor": _fallback_window_obj(fixed_don),
         })
+
+    normalized_sites = separate_measurement_windows(normalized_sites)
 
     site_positions: List[int] = []
     site_window_max = default_site_window
@@ -1402,16 +1409,6 @@ def evaluate_splice_shifts_on_tiles(
 
     def roi_rel_index(genomic_pos: int, left: int, right: int, strand_char: str) -> int:
         return int(genomic_pos - left) if strand_char == '+' else int(right - genomic_pos)
-
-    def _array_window_max(arr, idx: int, w: int = default_site_window, col: int = 1) -> float:
-        lo = max(0, idx - w)
-        hi = min(arr.shape[0], idx + w + 1)
-        if lo >= hi:
-            return 0.0
-        try:
-            return float(arr[lo:hi, col].max())
-        except Exception:
-            return 0.0
 
     # Progress bar (fallback to plain iterator if tqdm unavailable)
     try:
@@ -1604,38 +1601,13 @@ def evaluate_splice_shifts_on_tiles(
                 f"splice_transformer_calc_failed(replacement) row={idx} chrom={chrom} start={offset} end={offset + length - 1}: {exc}"
             ) from exc
 
-        def compute_delta_metrics(pred_ref, pred_alt, acc_pos: int, don_pos: int, window_radius: int) -> Dict[str, Optional[float]]:
-            metrics: Dict[str, Optional[float]] = {
-                "pair": None,
-                "acceptor": None,
-                "donor": None,
-            }
-            if pred_ref is None or pred_alt is None:
-                return metrics
-            try:
-                acc_idx = roi_rel_index(acc_pos, roi_left_row, roi_right_row, strand_char_tx)
-                don_idx = roi_rel_index(don_pos, roi_left_row, roi_right_row, strand_char_tx)
-                acc_in_bounds = 0 <= acc_idx < pred_ref.shape[0]
-                don_in_bounds = 0 <= don_idx < pred_ref.shape[0]
-                if not (acc_in_bounds or don_in_bounds):
-                    return metrics
-                window_val = max(1, int(window_radius))
-                acc_ref = acc_alt = don_ref = don_alt = None
-                if acc_in_bounds:
-                    acc_ref = _array_window_max(pred_ref, acc_idx, w=window_val, col=1)
-                    acc_alt = _array_window_max(pred_alt, acc_idx, w=window_val, col=1)
-                    metrics["acceptor"] = float(acc_alt - acc_ref)
-                if don_in_bounds:
-                    don_ref = _array_window_max(pred_ref, don_idx, w=window_val, col=2)
-                    don_alt = _array_window_max(pred_alt, don_idx, w=window_val, col=2)
-                    metrics["donor"] = float(don_alt - don_ref)
-                if acc_ref is not None and acc_alt is not None and don_ref is not None and don_alt is not None:
-                    I_ref = (acc_ref * don_ref) ** 0.5
-                    I_alt = (acc_alt * don_alt) ** 0.5
-                    metrics["pair"] = float(I_alt - I_ref)
-            except Exception:
-                return metrics
-            return metrics
+        def compute_delta_metrics(pred_ref, pred_alt, acc_pos, don_pos, window_radius, donor_window=None):
+            return delta_metrics(
+                pred_ref, pred_alt,
+                roi_rel_index(acc_pos, roi_left_row, roi_right_row, strand_char_tx),
+                roi_rel_index(don_pos, roi_left_row, roi_right_row, strand_char_tx),
+                window_radius, donor_window,
+            )
 
         def compute_delta_pair(pred_ref, pred_alt, acc_pos: int, don_pos: int, window_radius: int) -> Optional[float]:
             """Return the combined acceptor/donor delta (pair) for a splice site window."""
@@ -1651,9 +1623,11 @@ def evaluate_splice_shifts_on_tiles(
                     don_pos_site = int(site["donor"]["position"])
                 except Exception:
                     continue
-                window_radius = int(site.get("window_bp") or default_site_window)
-                del_metrics = compute_delta_metrics(pred_ref_del, pred_alt_del, acc_pos_site, don_pos_site, window_radius)
-                rep_metrics = compute_delta_metrics(pred_ref_rep, pred_alt_rep, acc_pos_site, don_pos_site, window_radius)
+                window_radius = int(site.get("window_bp", default_site_window))
+                acceptor_window = int(site["acceptor"].get("window_bp", window_radius))
+                donor_window = int(site["donor"].get("window_bp", window_radius))
+                del_metrics = compute_delta_metrics(pred_ref_del, pred_alt_del, acc_pos_site, don_pos_site, acceptor_window, donor_window)
+                rep_metrics = compute_delta_metrics(pred_ref_rep, pred_alt_rep, acc_pos_site, don_pos_site, acceptor_window, donor_window)
                 label_val = site.get("label")
                 evaluated_labels.add(label_val)
                 site_deltas.append({
