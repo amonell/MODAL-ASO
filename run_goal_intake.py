@@ -6037,15 +6037,16 @@ def _resolve_patient_variant_context(
         resolved_transcript_id = str(accession_resolution.get("transcript_id") or "").strip()
         if resolved_transcript_id:
             preferred_transcript_id = resolved_transcript_id.split(".", 1)[0]
-            structured_goal["transcript_policy"] = "user_locked"
-            structured_goal["transcript_lock"] = {
-                "kind": "explicit_id",
-                "value": resolved_transcript_id,
-                "note": (
-                    f"Resolved user-supplied reference accession {reference_accession} "
-                    "through an exact Ensembl RefSeq mRNA cross-reference."
-                ),
-            }
+            # Resolution supplies an alias for variant coordinates. Preserve
+            # the requested reference/version used by programs and file bindings.
+            # Its authoritative alias remains in patient_variant.resolution.
+            existing_lock = structured_goal.get("transcript_lock") or {}
+            if not existing_lock.get("value"):
+                structured_goal["transcript_policy"] = "user_locked"
+                structured_goal["transcript_lock"] = {
+                    "kind": "reference_accession", "value": reference_accession,
+                    "source": "patient_variant_reference",
+                }
             patient_variant["reference_accession"] = reference_accession
             patient_variant["transcript_id"] = resolved_transcript_id
 

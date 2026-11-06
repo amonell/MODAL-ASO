@@ -24381,6 +24381,7 @@ def _goal_audit_prompt(
     from .region_overlap import constraint_execution_summary, effective_program_constraint_summary
     from .goal_contract import REGION_CONSTRAINT_SCOPE_INSTRUCTIONS
     from .coordinate_contract import coordinate_execution_summary, COORDINATE_ORIGIN_INSTRUCTIONS
+    from .splice_execution_meaning import splice_execution_meaning, SPLICE_EFFECT_SEMANTICS
     optional_remove_paths = set(_canonical_optional_remove_paths(
         request_envelope, required_goal_fields=required_goal_fields,
     )) if issue_records else set()
@@ -24423,6 +24424,12 @@ def _goal_audit_prompt(
             "junction_crossing": "At least U bases before and D after a junction requires contains_feature over the U+D base core: acceptor offsets -U..D-1, donor offsets 1-U..D, both in transcript orientation. Do not place a longer ASO fully inside this core.",
         },
         "reference_scope_semantics": "A transcript supplied only to locate an exon does not imply an isoform-abundance objective. Preserve its identity in transcript_lock and the program; default_exon_context remains valid for the structural splice objective.",
+        "splice_effect_semantics": SPLICE_EFFECT_SEMANTICS,
+        "splice_execution_meaning": [
+            {"goal_pointer": location["json_pointer"], "effects": splice_execution_meaning(
+                request_envelope["tasks"][location["task_index"]].get("context", {}).get("structured_goal") or {})}
+            for location in design_goal_locations
+        ],
         "region_scope_semantics": REGION_CONSTRAINT_SCOPE_INSTRUCTIONS,
         "effective_program_region_constraints": [
             {"goal_pointer": location["json_pointer"], "programs": effective_program_constraint_summary(
@@ -24519,6 +24526,10 @@ def _goal_audit_prompt(
         "Never invent a least-restrictive overlap policy. When latest_repair_transition is present, "
         "verify its host-observed before/after changes against the original evidence_sources. "
         "These are the actual values after patch application and canonical normalization; "
+        "Compare splice_execution_meaning with user evidence: its descriptions are what "
+        "the typed fields will execute. Reducing exon skipping requires promoting exon "
+        "inclusion. Repair a direction inversion even when the program's prose repeats "
+        "the request correctly. Preserve identified isoform abundance objectives separately. "
         "applied_repairs.reason is only the earlier model's claim, not evidence that its edit "
         "was correct. Check that each changed value preserves the requested mechanism, scope, "
         "constraints and outputs. A reason that says to preserve a value does not justify an "
@@ -47876,7 +47887,6 @@ def _resolved_target_reference_identity_evidence(
         source = {**metadata, **entry}
         source["id"] = entry.get("transcript_id") or entry.get("id") or metadata.get("id")
         from .supplied_reference_identity import verified_supplied_receipt
-        from .declared_reference_catalog import _verified_accession
         supplied_receipt = verified_supplied_receipt(entry, requested_id) if metadata.get("source") == "snapgene" else None
         supplied_proof = (supplied_receipt or {}).get("supplied_reference_identity")
         # Local lookup stamps this provenance on native source metadata. A
@@ -47884,7 +47894,7 @@ def _resolved_target_reference_identity_evidence(
         native_identity = (
             source.get("reference_source") == "local_gtf"
             and source.get("reference_annotation")
-            and (_source_identifier_matches(source, requested_id) or _verified_accession(entry, requested_id))
+            and _source_identifier_matches(source, requested_id)
             and _source_identifier_matches(source, resolved_id)
         )
         supplied_identity = bool(supplied_proof and resolved_id == entry.get("transcript_id"))
@@ -47940,8 +47950,6 @@ def _resolved_target_reference_identity_evidence(
         })
         if supplied_identity:
             proofs[-1]["accession_resolution"] = deepcopy(supplied_receipt)
-        elif not _source_identifier_matches(source, requested_id):
-            proofs[-1]["requested_accession"] = requested_id
         if resolved_ordinal != exon_number:
             proofs[-1]["requested_exon_label"] = exon_number
             proofs[-1]["nomenclature_resolution"] = deepcopy(mapping)

@@ -1789,7 +1789,10 @@ def test_patient_variant_resolution_uses_source_backed_gene_and_refseq_mapping(
     assert goal["patient_variant"]["genomic_alt"] == "T"
     assert goal["patient_variant"]["kind"] == "cdna"
     assert goal["patient_variant"]["allele_orientation"] == "transcript"
-    assert goal["transcript_lock"]["value"] == "ENST_TEST_LOCKED"
+    assert goal["transcript_lock"] == {
+        "kind": "reference_accession", "value": "NM_TEST.4", "note": "User supplied this accession."
+    }
+    assert goal["patient_variant"]["resolved_transcript_id"] == "ENST_TEST_LOCKED"
     assert result["reference_accession_resolution"]["confidence"] == "high"
     assert final_payload["patient_variant"]["resolution"]["source"] == "ensembl_vep"
 

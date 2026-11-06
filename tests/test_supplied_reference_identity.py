@@ -158,3 +158,24 @@ def test_single_file_uses_locked_reference_without_an_isoform_abundance_label(tm
     assert calls == [str(path)]
     assert result["snapgene_labels"] == ["NM_123456.7"]
     assert goal["snapgene_annotation"]["declared_reference"] == "NM_123456.7"
+
+
+def test_distinct_files_cannot_overwrite_one_catalog_label(tmp_path, monkeypatch):
+    first, second = tmp_path / "first.gb", tmp_path / "second.gb"
+    first.write_text("one sequence"); second.write_text("another sequence")
+    goal = {"splice_isoform_objectives": [{"isoform_label": "reference", "desired_abundance": "increase"}],
+            "artifact_refs": [{"path": str(first)}, {"path": str(second)}]}
+    monkeypatch.setattr(native, "_select_snapgene_isoform_labels_with_llm", lambda *a: {
+        str(first): "reference", str(second): "reference"})
+    monkeypatch.setattr(native, "ingest_snapgene_file", lambda *a, **k: pytest.fail("Ambiguous binding reached ingestion"))
+    with pytest.raises(ValueError, match="supplied_isoform_reference_ambiguous"):
+        native._prepare_snapgene_objectives(goal, {})
+    assert "preseeded_isoform_transcripts" not in goal
+
+
+def test_filenames_cannot_choose_an_isoform(tmp_path):
+    path = tmp_path / "reference.gb"
+    goal = {"splice_isoform_objectives": [{"isoform_label": "reference"}]}
+    assert native._find_snapgene_isoform_label(goal, str(path)) is None
+    goal["splice_isoform_objectives"][0]["artifact_ref_path"] = str(path)
+    assert native._find_snapgene_isoform_label(goal, str(path)) == "reference"
