@@ -57,6 +57,39 @@ def test_reference_versions_remain_distinct():
     assert [x['transcript_id'] for x in goal['splice_isoform_objectives']] == ['TX.1', 'TX.2']
 
 
+def test_opposing_products_can_share_a_reference_without_becoming_one_identity():
+    goal = {'splice_isoform_objectives': [
+        {'isoform_label': 'alternative acceptor product', 'reference_accession': 'NM_123456.7',
+         'objective_scope': 'specific_isoform', 'desired_abundance': 'increase'},
+        {'objective_scope': 'aggregate_class', 'transcript_id': 'NM_123456.7',
+         'aggregate_class': {'basis': 'exon_presence', 'exon_label': 6, 'presence': 'excluded'},
+         'desired_abundance': 'decrease'}],
+        'evaluation_targets': [target('alternative acceptor product',
+            isoform_label='alternative acceptor product', reference_transcript_id='NM_123456.7')]}
+    before = deepcopy(goal)
+    assert not complete_isoform_outcomes(goal)
+    assert goal == before
+    assert 'transcript_id' not in goal['splice_isoform_objectives'][0]
+
+
+def test_a_reference_anchor_does_not_turn_an_outcome_into_the_reference_transcript():
+    goal = {'evaluation_targets': [target('new splice product', reference_transcript_id='NM_123456.7')]}
+    complete_isoform_outcomes(goal)
+    objective = goal['splice_isoform_objectives'][0]
+    assert objective['isoform_label'] == 'new splice product'
+    assert objective['reference_accession'] == 'NM_123456.7'
+    assert objective['objective_scope'] == 'specific_isoform'
+    assert 'transcript_id' not in objective
+
+
+def test_same_identified_transcript_still_rejects_opposing_outcomes():
+    goal = {'splice_isoform_objectives': [{'isoform_label': 'first label', 'transcript_id': 'TX.1',
+                                         'desired_abundance': 'decrease'}],
+            'evaluation_targets': [target('second label', transcript_id='TX.1')]}
+    with pytest.raises(ValueError, match='direction_conflict'):
+        complete_isoform_outcomes(goal)
+
+
 @pytest.mark.parametrize('surround', [('(', ')'), ('[', ']'), ('<', '>'), ('"', '"'), ("'", "'")])
 def test_supplied_path_punctuation_preserves_actual_file(tmp_path, surround):
     path = tmp_path/'construct.gb'

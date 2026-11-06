@@ -19533,9 +19533,10 @@ def _prepare_snapgene_objectives(
                 raise ValueError("supplied_isoform_reference_ambiguous: " + path)
             path_label_map[path] = label
     declared_reference = single_declared_reference(structured_goal)
-    objective_labels = {str(obj.get("isoform_label") or "").strip() for obj in isoform_objectives
-                        if isinstance(obj, dict) and obj.get("isoform_label")}
-    if len(snapgene_paths) == 1 and declared_reference and not path_label_map and not objective_labels:
+    # A named desired splice product is an outcome, not a label for the input
+    # template. Explicit objective/file bindings above take precedence; otherwise
+    # bind the sole file to the sole typed reference and verify that identity.
+    if len(snapgene_paths) == 1 and declared_reference and not path_label_map:
         path_label_map[snapgene_paths[0]] = declared_reference
     unresolved_paths = [path for path in snapgene_paths if path not in path_label_map]
     if unresolved_paths and isoform_objectives:

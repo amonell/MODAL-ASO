@@ -3,9 +3,12 @@ from copy import deepcopy
 
 
 def _identities(record):
+    # A cohort/exon context is not one identified isoform. Its transcript ID
+    # locates an event and can legitimately support opposing product outcomes.
+    if record.get('objective_scope') in {'aggregate_class', 'default_exon_context'}:
+        return set()
     aliases = {('identity', str(record.get(key)).strip().casefold()) for key in
-            ('isoform_label', 'transcript_id', 'reference_transcript_id',
-             'reference_accession')
+            ('isoform_label', 'transcript_id')
             if record.get(key)}
     # Filesystem paths are case-sensitive and are not transcript aliases.
     return aliases | {('artifact', str(record[key]).strip()) for key in
@@ -32,8 +35,8 @@ def complete_isoform_outcomes(goal):
         if gene and target_gene and gene != target_gene:
             continue
         label = (target.get('isoform_label') or target.get('transcript_id')
-                 or target.get('reference_transcript_id') or target.get('label')
-                 or target.get('artifact_ref_path'))
+                 or (target.get('reference_transcript_id') if target.get('target_type') == 'transcript' else None)
+                 or target.get('label') or target.get('artifact_ref_path') or target.get('reference_transcript_id'))
         if not isinstance(label, str) or not label.strip():
             raise ValueError('declared_isoform_outcome_identity_missing')
         candidate = {'isoform_label': label.strip(),
@@ -42,8 +45,11 @@ def complete_isoform_outcomes(goal):
         for key in ('transcript_id', 'artifact_ref_path'):
             if target.get(key):
                 candidate[key] = target[key]
-        if not candidate.get('transcript_id') and target.get('reference_transcript_id'):
+        if (not candidate.get('transcript_id') and target.get('reference_transcript_id')
+                and target.get('target_type') == 'transcript'):
             candidate['transcript_id'] = target['reference_transcript_id']
+        elif target.get('reference_transcript_id'):
+            candidate['reference_accession'] = target['reference_transcript_id']
         if candidate.get('transcript_id') or candidate.get('artifact_ref_path'):
             candidate['objective_scope'] = 'specific_transcript'
         matches = [item for item in objectives if isinstance(item, dict)
@@ -56,7 +62,7 @@ def complete_isoform_outcomes(goal):
             for item in matches:
                 if item.get('desired_abundance') != candidate['desired_abundance']:
                     raise ValueError('declared_isoform_outcome_direction_conflict: ' + label)
-                for key in ('transcript_id', 'artifact_ref_path'):
+                for key in ('transcript_id', 'artifact_ref_path', 'reference_accession'):
                     if not candidate.get(key):
                         continue
                     if item.get(key) and item[key] != candidate[key]:

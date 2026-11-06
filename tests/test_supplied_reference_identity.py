@@ -140,13 +140,18 @@ def test_receipt_cannot_be_reused_for_a_changed_target(supplied_case, fault):
     assert verified_supplied_receipt(entry, accession) is None
 
 
-def test_single_file_uses_locked_reference_without_an_isoform_abundance_label(tmp_path, monkeypatch):
+@pytest.mark.parametrize("named_outcome", [False, True])
+def test_single_file_uses_locked_reference_without_relabeling_it_as_a_desired_product(tmp_path, monkeypatch, named_outcome):
     path, copy = tmp_path / "patient.gb", tmp_path / "copy.gb"
     path.write_text("annotation"); copy.write_bytes(path.read_bytes())
     goal = {"species": "human", "transcript_policy": "user_locked",
             "transcript_lock": {"kind": "reference_accession", "value": "NM_123456.7"},
             "artifact_refs": [{"path": str(path)}],
             "splice_isoform_objectives": [{"objective_scope": "default_exon_context", "desired_abundance": "decrease"}]}
+    if named_outcome:
+        goal["splice_isoform_objectives"] = [{"objective_scope": "specific_isoform",
+            "isoform_label": "desired alternative splice product", "reference_accession": "NM_123456.7",
+            "desired_abundance": "increase"}]
     calls = []
     def ingest(p, **kwargs):
         calls.append(p)
@@ -158,6 +163,9 @@ def test_single_file_uses_locked_reference_without_an_isoform_abundance_label(tm
     assert calls == [str(path)]
     assert result["snapgene_labels"] == ["NM_123456.7"]
     assert goal["snapgene_annotation"]["declared_reference"] == "NM_123456.7"
+    if named_outcome:
+        assert "snapgene_path" not in goal["splice_isoform_objectives"][0]
+        assert goal["splice_isoform_objectives"][0]["isoform_label"] == "desired alternative splice product"
 
 
 def test_distinct_files_cannot_overwrite_one_catalog_label(tmp_path, monkeypatch):
