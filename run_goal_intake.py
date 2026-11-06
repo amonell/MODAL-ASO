@@ -19486,13 +19486,16 @@ def _prepare_snapgene_objectives(
             text = str(objective.get(key) or "").strip()
             if text:
                 detected_texts.append(text)
-    snapgene_paths = _detect_snapgene_paths(*detected_texts)
+    detected_paths = _detect_snapgene_paths(*detected_texts)
+    snapgene_paths = []
     # Typed paths survive spaces and punctuation, and cannot silently disappear
     # because a prose path detector fails. Format does not assign biological role.
     declared_paths = [ref.get("path") for ref in structured_goal.get("artifact_refs") or []
                       if isinstance(ref, dict)]
-    declared_paths += [obj.get("artifact_ref_path") for obj in isoform_objectives
-                       if isinstance(obj, dict)]
+    declared_paths += [obj.get(key) for obj in isoform_objectives if isinstance(obj, dict)
+                       for key in ("artifact_ref_path", "snapgene_path")]
+    if snapgene_path_value:
+        declared_paths.insert(0, snapgene_path_value)
     for path in declared_paths:
         if not isinstance(path, str) or Path(path).suffix.lower() not in SNAPGENE_EXTENSIONS:
             continue
@@ -19501,6 +19504,7 @@ def _prepare_snapgene_objectives(
             raise ValueError("supplied_isoform_reference_unavailable: " + path)
         if str(resolved) not in snapgene_paths:
             snapgene_paths.append(str(resolved))
+    snapgene_paths.extend(path for path in detected_paths if path not in snapgene_paths)
     if not snapgene_paths:
         return {}
 
@@ -19511,17 +19515,27 @@ def _prepare_snapgene_objectives(
             if resolved_text not in snapgene_paths:
                 snapgene_paths.insert(0, resolved_text)
 
+    from aso_agents.supplied_reference_identity import canonical_supplied_paths, single_declared_reference
+    snapgene_paths = canonical_supplied_paths(snapgene_paths, structured_goal)
     path_label_map = _normalize_snapgene_objective_labels(structured_goal, snapgene_paths)
     for objective in isoform_objectives:
-        if not isinstance(objective, dict) or not objective.get("artifact_ref_path"):
+        if not isinstance(objective, dict):
             continue
-        resolved = _resolve_snapgene_path(objective["artifact_ref_path"])
+        path_value = objective.get("artifact_ref_path") or objective.get("snapgene_path")
+        if not path_value:
+            continue
+        resolved = _resolve_snapgene_path(path_value)
         label = str(objective.get("isoform_label") or "").strip()
         if resolved and label:
             path = str(resolved)
             if path in path_label_map and path_label_map[path] != label:
                 raise ValueError("supplied_isoform_reference_ambiguous: " + path)
             path_label_map[path] = label
+    declared_reference = single_declared_reference(structured_goal)
+    objective_labels = {str(obj.get("isoform_label") or "").strip() for obj in isoform_objectives
+                        if isinstance(obj, dict) and obj.get("isoform_label")}
+    if len(snapgene_paths) == 1 and declared_reference and not path_label_map and not objective_labels:
+        path_label_map[snapgene_paths[0]] = declared_reference
     unresolved_paths = [path for path in snapgene_paths if path not in path_label_map]
     if unresolved_paths and isoform_objectives:
         llm_mapping = _select_snapgene_isoform_labels_with_llm(
@@ -19537,7 +19551,9 @@ def _prepare_snapgene_objectives(
 
     reverse_label_map: Dict[str, str] = {}
     for path, label in path_label_map.items():
-        if isinstance(label, str) and label.strip() and label not in reverse_label_map:
+        if isinstance(label, str) and label.strip():
+            if label in reverse_label_map and reverse_label_map[label] != path:
+                raise ValueError("supplied_isoform_reference_ambiguous: " + label)
             reverse_label_map[label] = path
 
     for target in structured_goal.get("evaluation_targets") or []:
@@ -19580,7 +19596,6 @@ def _prepare_snapgene_objectives(
         if single_label:
             existing_annotations.setdefault(single_label, deepcopy(existing_single))
 
-    used_labels = set(preseeded.keys())
     prepared_annotations: Dict[str, Dict[str, Any]] = {}
     expected_chroms = _collect_expected_chroms(structured_goal)
     expected_strand = _collect_expected_strand(structured_goal)
@@ -19593,11 +19608,10 @@ def _prepare_snapgene_objectives(
     snapgene_errors: Dict[str, str] = {}
 
     for path in snapgene_paths:
-        label = path_label_map.get(path) or _find_snapgene_isoform_label(structured_goal, path, used_labels=used_labels)
+        label = path_label_map.get(path)
         if not label:
             snapgene_errors[path] = "snapgene_label_unresolved"
             continue
-        used_labels.add(label)
 
         from aso_agents.supplied_reference_role import artifact_sha256
         input_sha256 = artifact_sha256(path)
@@ -19621,6 +19635,12 @@ def _prepare_snapgene_objectives(
         annotation = deepcopy(annotation)
         annotation["input_file_sha256"] = input_sha256
         annotation["snapgene_label"] = label
+        references = {obj.get("transcript_id") for obj in isoform_objectives
+                      if isinstance(obj, dict) and obj.get("isoform_label") == label and obj.get("transcript_id")}
+        if len(snapgene_paths) == 1 and declared_reference and label == declared_reference:
+            references.add(declared_reference)
+        if len(references) == 1:
+            annotation["declared_reference"] = next(iter(references))
         prepared_annotations[label] = annotation
 
         transcript_entry = _build_snapgene_transcript_entry(annotation, label)
@@ -23885,82 +23905,20 @@ def _pick_canonical_transcript_id(
 def _find_snapgene_isoform_label(
     structured_goal: Dict[str, Any],
     snapgene_path: str,
-    used_labels: Optional[Set[str]] = None,
 ) -> Optional[str]:
-    def _path_tokens(path_value: str) -> Set[str]:
-        values = {
-            path_value,
-            str(Path(path_value).resolve()),
-            Path(path_value).name,
-            Path(path_value).stem,
-        }
-        tokens: Set[str] = set()
-        for raw in values:
-            lower = raw.lower()
-            tokens.add(lower)
-            tokens.add(lower.replace(" ", ""))
-            tokens.add(re.sub(r"[^a-z0-9]+", "", lower))
-            tokens.add(lower.replace("_", ""))
-        return {tok for tok in tokens if tok}
-
-    def _label_tokens(label_value: str) -> Set[str]:
-        lower = label_value.lower().strip()
-        cleaned = re.sub(r"\bisoform\b", "", lower).strip()
-        tokens: Set[str] = {
-            lower,
-            lower.replace(" ", ""),
-            re.sub(r"[^a-z0-9]+", "", lower),
-            cleaned,
-            cleaned.replace(" ", ""),
-            re.sub(r"[^a-z0-9]+", "", cleaned),
-        }
-        for segment in re.split(r"[^a-z0-9]+", lower):
-            if segment:
-                tokens.add(segment)
-        for segment in re.split(r"[^a-z0-9]+", cleaned):
-            if segment:
-                tokens.add(segment)
-        return {tok for tok in tokens if tok}
-
-    candidate_tokens = _path_tokens(snapgene_path)
-    best_label: Optional[str] = None
-    best_score: int = 0
-    isoform_objectives = structured_goal.get("splice_isoform_objectives") or []
-    for obj in isoform_objectives:
-        label = str(obj.get("isoform_label") or "").strip()
-        if not label:
-            continue
-        if used_labels and label in used_labels:
-            continue
-        label_tokens = _label_tokens(label)
-        try:
-            path_obj = Path(label)
-            derived = {
-                path_obj.name.lower(),
-                path_obj.stem.lower(),
-                str(path_obj.resolve()).lower(),
-            }
-            label_tokens.update(derived)
-            label_tokens.update(item.replace("_", "") for item in derived)
-            label_tokens.update(re.sub(r"[^a-z0-9]+", "", item) for item in derived)
-        except Exception:
-            pass
-        direct = len(candidate_tokens & label_tokens)
-        partial = 0
-        specific = 0
-        for lt in label_tokens:
-            for ct in candidate_tokens:
-                if lt == ct:
-                    continue
-                if lt in ct or ct in lt:
-                    partial += 1
-                    if any(ch.isdigit() for ch in lt):
-                        specific += 1
-        score = direct * 10 + specific * 3 + partial
-        if score > best_score:
-            best_score = score
-            best_label = label
-    return best_label
+    """Use an explicit file binding; filenames cannot choose an isoform."""
+    if not snapgene_path:
+        return None
+    path = Path(snapgene_path).expanduser().resolve()
+    labels = {
+        objective["isoform_label"]
+        for objective in structured_goal.get("splice_isoform_objectives") or []
+        if isinstance(objective, dict) and objective.get("isoform_label")
+        and any(isinstance(objective.get(key), str) and objective[key]
+                and Path(objective[key]).expanduser().resolve() == path
+                for key in ("snapgene_path", "artifact_ref_path"))
+    }
+    return next(iter(labels)) if len(labels) == 1 else None
 
 
 def _snapgene_sequence_signature(annotation: Dict[str, Any]) -> Optional[str]:
@@ -24141,6 +24099,9 @@ def _build_snapgene_transcript_entry(annotation: Dict[str, Any], isoform_label: 
     metadata = {
         "source": "snapgene",
         "snapgene_path": annotation.get("snapgene_path"),
+        "input_file_sha256": annotation.get("input_file_sha256"),
+        "sequence_sha256": annotation.get("sequence_sha256"),
+        "declared_reference": annotation.get("declared_reference"),
         "bowtie_index": annotation.get("bowtie_index"),
         "warnings": annotation.get("warnings"),
     }

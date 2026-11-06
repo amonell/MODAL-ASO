@@ -22893,12 +22893,6 @@ def _canonical_design_goal_contract_issues(
                 if str(program.get("site_kind") or "").strip().lower() != expected_site_kind:
                     issues.append(f"{prefix}.site_kind")
 
-    evaluation_targets = structured_goal.get("evaluation_targets")
-    target_types = {
-        str(target.get("target_type") or "").strip().lower()
-        for target in evaluation_targets
-        if isinstance(target, dict)
-    } if isinstance(evaluation_targets, list) else set()
     constraints = (
         structured_goal.get("constraints")
         if isinstance(structured_goal.get("constraints"), dict)
@@ -22914,10 +22908,9 @@ def _canonical_design_goal_contract_issues(
         if isinstance(structured_goal.get("patient_variant"), dict)
         else {}
     )
-    has_allele_specific_signal = bool(
-        allele_specific
-        or target_types.intersection({"mutant_variant", "wildtype_variant"})
-    )
+    # A variant can define the patient reference or a measured outcome. Only a
+    # declared selection policy requests discrimination between alleles.
+    has_allele_specific_signal = "allele_specific" in constraints
     if has_allele_specific_signal:
         for field in ("notation", "kind"):
             if patient_variant.get(field) in (None, "", [], {}):
@@ -22937,7 +22930,7 @@ def _canonical_design_goal_contract_issues(
             "require_variant_overlap"
         )
         if (
-            allele_specific.get("require_variant_overlap") is not True
+            type(allele_specific.get("require_variant_overlap")) is not bool
             and overlap_path not in issues
         ):
             issues.append(overlap_path)
@@ -35369,111 +35362,25 @@ def _apply_structured_exon_targets_to_goal(
     return changes if changes else added_exons
 
 
-def _objective_text_fragment(value: Any) -> str:
-    if value in (None, "", [], {}):
-        return ""
-    if isinstance(value, (dict, list, tuple, set)):
-        try:
-            return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-        except Exception:
-            return str(value)
-    return str(value)
-
-
-def _normalized_objective_text(*values: Any) -> str:
-    text = " ".join(_objective_text_fragment(value) for value in values if value not in (None, "", [], {}))
-    return text.strip().lower().replace("-", "_").replace(" ", "_")
-
-
-def _splice_effect_direction_from_text(*values: Any) -> str:
-    text = _normalized_objective_text(*values)
-    if not text:
-        return ""
-    if any(
-        token in text
-        for token in (
-            "decrease_poison_exon_inclusion",
-            "decrease_exon_inclusion",
-            "decreased_exon_inclusion",
-            "decrease_inclusion",
-            "decreased_inclusion",
-            "reduce_exon_inclusion",
-            "reduced_exon_inclusion",
-            "reduce_inclusion",
-            "reduced_inclusion",
-            "promote_skipping",
-            "increase_skipping",
-            "exon_skipping",
-            "skipping",
-            "skip",
-            "exclusion",
-            "exclude",
-        )
-    ):
-        return "decrease"
-    if any(
-        token in text
-        for token in (
-            "increase_exon_inclusion",
-            "increase_inclusion",
-            "promote_inclusion",
-            "exon_inclusion",
-            "include",
-            "inclusion",
-            "retention",
-            "retain",
-        )
-    ):
-        return "increase"
-    return ""
-
-
-def _generic_abundance_direction_from_text(*values: Any) -> str:
-    text = _normalized_objective_text(*values)
-    if not text:
-        return ""
-    if any(token in text for token in ("decrease", "reduce", "suppress", "knock_down", "knockdown", "down")):
-        return "decrease"
-    if any(token in text for token in ("increase", "promote", "favor", "up")):
-        return "increase"
-    return ""
-
-
 def _infer_isoform_objective_desired_abundance(objective: Dict[str, Any]) -> str:
+    """Read validated direction fields; prose belongs to semantic intake.
+
+    Labels, notes, coordinate answers and other free text cannot set biology.
+    Exact enum values support legacy typed exon-effect fields without substring
+    matching or regular expressions.
+    """
     if not isinstance(objective, dict):
         return ""
-    explicit_direction = str(
-        objective.get("desired_abundance")
-        or objective.get("desired_delta")
-        or ""
-    ).strip().lower()
-    if explicit_direction in {"increase", "decrease"}:
-        return explicit_direction
-    splice_effect_direction = _splice_effect_direction_from_text(
-        objective.get("desired_splice_effect"),
-        objective.get("desired_effect"),
-        objective.get("objective"),
-        objective.get("action"),
-        objective.get("type"),
-        objective.get("intended_effects"),
-        objective.get("target_type"),
-        objective.get("objective_type"),
-    )
-    if splice_effect_direction:
-        return splice_effect_direction
-    inferred_direction = _generic_abundance_direction_from_text(
-        objective.get("direction"),
-        objective.get("goal"),
-    )
-    if inferred_direction:
-        return inferred_direction
-    return _generic_abundance_direction_from_text(
-        objective.get("objective"),
-        objective.get("action"),
-        objective.get("type"),
-        objective.get("rationale"),
-        objective.get("notes"),
-    )
+    for key in ("desired_abundance", "desired_delta", "direction"):
+        value = objective.get(key)
+        if value in ("increase", "decrease"):
+            return value
+    effects = {"skipping": "decrease", "inclusion": "increase"}
+    for key in ("desired_splice_effect", "desired_effect"):
+        value = objective.get(key)
+        if isinstance(value, str) and value in effects:
+            return effects[value]
+    return ""
 
 
 def _normalize_splice_objective_scope_value(value: Any) -> str:
@@ -35813,12 +35720,10 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
             if not isinstance(item, dict):
                 continue
             objective = deepcopy(item)
-            key_text = str(key or "").strip().lower()
-            if not any(objective.get(field) for field in ("desired_abundance", "desired_delta", "direction", "objective", "type", "action")):
-                if "decrease" in key_text or "reduce" in key_text or "suppress" in key_text:
-                    objective["direction"] = "decrease"
-                elif "increase" in key_text or "promote" in key_text or "favor" in key_text:
-                    objective["direction"] = "increase"
+            if key in ("increase", "decrease") and not any(
+                objective.get(field) for field in ("desired_abundance", "desired_delta", "direction")
+            ):
+                objective["direction"] = key
             raw_objectives.append(objective)
         return _normalize_isoform_objectives(raw_objectives)
 
@@ -35835,11 +35740,7 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
                 continue
             if isinstance(program.get("splice_event"), dict):
                 continue
-            text = " ".join(
-                str(program.get(key) or "")
-                for key in ("objective", "program_goal", "label", "notes", "program_id")
-            ).strip()
-            direction = _splice_effect_direction_from_text(text) or _generic_abundance_direction_from_text(text)
+            direction = _infer_isoform_objective_desired_abundance(program)
             if not direction:
                 continue
 
@@ -35888,8 +35789,9 @@ def _normalized_design_objective_preseed(value: Any) -> Dict[str, Any]:
             }
             if transcript_id:
                 objective["transcript_id"] = transcript_id
-            if text:
-                objective["rationale"] = text
+            rationale = program.get("rationale") or program.get("objective")
+            if isinstance(rationale, str) and rationale.strip():
+                objective["rationale"] = rationale.strip()
             artifact_task_id = str(
                 isoform_target.get("artifact_task_id")
                 or isoform_target.get("artifact_ref_task_id")
@@ -36067,18 +35969,11 @@ def _prepare_design_objective_preseed(
     # above, but do not synthesize one from these typed non-splicing intents.
     non_splicing_intent = bool(declared_intents) and declared_intents <= {"knockdown", "binding"}
     if not objectives and not binding_interval_context and not non_splicing_intent:
-        direction_context = " ".join(
-            part
-            for part in (
-                json.dumps(goal.get("design_programs") or [], ensure_ascii=False, default=str),
-                str(goal.get("objective") or ""),
-                str(goal.get("target_context") or ""),
-                str(context.get("target_context") or ""),
-            )
-            if part
-        ).lower()
-        direction = ""
-        direction = _splice_effect_direction_from_text(direction_context) or _generic_abundance_direction_from_text(direction_context)
+        directions = {
+            direction for record in [goal, context, *(goal.get("design_programs") or [])]
+            if (direction := _infer_isoform_objective_desired_abundance(record))
+        }
+        direction = next(iter(directions)) if len(directions) == 1 else ""
         context_transcript = str(context.get("transcript_id") or goal.get("transcript_id") or "").strip()
         context_label = str(context.get("isoform_label") or goal.get("isoform_label") or "").strip()
         if direction and context_transcript:
@@ -36090,7 +35985,7 @@ def _prepare_design_objective_preseed(
                     "role": explicit_biological_role(goal.get("biological_role")),
                 }
             ]
-        elif direction and snapgene_path and any(token in direction_context for token in ("artifact", "snapgene", "genbank", "file", "construct")):
+        elif direction and snapgene_path:
             objectives = [
                 {
                     "isoform_label": context_label or "SnapGene/GenBank artifact isoform",
@@ -40844,7 +40739,7 @@ def _clarification_preseed_transcript_id(
             value.upper() == choices[0].upper() for value in unclear
         ) else ""
     lock = structured_goal.get("transcript_lock") or {}
-    if isinstance(lock, dict) and (lock.get("type") == "transcript_id" or lock.get("kind") == "explicit_id"):
+    if isinstance(lock, dict) and (lock.get("type") == "transcript_id" or lock.get("kind") in {"explicit_id", "reference_accession"}):
         candidate = str(lock.get("value") or "").strip()
         if _looks_like_direct_isoform_identifier(candidate):
             return candidate if all(value.upper() == candidate.upper() for value in unclear) else ""
@@ -40912,12 +40807,9 @@ def _explicit_splice_target_preseed_from_clarifications(
     transcript_id = _clarification_preseed_transcript_id(state, answers, structured_goal)
     isoform_label = _clarification_preseed_isoform_label(transcript_id, structured_goal)
     strand = _strand_from_clarification_text(combined_text)
-    desired_delta = _splice_effect_direction_from_text(combined_text)
-    if not desired_delta:
-        desired_delta = _generic_abundance_direction_from_text(combined_text)
-    if not desired_delta:
-        objective = _first_splice_objective_from_context(structured_goal)
-        desired_delta = _infer_isoform_objective_desired_abundance(objective)
+    # This preseed captures geometry only. The semantic intake sees the full
+    # answer and owns any requested change to biological direction. Omitting a
+    # direction here preserves the existing typed target during reconciliation.
     requested_exon = _clarification_requested_exon_label(combined_text)
     evidence_refs = list(
         dict.fromkeys(
@@ -40953,8 +40845,6 @@ def _explicit_splice_target_preseed_from_clarifications(
             target["transcript_id"] = transcript_id
         if isoform_label:
             target["isoform_label"] = isoform_label
-        if desired_delta in {"increase", "decrease"}:
-            target["desired_delta"] = desired_delta
         if requested_exon:
             target["requested_exon_label"] = requested_exon
             target["label"] = f"exon {requested_exon}"
@@ -47985,14 +47875,20 @@ def _resolved_target_reference_identity_evidence(
         metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
         source = {**metadata, **entry}
         source["id"] = entry.get("transcript_id") or entry.get("id") or metadata.get("id")
+        from .supplied_reference_identity import verified_supplied_receipt
+        from .declared_reference_catalog import _verified_accession
+        supplied_receipt = verified_supplied_receipt(entry, requested_id) if metadata.get("source") == "snapgene" else None
+        supplied_proof = (supplied_receipt or {}).get("supplied_reference_identity")
         # Local lookup stamps this provenance on native source metadata. A
         # request-supplied version, label or route-plan alias is not sufficient.
-        if (
-            source.get("reference_source") != "local_gtf"
-            or not source.get("reference_annotation")
-            or not _source_identifier_matches(source, requested_id)
-            or not _source_identifier_matches(source, resolved_id)
-        ):
+        native_identity = (
+            source.get("reference_source") == "local_gtf"
+            and source.get("reference_annotation")
+            and (_source_identifier_matches(source, requested_id) or _verified_accession(entry, requested_id))
+            and _source_identifier_matches(source, resolved_id)
+        )
+        supplied_identity = bool(supplied_proof and resolved_id == entry.get("transcript_id"))
+        if not (native_identity or supplied_identity):
             continue
         mapping = (entry.get("exon_nomenclature_resolutions") or
                    metadata.get("exon_nomenclature_resolutions") or {}).get(str(exon_number)) or {}
@@ -48031,8 +47927,8 @@ def _resolved_target_reference_identity_evidence(
         if "." not in str(versioned_id) and source.get("version") is not None:
             versioned_id = f"{versioned_id}.{source['version']}"
         proofs.append({
-            "source_type": "local_gtf",
-            "reference_annotation": source["reference_annotation"],
+            "source_type": "supplied_reference" if supplied_identity else "local_gtf",
+            "reference_annotation": supplied_proof.get("reference_annotation") if supplied_identity else source["reference_annotation"],
             "source_transcript_id": versioned_id,
             "exon_number": resolved_ordinal,
             "chrom": chrom,
@@ -48042,6 +47938,10 @@ def _resolved_target_reference_identity_evidence(
             "anchor_site": site,
             "anchor_position_1based": anchor,
         })
+        if supplied_identity:
+            proofs[-1]["accession_resolution"] = deepcopy(supplied_receipt)
+        elif not _source_identifier_matches(source, requested_id):
+            proofs[-1]["requested_accession"] = requested_id
         if resolved_ordinal != exon_number:
             proofs[-1]["requested_exon_label"] = exon_number
             proofs[-1]["nomenclature_resolution"] = deepcopy(mapping)
@@ -48275,6 +48175,11 @@ def _compact_resolved_target_reference_evidence(
                     ),
                 }
             )
+            from .supplied_reference_identity import verified_supplied_receipt
+            receipts = [verified_supplied_receipt(entry, reference) for reference in sorted(referenced_transcripts)]
+            verified = [receipt for receipt in receipts if receipt]
+            if verified:
+                transcript_features[-1]["reference_identity"]["supplied_reference_accessions"] = deepcopy(verified)
 
     splice_sites: List[Dict[str, Any]] = []
     for entry in structured_goal.get("splice_site_plan") or []:

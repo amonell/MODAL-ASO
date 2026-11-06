@@ -35,7 +35,9 @@ def test_confirmed_splice_coordinates_retain_original_intent_and_evidence():
     assert len(target) == 1
     assert (target[0]["start"], target[0]["end"], target[0]["strand"]) == (700, 750, "-")
     assert target[0]["requested_exon_label"] == "9x"
-    assert target[0]["desired_delta"] == "decrease"
+    # Semantic intake owns the requested biological effect, including explicit
+    # changes in an answer. This coordinate helper can only supply geometry.
+    assert "desired_delta" not in target[0]
     assert target[0]["evidence_refs"] == ["patient_annotation.json"]
 
 
@@ -54,3 +56,34 @@ def test_question_only_coordinates_are_not_promoted_to_user_input():
 ])
 def test_symbolic_strands_do_not_require_an_impossible_word_boundary(text, expected):
     assert p._strand_from_clarification_text(text) == expected
+
+
+@pytest.mark.parametrize("direction", ["increase", "decrease"])
+@pytest.mark.parametrize("wording", [
+    "retain the original one-based values in the report",
+    "include the coordinate table", "skip the long explanation",
+    "increase the font size", "decrease the margin", "exclude the brackets",
+])
+def test_coordinate_answer_cannot_change_typed_biology(direction, wording):
+    from aso_agents.explicit_target_identity import reconcile_clarified_targets
+    original = {"chrom": "chr8", "start": 700, "end": 750, "transcript_id": "NM_123456.7",
+                "desired_delta": direction, "source": "parsed"}
+    state = {"request": "Design splice-switching ASOs.", "request_envelope": {
+        "default_context": {"intent": "splice_modulation", "explicit_splice_targets": [original],
+                            "transcript_lock": {"kind": "reference_accession", "value": "NM_123456.7"}}}}
+    result = p._explicit_splice_target_preseed_from_clarifications(state, [{
+        "question": "Confirm the coordinates.",
+        "answer": f"Use chr8:700-750 for NM_123456.7; {wording}.",
+    }])
+    targets = result["structured_goal_overlay"]["explicit_splice_targets"]
+    assert all("desired_delta" not in t for t in targets)
+    reconciled = reconcile_clarified_targets([original, *targets])
+    assert len(reconciled) == 1
+    assert reconciled[0]["desired_delta"] == direction
+
+
+@pytest.mark.parametrize("prose", ["retain the coordinates", "promote skipping", "increase inclusion", "lower confidence"])
+def test_only_typed_fields_can_define_splice_direction(prose):
+    assert p._infer_isoform_objective_desired_abundance({"label": prose, "notes": prose, "objective": prose}) == ""
+    assert p._infer_isoform_objective_desired_abundance({"label": prose, "desired_delta": "decrease"}) == "decrease"
+    assert p._infer_isoform_objective_desired_abundance({"notes": prose, "desired_effect": "inclusion"}) == "increase"

@@ -6,6 +6,9 @@ from .gapmer_selectivity import resolve_catalog_label
 
 def _verified_accession(entry, reference):
     metadata = entry.get('metadata') or {}
+    if metadata.get('source') == 'snapgene':
+        from .supplied_reference_identity import verified_supplied_receipt
+        return verified_supplied_receipt(entry, reference) is not None
     receipts = [metadata.get('reference_accession_resolution'),
                 *(metadata.get('reference_accession_resolutions') or [])]
     return any(isinstance(receipt, dict) and receipt.get('exact_accession_verified') is True
@@ -120,12 +123,20 @@ def complete_target_references(runtime, goal, final_payload=None):
                              "species": next(iter(foreign[reference]))})
             continue
         label = resolve_catalog_label(reference, catalog, catalog)
+        if label is None:
+            declared = [key for key, item in catalog.items()
+                        if (item.get('metadata') or {}).get('declared_reference') == reference]
+            if len(declared) > 1:
+                raise ValueError("declared_target_reference_catalog_ambiguous: " + reference)
+            if declared:
+                label = declared[0]
         # A human-facing catalog label is not an accession attestation. Intake
         # may already have selected the right physical transcript but retained
         # only a prose match rationale; verify that mapping through the normal
         # resolver before downstream feature selectors rely on it.
         previous_label = label
-        needs_attestation = (label is not None and runtime._looks_like_refseq_transcript_accession(reference)
+        supplied = label is not None and (catalog[label].get('metadata') or {}).get('source') == 'snapgene'
+        needs_attestation = (label is not None and (supplied or runtime._looks_like_refseq_transcript_accession(reference))
                              and not _verified_accession(catalog[label], reference))
         if label is None or needs_attestation:
             structure, physical_id, provenance = _declared_structure(runtime, reference, goal)
@@ -158,6 +169,15 @@ def complete_target_references(runtime, goal, final_payload=None):
             if previous_label is not None:
                 existing = resolve_catalog_label(physical_id, {previous_label: catalog[previous_label]},
                                                  {physical_id: physical_entry})
+                if supplied:
+                    from .supplied_reference_identity import attest_supplied_reference
+                    try:
+                        provenance = attest_supplied_reference(
+                            catalog[previous_label], entry,
+                            {**provenance, 'requested_accession': reference, 'exact_accession_verified': True}, goal)
+                    except (ValueError, KeyError, OSError) as exc:
+                        raise ValueError("declared_target_reference_catalog_conflict: " + reference + ": " + str(exc)) from exc
+                    existing = previous_label
                 if existing is None:
                     raise ValueError("declared_target_reference_catalog_conflict: " + reference)
             else:

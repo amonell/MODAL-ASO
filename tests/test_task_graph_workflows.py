@@ -1632,6 +1632,7 @@ def test_binding_only_programs_do_not_require_optional_target_directions() -> No
 
 def test_allele_specific_goal_contract_requires_typed_variant_and_overlap_policy() -> None:
     goal = {
+        "constraints": {"allele_specific": {}},
         "design_programs": [
             {
                 "program_id": "variant_branch",
@@ -1677,6 +1678,12 @@ def test_allele_specific_goal_contract_requires_typed_variant_and_overlap_policy
     }
 
     assert pipeline_tools._canonical_design_goal_contract_issues(goal) == []
+    goal["constraints"]["allele_specific"]["require_variant_overlap"] = False
+    assert pipeline_tools._canonical_design_goal_contract_issues(goal) == []
+    goal["constraints"]["allele_specific"]["require_variant_overlap"] = "false"
+    assert pipeline_tools._canonical_design_goal_contract_issues(goal) == [
+        "context.structured_goal.constraints.allele_specific.require_variant_overlap"
+    ]
 
 
 def test_patient_sequence_context_does_not_imply_allele_specific_policy() -> None:
@@ -1697,6 +1704,10 @@ def test_patient_sequence_context_does_not_imply_allele_specific_policy() -> Non
             "ref": "A",
             "alt": "C",
         },
+        "evaluation_targets": [
+            {"target_type": "mutant_variant", "objective_type": "primary_outcome", "desired_delta": "decrease"},
+            {"target_type": "wildtype_variant", "objective_type": "monitoring_safeguard"},
+        ],
     }
 
     assert pipeline_tools._canonical_design_goal_contract_issues(goal) == []
@@ -8128,7 +8139,7 @@ def test_clarification_coordinates_are_preserved_as_explicit_splice_targets() ->
     assert target["end"] == 100305834
     assert target["strand"] == "+"
     assert target["transcript_id"] == "ENST00000376285"
-    assert target["desired_delta"] == "decrease"
+    assert "desired_delta" not in target
     assert target["requested_exon_label"] == "14x"
     assert target["evidence_refs"] == ["reviewed_mapping.json"]
     assert overlay["evaluation_targets"][0]["evidence_refs"] == [
@@ -11417,18 +11428,21 @@ def test_design_objective_preseed_derives_isoform_objectives_from_design_program
                 {
                     "program_id": "p1_decrease",
                     "objective": "decrease_isoform",
+                    "desired_delta": "decrease",
                     "target_transcript_id": "ENST00000368299",
                     "modality": "steric",
                 },
                 {
                     "program_id": "p2_increase_artifact",
                     "objective": "increase_isoform",
+                    "desired_delta": "increase",
                     "target_isoform_source": {"type": "artifact", "artifact_ref": "/tmp/reference.gb"},
                     "modality": "steric",
                 },
                 {
                     "program_id": "p3_increase_laminc",
                     "objective": "increase_isoform",
+                    "desired_delta": "increase",
                     "isoform_label": "Lamin C",
                     "modality": "steric",
                 },
@@ -11573,18 +11587,21 @@ def test_design_objective_preseed_uses_prioritized_objectives_with_artifact_ref(
                 {
                     "priority": 1,
                     "objective": "decrease_isoform",
+                    "desired_delta": "decrease",
                     "transcript_id": "ENST00000368299",
                     "isoform_label": "progerin",
                 },
                 {
                     "priority": 2,
                     "objective": "increase_isoform",
+                    "desired_delta": "increase",
                     "artifact_ref": "/tmp/reference.gb",
                     "isoform_label": "Lamin A (from file)",
                 },
                 {
                     "priority": 3,
                     "objective": "increase_isoform",
+                    "desired_delta": "increase",
                     "transcript_id": "ENST00000677389",
                     "isoform_label": "Lamin C",
                 },
@@ -11780,15 +11797,18 @@ def test_design_objective_preseed_uses_nested_isoform_modulation_dict() -> None:
             "target_context": "splice-modulating isoform switching",
             "isoform_modulation": {
                 "primary_decrease": {
+                    "desired_delta": "decrease",
                     "transcript_id": "ENST00000368299",
                     "isoform_label": "progerin",
                 },
                 "secondary_increase": {
+                    "desired_delta": "increase",
                     "source": "artifact",
                     "artifact_ref": "/tmp/reference.gb",
                     "isoform_label": "laminA_from_snapgene_file",
                 },
                 "tertiary_increase_if_possible": {
+                    "desired_delta": "increase",
                     "transcript_id": "ENST00000677389",
                     "isoform_label": "Lamin C",
                 },
@@ -11860,16 +11880,19 @@ def test_design_preseed_uses_nested_program_objectives_and_dependency_artifacts(
                                 "objectives": [
                                     {
                                         "type": "decrease_isoform",
+                                        "desired_delta": "decrease",
                                         "isoform_label": "progerin",
                                         "transcript_id": "ENST00000368299",
                                     },
                                     {
                                         "type": "increase_isoform",
+                                        "desired_delta": "increase",
                                         "isoform_label": "Lamin A (from SnapGene file)",
                                         "source": {"artifact_task_id": "t1_analyze_reference"},
                                     },
                                     {
                                         "type": "increase_isoform_if_possible",
+                                        "desired_delta": "increase",
                                         "isoform_label": "Lamin C",
                                         "transcript_id": "ENST00000677389",
                                     },
@@ -11898,7 +11921,7 @@ def test_design_preseed_uses_nested_program_objectives_and_dependency_artifacts(
     assert preseed["structured_goal_overlay"]["intent"] == "splice_modulation"
 
 
-def test_design_preseed_infers_transcript_objective_from_task_context() -> None:
+def test_design_preseed_binds_typed_direction_to_transcript_from_task_context() -> None:
     preseed = pipeline_tools._prepare_design_objective_preseed(
         {
             "gene_symbol": "LMNA",
@@ -11908,6 +11931,7 @@ def test_design_preseed_infers_transcript_objective_from_task_context() -> None:
                 {
                     "modality": "steric",
                     "objective": "decrease_target_isoform",
+                    "desired_delta": "decrease",
                 }
             ],
         },
@@ -11928,7 +11952,7 @@ def test_design_preseed_infers_transcript_objective_from_task_context() -> None:
     ]
 
 
-def test_design_preseed_infers_artifact_objective_from_task_context() -> None:
+def test_design_preseed_binds_typed_direction_to_artifact_from_task_context() -> None:
     preseed = pipeline_tools._prepare_design_objective_preseed(
         {
             "gene_symbol": "LMNA",
@@ -11938,6 +11962,7 @@ def test_design_preseed_infers_artifact_objective_from_task_context() -> None:
                 {
                     "modality": "steric",
                     "objective": "increase_target_isoform",
+                    "desired_delta": "increase",
                 }
             ],
         },
