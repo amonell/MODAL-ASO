@@ -26,6 +26,21 @@ a canonical splice junction does not establish increased exon inclusion; see
 The packaged tiler's direct scoring script also locates the enclosing application
 correctly when importing the shared oligonucleotide chemistry encoder.
 
+Automatic safeguards recognize the acceptor and donor of the targeted exon as
+two boundaries of the same requested outcome. For inclusion, the paired boundary
+may increase and a directional safeguard checks decreases. For skipping, it may
+decrease and the safeguard checks increases. The default opposing-change limit
+remains 0.05 in model-score units.
+
+This relationship is checked against the current job's physical splice plan and
+the selected transcript's exact exon coordinates, chromosome and strand. A
+paired boundary outside the ordinary neighborhood radius is added to measurement
+context. Ambiguous or conflicting reference geometry retains the existing policy.
+Explicit bounds, required guards, preserved transcripts and conflicting isoform
+objectives retain their constraints. Other exons keep their existing safeguards.
+The relationship is recomputed for each job and recorded in the safeguard
+selection audit, including the physical boundaries and reference transcript.
+
 Validation covers both strands and window contexts, altered and unresolved
 reference data, transcript namespace ambiguity and bounds, structured report
 rendering, and the actual Snakemake scoring command. Saved-input checks are

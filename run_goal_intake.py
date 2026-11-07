@@ -12958,6 +12958,7 @@ def _safeguard_candidate_has_objective_signal(entry: Optional[Dict[str, Any]]) -
         or entry.get("shared_with_beneficial")
         or entry.get("preserved_isoforms")
         or entry.get("explicit_exon_objective_ids")
+        or entry.get("paired_exon_objective")
         or entry.get("objective_membership_complete") is False
         or entry.get("required")
         or entry.get("monitoring_purpose") == "splice_neighborhood"
@@ -12984,6 +12985,8 @@ def _classify_safeguard_candidate_for_target(
     if candidate_entry.get("required") or any(candidate_entry.get(key) is not None
                                              for key in ("max_abs_delta", "max_increase", "max_decrease")):
         return "keep", "explicit_guard_policy"
+    if candidate_entry.get("paired_exon_objective"):
+        return "keep", "target_exon_reciprocal_directional_guard"
     if candidate_entry.get("objective_membership_complete") is False:
         return "keep", "objective_reference_membership_unresolved"
     if candidate_entry.get("monitoring_purpose") == "splice_neighborhood":
@@ -13180,8 +13183,12 @@ def _build_safeguard_candidates_by_target(
     goal = structured_goal if isinstance(structured_goal, dict) else {}
     full_plan = goal.get("splice_site_plan")
     full_plan = full_plan if isinstance(full_plan, list) else []
-    from aso_agents.splice_safeguards import neighborhood_guard_sites, physical_site
+    from aso_agents.splice_safeguards import neighborhood_guard_sites, physical_site, target_exon_pairs, paired_exon_guard
     from aso_agents.splice_recommendations import resolve_routing_exon_objectives
+    from aso_agents.preservation import protected_junctions
+    exon_pairs = target_exon_pairs(goal, splice_plan)
+    exon_pair_keys = set(exon_pairs) | {pair['partner_key'] for pair in exon_pairs.values()}
+    protected_keys = {physical_site(ref) for refs in protected_junctions(goal).values() for ref in refs}
     explicit_objectives = [o for o in resolve_routing_exon_objectives(goal)
         if o.get("status") == "resolved" and (o.get("identity") or {}).get("status") == "verified_explicit_span"]
     context = neighborhood_guard_sites(goal, splice_plan)
@@ -13192,6 +13199,12 @@ def _build_safeguard_candidates_by_target(
     sources = {"cached": 0, "reconstructed": 0}
 
     def bind(candidate: Dict[str, Any]) -> Dict[str, Any]:
+        candidate = dict(candidate)
+        # This policy is scoped to one job and primary boundary. Recompute it
+        # after cache reuse rather than borrowing another route's exemption.
+        if candidate.pop("paired_exon_objective", None) is not None:
+            for field in ("suggested_guard", "suggested_guard_reason", "target_guard_reason", "guard_policy_source"):
+                candidate.pop(field, None)
         site = site_by_label.get(_safeguard_entry_label(candidate), {})
         result = bind_safeguard_reference({**site, **candidate}, site, goal)
         result.pop("explicit_exon_objective_ids", None)
@@ -13226,15 +13239,15 @@ def _build_safeguard_candidates_by_target(
         if not isinstance(site, dict):
             continue
         label = _canonical_site_label(site)
-        is_context = site.get("monitoring_purpose") == "splice_neighborhood"
+        is_context = site.get("monitoring_purpose") in {"splice_neighborhood", "target_exon_boundary"}
         if not label or label in cached_labels:
             continue
         candidate = bind({**site, "label": label})
-        if (not is_context and not candidate.get("explicit_exon_objective_ids")
+        if (not is_context and physical_site(site) not in exon_pair_keys and not candidate.get("explicit_exon_objective_ids")
                 and measured_site_labels is not None and label not in measured_site_labels):
             continue
         # An unscoped or unrelated site must not become a guard by mere existence.
-        if not is_context and not any(candidate.get(key) for key in ("beneficial_isoforms", "pathogenic_isoforms",
+        if not is_context and physical_site(site) not in exon_pair_keys and not any(candidate.get(key) for key in ("beneficial_isoforms", "pathogenic_isoforms",
                                                   "preserved_isoforms", "conflict_between_objectives",
                                                   "shared_with_beneficial", "explicit_exon_objective_ids")):
             if candidate.get("objective_membership_complete") is not False:
@@ -13265,8 +13278,10 @@ def _build_safeguard_candidates_by_target(
         primary_entry = candidate_by_label.get(label) or site
         candidate_actions: List[Tuple[str, Dict[str, Any], str]] = []
         for cand in candidates:
+            cand = paired_exon_guard(cand, site, exon_pairs, protected_sites=protected_keys)
             if cand.get("monitoring_purpose") == "splice_neighborhood" and not (
-                    cand.get("required") or any(cand.get(k) is not None for k in ("max_abs_delta", "max_increase", "max_decrease"))):
+                    cand.get("paired_exon_objective") or cand.get("required")
+                    or any(cand.get(k) is not None for k in ("max_abs_delta", "max_increase", "max_decrease"))):
                 primary_key, guard_key = physical_site(site), physical_site(cand)
                 if (not primary_key or not guard_key or primary_key[:2] != guard_key[:2]
                         or abs(primary_key[3]-guard_key[3]) > cand["neighborhood_radius_bp"]):
@@ -13308,7 +13323,8 @@ def _build_safeguard_candidates_by_target(
             if action == "keep":
                 selected.append(dict(cand))
                 selections.append({"primary_label": primary_label, "candidate_label": _safeguard_entry_label(cand),
-                                   "action": "keep", "source": "deterministic", "reason": _reason})
+                                   "action": "keep", "source": "deterministic", "reason": _reason,
+                                   **({"paired_exon_objective": cand["paired_exon_objective"]} if cand.get("paired_exon_objective") else {})})
                 continue
             candidate_label = _safeguard_entry_label(cand)
             if not candidate_label:
@@ -13358,6 +13374,8 @@ def _routing_preservation_context(structured_goal: Dict[str, Any], splice_plan: 
 def _format_safeguard_reason(candidate: Optional[Dict[str, Any]]) -> Optional[str]:
     if not isinstance(candidate, dict):
         return None
+    if candidate.get("paired_exon_objective"):
+        return candidate.get("target_guard_reason")
     if candidate.get("objective_membership_complete") is False:
         return "Objective transcript membership is unresolved in the inspected catalog; this guard does not establish isoform sparing."
     if candidate.get("reference_scope_note"):
@@ -13407,6 +13425,7 @@ def _default_safeguards_from_candidates(
             or pathogenic
             or cand.get("preserved_isoforms")
             or cand.get("explicit_exon_objective_ids")
+            or cand.get("paired_exon_objective")
             or cand.get("objective_membership_complete") is False
             or cand.get("required")
             or cand.get("monitoring_purpose") == "splice_neighborhood"
