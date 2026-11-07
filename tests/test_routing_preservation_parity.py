@@ -53,4 +53,5 @@ def test_explicit_primary_bound_survives_candidate_selection(label_key):
     guard={label_key:'acceptor@100','required':True,'max_increase':.2}
     selected=runtime._build_safeguard_candidates_by_target(plan,[guard])
     assert runtime._default_safeguards_from_candidates(selected['acceptor@100'])==[
-        {'label':'acceptor@100','required':True,'max_increase':.2}]
+        {'label':'acceptor@100','required':True,'max_increase':.2,
+         'review':{'status':'unavailable','policy':'keep_explicit'}}]

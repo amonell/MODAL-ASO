@@ -26,20 +26,35 @@ a canonical splice junction does not establish increased exon inclusion; see
 The packaged tiler's direct scoring script also locates the enclosing application
 correctly when importing the shared oligonucleotide chemistry encoder.
 
-Automatic safeguards recognize the acceptor and donor of the targeted exon as
-two boundaries of the same requested outcome. For inclusion, the paired boundary
-may increase and a directional safeguard checks decreases. For skipping, it may
-decrease and the safeguard checks increases. The default opposing-change limit
-remains 0.05 in model-score units.
+The configured model reviews every proposed automatic splice safeguard for the
+current design job. It classifies increases and decreases at each site as intended,
+acceptable, unwanted or uncertain, gives a reason, and chooses a two-sided check,
+a directional check, or observation without a ranking penalty. Explicit user
+bounds and required preservation checks are included as locked policies.
+
+Code supplies checked exon geometry, transcript objectives, reference scope and
+the original request. The acceptor and donor of the targeted exon form a paired
+outcome: inclusion can favor increases at both boundaries, and skipping can favor
+decreases at both. Alternative-site and intron events receive their own objective
+context. Numeric execution limits remain the recorded user bounds or the default
+0.05 in model-score units. The reviewer chooses their biological relevance and
+direction; it cannot introduce new numeric limits.
 
 This relationship is checked against the current job's physical splice plan and
 the selected transcript's exact exon coordinates, chromosome and strand. A
 paired boundary outside the ordinary neighborhood radius is added to measurement
 context. Ambiguous or conflicting reference geometry retains the existing policy.
-Explicit bounds, required guards, preserved transcripts and conflicting isoform
-objectives retain their constraints. Other exons keep their existing safeguards.
-The relationship is recomputed for each job and recorded in the safeguard
-selection audit, including the physical boundaries and reference transcript.
+Explicit bounds and required preservation guards retain their constraints. Code
+validates case identities, directional consistency, exact coverage and locked
+policies before applying decisions. Observations retain their measurements and
+avoid duplicate filtering by older shared-site summaries. Reviews are recomputed
+for each job. The selection audit records the context, complete model responses,
+validation outcomes, decisions and reasons.
+
+Reviews use bounded batches with one repair attempt for incomplete or invalid
+decisions. Successful decisions survive an outage in a later batch. Unreviewed
+cases retain the recorded default policy, and the audit and report identify the
+incomplete review. This fallback lets the run finish with its evidence visible.
 
 Validation covers both strands and window contexts, altered and unresolved
 reference data, transcript namespace ambiguity and bounds, structured report

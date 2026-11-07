@@ -253,6 +253,8 @@ def objective_prediction_evidence(row, objective):
 
 def safeguard_priority(reports):
     """Rank measured adherence before effect magnitude, without deleting rows."""
+    observations = sum(report.get('policy') == 'observe' for report in reports)
+    reports = [report for report in reports if report.get('policy') != 'observe']
     failed = sum(report.get('passes') is False for report in reports)
     unknown = sum(report.get('passes') is not True and report.get('passes') is not False for report in reports)
     worst_excess = 0.0
@@ -265,8 +267,9 @@ def safeguard_priority(reports):
                 bound = finite_number(report.get(key))
                 if bound is not None:
                     worst_excess = max(worst_excess, measured-bound)
-    status = 'failed' if failed else 'unmeasured' if unknown else 'passed' if reports else 'not_requested'
-    return {'status': status, 'guard_count': len(reports), 'failed_count': failed,
+    status = ('failed' if failed else 'unmeasured' if unknown else 'passed' if reports
+              else 'monitoring_only' if observations else 'not_requested')
+    return {'status': status, 'guard_count': len(reports), 'observation_count': observations, 'failed_count': failed,
             'unmeasured_count': unknown, 'maximum_bound_excess': worst_excess,
             'rank_key': [0 if failed else 1 if unknown else 2, -worst_excess]}
 

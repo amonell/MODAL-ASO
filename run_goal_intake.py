@@ -13192,6 +13192,18 @@ def _build_safeguard_candidates_by_target(
     explicit_objectives = [o for o in resolve_routing_exon_objectives(goal)
         if o.get("status") == "resolved" and (o.get("identity") or {}).get("status") == "verified_explicit_span"]
     context = neighborhood_guard_sites(goal, splice_plan)
+    protected_labels = set()
+    # Include every explicit preservation guard before model review. The final
+    # executor independently reapplies these same mandatory bounds.
+    if protected_keys:
+        protected_refs, protected_labels = _routing_preservation_context(goal, splice_plan)
+        for label in sorted(protected_labels):
+            refs = protected_refs[label]
+            ref = refs[0]
+            context.append({**ref, 'label': label, 'canonical_label': label,
+                'monitoring_purpose': 'preservation', 'delta_direction': 'context',
+                'present_in': sorted({r['isoform_label'] for r in refs}),
+                'exon_indices': {r['isoform_label']: r['exon_index'] for r in refs}})
     site_by_label = {_canonical_site_label(site): site for site in full_plan + context + splice_plan
                      if isinstance(site, dict) and _canonical_site_label(site)}
     reconciled: List[Dict[str, Any]] = []
@@ -13200,6 +13212,9 @@ def _build_safeguard_candidates_by_target(
 
     def bind(candidate: Dict[str, Any]) -> Dict[str, Any]:
         candidate = dict(candidate)
+        if candidate.pop("safeguard_review", None) is not None:
+            for field in ("suggested_guard", "suggested_guard_reason", "target_guard_reason", "guard_policy_source"):
+                candidate.pop(field, None)
         # This policy is scoped to one job and primary boundary. Recompute it
         # after cache reuse rather than borrowing another route's exemption.
         if candidate.pop("paired_exon_objective", None) is not None:
@@ -13228,6 +13243,10 @@ def _build_safeguard_candidates_by_target(
                 result.update(suggested_guard=suggestion,
                     suggested_guard_reason="checked_explicit_exon_objective",
                     guard_policy_source="physical_explicit_exon_objective")
+        if result['label'] in protected_labels:
+            from aso_agents.preservation import required_routing_safeguards
+            enforced = required_routing_safeguards([result], {result['label']})[0]
+            result.update(enforced)
         return result
 
     for candidate in candidates:
@@ -13239,7 +13258,7 @@ def _build_safeguard_candidates_by_target(
         if not isinstance(site, dict):
             continue
         label = _canonical_site_label(site)
-        is_context = site.get("monitoring_purpose") in {"splice_neighborhood", "target_exon_boundary"}
+        is_context = site.get("monitoring_purpose") in {"splice_neighborhood", "target_exon_boundary", "preservation"}
         if not label or label in cached_labels:
             continue
         candidate = bind({**site, "label": label})
@@ -13260,25 +13279,27 @@ def _build_safeguard_candidates_by_target(
         cached_labels.add(label)
         sources["reconstructed"] += 1
     candidates = reconciled
-    user_request, isoform_objectives, trace_log = _resolve_safeguard_selection_context(structured_goal)
+    user_request, _, trace_log = _resolve_safeguard_selection_context(structured_goal)
     candidate_by_label = {
         label: cand
         for cand in candidates
         for label in [_safeguard_entry_label(cand)]
         if label
     }
-    ambiguous_cases: List[Dict[str, Any]] = []
-    candidate_actions_by_target: Dict[str, List[Tuple[str, Dict[str, Any], str]]] = {}
+    from aso_agents.safeguard_review import review_case, review_plan, apply_decision
+    review_cases = []
+    reviewed_case_ids = set()
+    entries = []
     for site in splice_plan:
         if not isinstance(site, dict):
             continue
         label = _canonical_site_label(site)
         if not label:
             continue
-        primary_entry = candidate_by_label.get(label) or site
-        candidate_actions: List[Tuple[str, Dict[str, Any], str]] = []
-        for cand in candidates:
-            cand = paired_exon_guard(cand, site, exon_pairs, protected_sites=protected_keys)
+        primary_entry = {**site, **(candidate_by_label.get(label) or {}), "label": label}
+        mapping[label] = []
+        for candidate in candidates:
+            cand = paired_exon_guard(candidate, site, exon_pairs, protected_sites=protected_keys)
             if cand.get("monitoring_purpose") == "splice_neighborhood" and not (
                     cand.get("paired_exon_objective") or cand.get("required")
                     or any(cand.get(k) is not None for k in ("max_abs_delta", "max_increase", "max_decrease"))):
@@ -13287,68 +13308,40 @@ def _build_safeguard_candidates_by_target(
                         or abs(primary_key[3]-guard_key[3]) > cand["neighborhood_radius_bp"]):
                     continue
             action, reason = _classify_safeguard_candidate_for_target(primary_entry, cand)
-            if action == "keep":
-                candidate_actions.append((action, cand, reason))
-            elif action == "ambiguous":
-                candidate_actions.append((action, cand, reason))
-                ambiguous_cases.append(_build_ambiguous_safeguard_case(primary_entry, cand, reason))
-        candidate_actions_by_target[label] = candidate_actions
-
-    decisions: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    decider_status = "not_required" if not ambiguous_cases else "not_invoked_no_objectives"
-    decider_error: Optional[str] = None
-    if ambiguous_cases and isoform_objectives:
-        try:
-            decisions = resolve_ambiguous_safeguards(
-                user_request,
-                isoform_objectives,
-                ambiguous_cases,
-                traces=trace_log,
-            )
-            if not isinstance(decisions, dict):
-                raise ValueError("Safeguard decider returned a non-mapping response")
-            expected = {(case["primary_label"], case["candidate_label"]) for case in ambiguous_cases}
-            complete = all(isinstance(decisions.get(key), dict)
-                           and decisions[key].get("action") in {"keep", "drop"} for key in expected)
-            decider_status = "completed" if complete else "partial_conservative_keep"
-        except Exception as exc:
-            decisions = {}
-            decider_status = "failed_conservative_keep"
-            decider_error = f"{type(exc).__name__}: {exc}"
-
-    selections: List[Dict[str, Any]] = []
-    for primary_label, candidate_actions in candidate_actions_by_target.items():
-        selected: List[Dict[str, Any]] = []
-        for action, cand, _reason in candidate_actions:
-            if action == "keep":
-                selected.append(dict(cand))
-                selections.append({"primary_label": primary_label, "candidate_label": _safeguard_entry_label(cand),
-                                   "action": "keep", "source": "deterministic", "reason": _reason,
-                                   **({"paired_exon_objective": cand["paired_exon_objective"]} if cand.get("paired_exon_objective") else {})})
+            # Invalid identities and the route's own unconstrained score are
+            # structural exclusions. Every other proposed check gets review.
+            if reason in {"invalid_label", "derived_self_guard"}:
                 continue
-            candidate_label = _safeguard_entry_label(cand)
-            if not candidate_label:
+            locked = bool(cand.get("required") or physical_site(cand) in protected_keys
+                or any(cand.get(k) is not None for k in ("max_abs_delta", "max_increase", "max_decrease")))
+            pair = exon_pairs.get(physical_site(site))
+            pair = pair if pair and pair['partner_key'] == physical_site(cand) else None
+            case = review_case(primary_entry, cand, action, reason, locked=locked, paired_exon=pair)
+            if case['case_id'] in reviewed_case_ids:
                 continue
-            decision = decisions.get((primary_label, candidate_label))
-            action = str(decision.get("action") or "").strip().lower() if isinstance(decision, dict) else ""
-            selections.append({"primary_label": primary_label, "candidate_label": candidate_label,
-                               "action": action if action in {"keep", "drop"} else "keep",
-                               "source": "decider" if action in {"keep", "drop"} else "conservative_fallback",
-                               "reason": decision.get("rationale") if isinstance(decision, dict) else _reason})
-            if action == "drop":
-                continue
-            selected_candidate = dict(cand)
-            rationale = decision.get("rationale") if isinstance(decision, dict) else None
-            if isinstance(rationale, str) and rationale.strip():
-                selected_candidate["target_guard_reason"] = rationale.strip()
-            selected.append(selected_candidate)
-        mapping[primary_label] = selected
+            review_cases.append(case)
+            reviewed_case_ids.add(case['case_id'])
+            entries.append((label, cand, action, reason, case))
+    review = review_plan({**goal, 'user_request': user_request}, review_cases, traces=trace_log)
+    selections = []
+    for label, cand, fallback_action, reason, case in entries:
+        decision = review['decisions'].get(case['case_id'])
+        # An unreviewed irrelevant-site proposal keeps its original exclusion.
+        if fallback_action == 'drop' and decision is None and not case['locked']:
+            action = 'drop'
+        else:
+            mapping[label].append(apply_decision(cand, decision, locked=case['locked']))
+            action = 'observe' if decision and decision['policy'] == 'observe' else 'keep'
+        selections.append({'primary_label': label, 'candidate_label': cand['label'],
+            'action': action, 'source': 'model_review' if decision else 'default_fallback',
+            'reason': decision['rationale'] if decision else reason,
+            'case_id': case['case_id'], 'locked': case['locked'],
+            **({'paired_exon_objective': cand['paired_exon_objective']} if cand.get('paired_exon_objective') else {})})
     if isinstance(structured_goal, dict):
         structured_goal["safeguard_selection_audit"] = {
             "candidate_sources": sources, "reference_policy_changes": policy_changes,
             "measured_site_labels": sorted(measured_site_labels) if measured_site_labels is not None else None,
-            "ambiguous_case_count": len(ambiguous_cases), "decider_status": decider_status,
-            "decider_error": decider_error, "selections": selections,
+            "model_review": review, "selections": selections,
         }
     return mapping
 
@@ -13374,6 +13367,8 @@ def _routing_preservation_context(structured_goal: Dict[str, Any], splice_plan: 
 def _format_safeguard_reason(candidate: Optional[Dict[str, Any]]) -> Optional[str]:
     if not isinstance(candidate, dict):
         return None
+    if candidate.get("guard_policy_source") == "model_review":
+        return candidate.get("target_guard_reason")
     if candidate.get("paired_exon_objective"):
         return candidate.get("target_guard_reason")
     if candidate.get("objective_membership_complete") is False:
@@ -13426,6 +13421,7 @@ def _default_safeguards_from_candidates(
             or cand.get("preserved_isoforms")
             or cand.get("explicit_exon_objective_ids")
             or cand.get("paired_exon_objective")
+            or cand.get("safeguard_review")
             or cand.get("objective_membership_complete") is False
             or cand.get("required")
             or cand.get("monitoring_purpose") == "splice_neighborhood"
@@ -13439,6 +13435,8 @@ def _default_safeguards_from_candidates(
                            if cand.get(key) is not None}
         if explicit_bounds:
             entry.update(explicit_bounds)
+        elif guard == "observe" and (cand.get("safeguard_review") or {}).get("status") == "reviewed":
+            entry["policy"] = "observe"
         elif guard == "no_increase":
             entry["max_increase"] = default_max_abs_delta
         elif guard == "no_decrease":
@@ -13450,6 +13448,8 @@ def _default_safeguards_from_candidates(
             entry["note"] = note
         if cand.get("required") is True:
             entry["required"] = True
+        if cand.get("safeguard_review"):
+            entry["review"] = deepcopy(cand["safeguard_review"])
         safeguards.append(entry)
     return safeguards
 
@@ -18223,6 +18223,7 @@ def _write_strategy_route_csv(json_path: str) -> Tuple[Optional[str], Optional[s
         pass_count = 0
         fail_count = 0
         unknown_count = 0
+        observation_count = 0
         if isinstance(safeguard_report, list):
             for guard in safeguard_report:
                 if not isinstance(guard, dict):
@@ -18255,9 +18256,11 @@ def _write_strategy_route_csv(json_path: str) -> Tuple[Optional[str], Optional[s
                     threshold_parts.append(f"inc={max_inc}")
                 if max_dec is not None:
                     threshold_parts.append(f"dec={max_dec}")
-                thresholds.append(",".join(threshold_parts) if threshold_parts else "")
+                thresholds.append("observe" if guard.get("policy") == "observe" else ",".join(threshold_parts))
                 # Count pass/fail
-                if guard.get("passes") is True:
+                if guard.get("policy") == "observe":
+                    observation_count += 1
+                elif guard.get("passes") is True:
                     pass_count += 1
                 elif guard.get("passes") is False:
                     fail_count += 1
@@ -18270,6 +18273,8 @@ def _write_strategy_route_csv(json_path: str) -> Tuple[Optional[str], Optional[s
             record["safeguards_status"] = "not_configured"
         elif not safeguard_report:
             record["safeguards_status"] = "not_evaluated"
+        elif observation_count == len(safeguard_report):
+            record["safeguards_status"] = "monitoring_only"
         elif safepass is False or fail_count > 0:
             record["safeguards_status"] = "fail"
         elif unknown_count:

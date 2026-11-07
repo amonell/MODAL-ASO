@@ -66,6 +66,12 @@ records remain in JSON and CSV. Joining these checks to sequence cards requires
 matching complete panel order and unique sequence identities. Ambiguous, partial,
 reordered and repeated-sequence panels keep separate source tables.
 
+Incomplete model review of splice safeguards appears in the shortlist and opening
+notices. The report states that recorded default checks were used. Sites approved
+for observation retain their measurements with the label “Changes recorded for
+context.” Their changes add no safeguard ranking penalty. Full output records
+retain each review decision and its biological explanation.
+
 The panel export includes every available mismatch bin. Older summaries explicitly
 mark absent bins as missing from that summary, preserving the recorded search
 completion status and count units. Missing exon-skipping consequence calculations

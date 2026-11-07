@@ -8,6 +8,7 @@ assert len(wheels) == 1, wheels
 with zipfile.ZipFile(wheels[0]) as archive:
     names = archive.namelist()
     required = ["aso_agents/cli.py", "aso_agents/encode_rbp_peaks.py", "aso_chemistry.py",
+                "aso_agents/safeguard_review.py",
                 "aso_agents/splice_recovery.py",
                 "aso_agents/splice_measurement_windows.py",
                 "aso_agents/report_tables.py", "aso_agents/transcript_rules.py",

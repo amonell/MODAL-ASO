@@ -58,11 +58,8 @@ def test_neighbor_selection_is_physical_and_bounded(monkeypatch):
 
 
 @pytest.mark.parametrize('measured', [True, False])
-def test_shared_neighbor_guard_survives_focus_and_missing_measurements(monkeypatch, measured):
+def test_shared_neighbor_guard_survives_focus_and_missing_measurements_during_review_outage(monkeypatch, measured):
     goal = resolved_goal(monkeypatch)
-    def drop_everything(_request, _objectives, cases, **kwargs):
-        return {(c['primary_label'], c['candidate_label']): {'action': 'drop'} for c in cases}
-    monkeypatch.setattr(runtime, 'resolve_ambiguous_safeguards', drop_everything)
     labels = {'acceptor@2000', 'donor@2030'} | ({'acceptor@3000'} if measured else set())
     chosen = runtime._build_safeguard_candidates_by_target(goal['splice_site_plan'], [], goal,
                                                          measured_site_labels=labels)
@@ -84,17 +81,22 @@ def test_explicit_neighbor_bound_is_preserved(monkeypatch):
     assert 'max_abs_delta' not in guard
 
 
-def test_cached_neighbor_from_another_program_cannot_lose_monitoring_policy(monkeypatch):
+def test_cached_neighbor_from_another_program_receives_current_review(monkeypatch):
+    from aso_agents import safeguard_review
     goal = resolved_goal(monkeypatch)
     local = deepcopy(goal['splice_site_plan'])
     goal['splice_site_plan'].append({'site': 'acceptor', 'position': 3000, 'chrom': 'chr8', 'strand': '+',
         'present_in': ['included', 'excluded'], 'exon_indices': {'included': 4, 'excluded': 3}})
-    monkeypatch.setattr(runtime, 'resolve_ambiguous_safeguards', lambda request, objectives, cases, **k: {
-        (c['primary_label'], c['candidate_label']): {'action': 'drop'} for c in cases})
+    monkeypatch.setattr(safeguard_review, '_review_batch', lambda payload, traces=None: {
+        'decisions':[{'case_id':c['case_id'],'candidate_label':c['candidate_label'],
+            'policy':'protect_both','increase_role':'uncertain','decrease_role':'uncertain',
+            'rationale':'The neighboring site has an uncertain response to this objective.'}
+            for c in payload['cases']]})
     mapping = runtime._build_safeguard_candidates_by_target(local, [{'label': 'acceptor@3000'}], goal)
     for candidates in mapping.values():
         guard = next(g for g in runtime._default_safeguards_from_candidates(candidates) if g['label'] == 'acceptor@3000')
         assert guard['max_abs_delta'] == .05
+        assert guard['review']['status'] == 'reviewed'
 
 
 @pytest.mark.parametrize('strand', ['+', '-'])

@@ -43,6 +43,7 @@ FIELD_LABELS = {
 
 # Explicit vocabulary, rather than replacing underscores in arbitrary values.
 VALUE_LABELS = {
+    'monitoring_only': 'Changes recorded for context', 'observe': 'Record changes for context',
     'vendor_notation_unsupported': 'Supplier ordering notation unavailable; use the full chemistry specification',
     'MORPHOLINO': 'Morpholino', 'PHOSPHORODIAMIDATE': 'Phosphorodiamidate',
     'uncapped_overflow_recovery': 'Complete search of repetitive sequences',

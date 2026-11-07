@@ -2,6 +2,7 @@ import json
 from copy import deepcopy
 import pytest
 import run_goal_intake as runtime
+from aso_agents import safeguard_review
 from test_route_objective_evidence_scope import goal
 
 
@@ -33,12 +34,15 @@ def test_absent_candidate_cache_does_not_disable_resolved_objective_guards(monke
     assert value['safeguard_selection_audit']['candidate_sources']['reconstructed'] == 2
 
 
-def test_failed_decider_is_a_visible_conservative_fallback(monkeypatch):
+def test_failed_review_is_a_visible_conservative_fallback(monkeypatch):
     def fail(*a,**k):raise RuntimeError('neutral provider failure')
-    monkeypatch.setattr(runtime,'resolve_ambiguous_safeguards',fail)
+    monkeypatch.setattr(safeguard_review,'_review_batch',fail)
     value=goal();selected=runtime._build_safeguard_candidates_by_target(plans(),stale_candidates(),value)
     assert selected['acceptor@100']
-    assert value['safeguard_selection_audit']['decider_status']=='failed_conservative_keep'
+    review=value['safeguard_selection_audit']['model_review']
+    assert review['status']=='unavailable'
+    assert review['batches'][0]['attempts']==[{'error_type':'RuntimeError'}]
+    assert all(c['safeguard_review']['status']=='unavailable' for c in selected['acceptor@100'])
 
 
 def route(tmp_path,guard,metrics=None):
@@ -90,17 +94,21 @@ def test_missing_measurement_does_not_erase_existing_required_guard(monkeypatch)
                                                           measured_site_labels={'acceptor@100'})
     assert runtime._default_safeguards_from_candidates(selected['acceptor@100'])==[
         {'label':'donor@40','required':True,'max_abs_delta':.25,
-         'note':'Shared with beneficial isoforms in the inspected reference catalog; outside-catalog specificity unknown.'}]
+         'note':'Shared with beneficial isoforms in the inspected reference catalog; outside-catalog specificity unknown.',
+         'review':{'status':'unavailable','policy':'keep_explicit'}}]
 
 
-def test_partial_decider_retains_unanswered_guards_and_records_provider_decisions(monkeypatch):
-    monkeypatch.setattr(runtime,'resolve_ambiguous_safeguards',lambda *a,**k:{
-        ('acceptor@100','donor@40'):{'action':'keep','rationale':'Distinct measured junction'}})
+def test_partial_review_retains_unanswered_guards_and_records_provider_decisions(monkeypatch):
+    def partial(payload,*a):
+        return {'decisions':[{'case_id':c['case_id'],'candidate_label':c['candidate_label'],'policy':'protect_both',
+            'increase_role':'uncertain','decrease_role':'unwanted','rationale':'Distinct measured junction'}
+            for c in payload['cases'] if c['primary_label']=='acceptor@100']}
+    monkeypatch.setattr(safeguard_review,'_review_batch',partial)
     value=goal();selected=runtime._build_safeguard_candidates_by_target(plans(),stale_candidates(),value)
     assert selected['acceptor@100'] and selected['donor@40']
     audit=value['safeguard_selection_audit']
-    assert audit['decider_status']=='partial_conservative_keep'
-    assert {x['source'] for x in audit['selections']}=={'decider','conservative_fallback'}
+    assert audit['model_review']['status']=='partial'
+    assert {x['source'] for x in audit['selections']}=={'model_review','default_fallback'}
 
 
 def test_incomplete_objective_reference_does_not_silently_discard_cached_guard(monkeypatch):

@@ -166,6 +166,10 @@ def _recorded_cautions(sections, tables):
             if missing:
                 cautions.append((f"{missing} requested file{'s are' if missing != 1 else ' is'} unavailable in this report bundle.", source))
         elif key == 'recommended shortlist':
+            review_tables = [table for i, table in tables if i == index and 'review note' in table['headers']]
+            if any('Safeguard review is incomplete; the recorded default checks were used.' in row[table['headers'].index('review note')]
+                   for table in review_tables for row in table['rows']):
+                cautions.append(('Safeguard review is incomplete; the recorded default checks were used.', source))
             own = [table for i, table in tables if i == index and 'off-target screen' in table['headers']]
             if len(own) == 1:
                 table = own[0]; col = table['headers'].index('off-target screen')

@@ -30,6 +30,15 @@ os.environ.setdefault(_TEST_CREDENTIAL_NAMES[selected_provider_name()], "test-on
 
 
 @pytest.fixture(autouse=True)
+def _offline_safeguard_review(monkeypatch):
+    """Ordinary tests exercise the declared fallback; review tests supply responses."""
+    from aso_agents import safeguard_review
+    def unavailable(*args, **kwargs):
+        raise ConnectionError('No provider configured for this unit test')
+    monkeypatch.setattr(safeguard_review, '_review_batch', unavailable)
+
+
+@pytest.fixture(autouse=True)
 def _stub_runtime_binaries(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     if request.node.get_closest_marker("real_bowtie_runtime") or request.node.get_closest_marker("real_runtime"):
         return

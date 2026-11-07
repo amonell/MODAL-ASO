@@ -96,7 +96,8 @@ def test_explicit_preserved_transcript_keeps_two_sided_protection():
     goal = exon_goal()
     goal['preservation_targets'] = [{'transcript_id': 'TARGET.1', 'action': 'preserve'}]
     guard = next(g for g in guards_for(goal) if g['label'] == 'donor@440')
-    assert guard.get('max_abs_delta') == .05
+    assert guard['max_increase'] == guard['max_decrease'] == .05
+    assert guard['required'] is True
 
 
 @pytest.mark.parametrize('fault', ['chromosome', 'strand', 'coordinate', 'ordinal', 'direction', 'intron_event', 'missing_goal', 'ambiguous_pair'])

@@ -14,6 +14,7 @@ EVIDENCE_LABELS = {
     'attested_physical_chemistry': 'verified sugar and backbone chemistry',
     'target_RNA_accessibility': 'prediction of how exposed the target RNA site is',
     'splice_safeguard_measurements': 'predictions for the protected splice sites',
+    'splice_safeguard_review': 'biological review of the splice safeguards',
 }
 
 
@@ -57,6 +58,9 @@ def prediction_note(record):
         parts.append('Predicted changes at protected splice sites exceed the specified limits.')
     elif guards == 'unmeasured':
         parts.append('Predictions for protected splice sites are unavailable.')
+    if any((report.get('review') or {}).get('status') == 'unavailable'
+           for report in (assessment.get('splice_safeguards') or {}).get('reports') or []):
+        parts.append('Safeguard review is incomplete; the recorded default checks were used.')
     return ' '.join(parts)
 
 
@@ -81,7 +85,8 @@ def render_shortlist_markdown(shortlist, pool_molecule_count):
     statuses = {'provisional': 'Some evidence unavailable', 'computational_candidate': 'Computational checks available',
                 'exploratory': 'Prediction requires review'}
     guards = {'passed': 'Within the specified limits', 'failed': 'Outside the specified limits',
-              'unmeasured': 'Measurements unavailable', 'not_requested': 'Outside this analysis'}
+              'unmeasured': 'Measurements unavailable', 'not_requested': 'Outside this analysis',
+              'monitoring_only': 'Changes recorded for context'}
     screens = {'complete_within_declared_scope': 'Completed', 'incomplete_or_unavailable': 'Incomplete or unavailable'}
     def cell(value):
         return str(value if value is not None else 'unavailable').replace('|', '\\|').replace('\n', ' ')

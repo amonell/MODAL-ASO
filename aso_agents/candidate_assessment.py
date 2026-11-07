@@ -201,6 +201,9 @@ def assess_candidates(rows, goal):
         guard_status = guard_priority.get("status", "not_requested")
         if guard_status == "unmeasured":
             missing.append("splice_safeguard_measurements")
+        if any((report.get('review') or {}).get('status') == 'unavailable'
+               for report in row.get('safeguard_report') or []):
+            missing.append('splice_safeguard_review')
         exploratory = native_status in {"opposing_predictions", "no_directional_support",
             "mixed_or_partial_predictions", "incomplete_prediction_evidence"} or guard_status in {"failed", "unmeasured"}
         row["candidate_assessment"] = {"version":VERSION, "motifs":motifs,

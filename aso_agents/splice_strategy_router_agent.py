@@ -905,7 +905,10 @@ def auto_threshold_constrained_site_metrics(
         if max_dec_raw is not None:
             max_dec = abs(max_dec_raw)
 
-        if max_abs is None and max_inc is None and max_dec is None:
+        observe = entry.get('policy') == 'observe'
+        if observe and (entry.get('required') or any(v is not None for v in (max_abs, max_inc, max_dec))):
+            return {'error': f'safeguard_observation_conflicts_with_bound: {label}'}
+        if not observe and max_abs is None and max_inc is None and max_dec is None:
             label_markers = _extract_isoform_markers(label)
             if primary_markers and label_markers & primary_markers:
                 max_abs = None  # allow primary isoform junctions to vary unless caps are explicit
@@ -920,6 +923,8 @@ def auto_threshold_constrained_site_metrics(
             "max_decrease": max_dec,
             "note": safeguard_note or None,
             "required": entry.get("required") is True,
+            **({'policy': 'observe'} if observe else {}),
+            **({'review': entry['review']} if isinstance(entry.get('review'), dict) else {}),
         })
 
     rows, schema = _load_scored_tiles(json_path)
@@ -1022,7 +1027,6 @@ def auto_threshold_constrained_site_metrics(
     def _passes_safeguards(metric_map: Dict[str, Dict[str, Optional[float]]]) -> Tuple[Optional[bool], List[Dict[str, Any]]]:
         reports: List[Dict[str, Any]] = []
         tol = 1e-9
-        overall_pass: Optional[bool] = True
         for guard in safeguards:
             label = guard["label"]
             values = _values_for_metric(metric_map.get(label))
@@ -1045,11 +1049,8 @@ def auto_threshold_constrained_site_metrics(
                     if value < -max_dec - tol:
                         passes = False
                         break
-            if passes is False:
-                overall_pass = False
-            elif passes is None and overall_pass is not False:
-                overall_pass = None
             metric = metric_map.get(label) or {}
+            observe = guard.get('policy') == 'observe'
             reports.append({
                 "label": label,
                 "values": values,
@@ -1060,10 +1061,16 @@ def auto_threshold_constrained_site_metrics(
                 "max_increase": max_inc,
                 "max_decrease": max_dec,
                 "note": guard.get("note"),
-                "passes": passes,
-                "status": "pass" if passes is True else "fail" if passes is False else "not_evaluated",
+                "passes": None if observe else passes,
+                "status": ('observed' if len(values) == 2 else 'measurement_unavailable') if observe else
+                          "pass" if passes is True else "fail" if passes is False else "not_evaluated",
                 "required": guard.get('required', False),
+                **({'policy': 'observe'} if observe else {}),
+                **({'review': guard['review']} if 'review' in guard else {}),
             })
+        active = [r for r in reports if r.get('policy') != 'observe']
+        overall_pass = (False if any(r['passes'] is False for r in active) else
+                        None if not active or any(r['passes'] is None for r in active) else True)
         return overall_pass, reports
 
     def _primary_effect_score(row_idx: int) -> float:
@@ -1455,9 +1462,10 @@ def auto_threshold_constrained_site_metrics(
         reports = safeguard_reports.get(idx)
         if reports is not None:
             row_copy["safeguard_report"] = reports
-            failures = [entry["label"] for entry in reports if entry.get("passes") is False]
+            active = [entry for entry in reports if entry.get('policy') != 'observe']
+            failures = [entry["label"] for entry in active if entry.get("passes") is False]
             row_copy["safeguards_passed"] = (False if failures else
-                None if any(entry.get("passes") is None for entry in reports) else True)
+                None if not active or any(entry.get("passes") is None for entry in active) else True)
             row_copy.pop("safeguards_failed_labels", None)
             if failures:
                 row_copy["safeguards_failed_labels"] = failures
@@ -1470,7 +1478,8 @@ def auto_threshold_constrained_site_metrics(
             row_copy["safeguards_status"] = "not_configured" if not safeguards else "not_evaluated"
         else:
             status = row_copy.get("safeguards_passed")
-            row_copy["safeguards_status"] = "pass" if status is True else "fail" if status is False else "not_evaluated"
+            row_copy["safeguards_status"] = ('monitoring_only' if all(r.get('policy') == 'observe' for r in reports)
+                else "pass" if status is True else "fail" if status is False else "not_evaluated")
         selected_rows.append(row_copy)
 
     schema_copy_raw = json.loads(json.dumps(schema)) if isinstance(schema, dict) else {}
