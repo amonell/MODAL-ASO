@@ -2,6 +2,12 @@
 
 Start with **`report.html`**. It summarizes the request, candidate panel, calculations and limitations. Its links lead to the supporting tables and files.
 
+Design reports open with a short fact strip, the goal, a binding map and a searchable table of the saved scored pool. Choose a target group to view its predictions. Panel badges identify the recommended molecules. Each row expands into its chemistry, selection evidence and splice checks. Evaluation, comparison, sequence-check and combined reports use the same layout with the evidence appropriate to their task.
+
+Use the checkboxes or map to collect ASOs in the selection basket. The basket exports CSV, FASTA and a supplier order sheet containing the exact saved ordering notation. Scale and purification are editable. Chemistry discrepancies appear beside the order download; missing notation keeps that download disabled. Selections persist in browsers that allow local storage. The report works offline, and large tables use search and pagination.
+
+Splice prediction colors run from grey to teal as support for the selected direction increases. The prediction is the mean of the two recorded perturbation simulations; incomplete pairs remain unavailable. Off-target counts retain their search scope and units. The zero-exact-or-one-mismatch filter requires completed screening and both counts.
+
 Use **CSV/TSV tables** to inspect sequences and measurements. Use **GenBank files** to view candidate positions alongside the reference sequence. Chemistry descriptions belong to the individual molecules; sequence alone does not describe their modifications.
 
 Open **`report.md`** for a text version. The **`artifacts/`** directory retains inputs, structured results and calculation details.
@@ -9,6 +15,8 @@ Open **`report.md`** for a text version. The **`artifacts/`** directory retains 
 Keep the whole run folder together when moving it. Report links use paths within that folder.
 
 The `artifacts/candidates/` directory includes `candidate_assessments.json` (the complete assessed eligible pool) and `recommended_shortlist.json`, `.csv`, and `.md` (distinct selected molecules and their evidence). Explicit panel/role objectives and hard requirements take precedence. Otherwise selection uses scientific direction, comparable off-target evidence, applicable motif flags and the native ranking. Missing or incomplete screens remain visible.
+
+Shortlists include genomic coordinates, producing programs and jobs, response-site predictions and the recorded rank with its scope. Junction-spanning ASOs retain every binding segment. Named rank components accompany the original ranking vectors for compatibility. `design_qualification.json` records filter thresholds from execution receipts, including inclusive or exclusive GC bounds where recorded. Older runs retain an explicit unavailable status for missing receipts.
 
 An exact requested count sets both a minimum and a maximum; a minimum-only request does not cap the panel. Global totals and independently requested per-site bounds retain their own scope. When no upper bound or all-eligible preference is supplied, the final shortlist-size question remains available after scoring, with existing minimums and scientific artifacts preserved.
 

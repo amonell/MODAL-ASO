@@ -676,6 +676,11 @@ def emit_pipeline_config(structured_goal_json: str, bed_json: str, chemistry_jso
         "output_dir": OUTPUT_DIR,
         "snakemake_cmd": snakemake_cmd,
         "tile_len": tile_len,
+        "filter_thresholds": {"gc_fraction": {"min":gc_min, "max":gc_max,
+                                "min_inclusive":True, "max_inclusive":True},
+                              "phastcons_score_min":phastcons_threshold,
+                              "phylop_score_min":phylop_threshold,
+                              "excluded_sequences":avoid_sequences},
         "notes": "; ".join(notes) if notes else ""
     }
 

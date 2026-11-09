@@ -212,11 +212,12 @@ def write_evaluation_evidence(directory, response):
                      str(row.get("name") or row.get("input_row_id")), row) for row in record["provided_asos"])
     sections.extend(("assessment-" + str(row.get("input_row_id") or row.get("name")),
                      "Assessment: " + str(row.get("name") or row.get("input_row_id")), row) for row in record["evaluation_assessments"])
+    from .readable_report import READER_CSS, READER_SCRIPT
     html = ['<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Evaluation evidence</title>',
-            '<style>body{font:16px/1.6 system-ui,sans-serif;max-width:1000px;margin:2em auto;padding:0 20px;overflow-wrap:anywhere}details{margin:1em 0}summary{cursor:pointer}' + VALUE_CSS + '</style></head><body>',
-            '<h1>Evaluation evidence</h1><p>Recorded predictions, sequence matches and reference evidence.</p>']
+            '<style>' + VALUE_CSS + READER_CSS + '</style></head><body><div class="reader-page">',
+            '<header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>Evaluation evidence</h1><p class="reader-subtitle">Recorded predictions, sequence matches and reference evidence.</p></header><main class="reader-content report-content">']
     for anchor, title, value in sections:
         html.append(f'<section id="{escape(str(anchor), quote=True)}"><h2>{escape(field_label(title))}</h2><details><summary>Show details</summary>{value_html(value, anchor)}</details></section>')
-    html.append('</body></html>')
+    html.append('</main></div>' + READER_SCRIPT + '</body></html>')
     html_path.write_text("\n".join(html), encoding="utf-8")
     return {"evaluation_evidence_json": str(json_path), "evaluation_evidence_html": str(html_path)}

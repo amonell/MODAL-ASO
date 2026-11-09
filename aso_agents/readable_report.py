@@ -597,7 +597,7 @@ def _group_design_evidence(evidence, sections):
     return primary
 
 
-def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None, context=None, inventory_html='', downloads_html=''):
+def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, header_title=None, header_request=None, context=None, inventory_html='', downloads_html='', explorer=''):
     """Reorganize saved text for reading without editing its evidence blocks.
 
     Reordering is limited to known result/limitation sections. Every original
@@ -744,7 +744,7 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
         downloads[0] = (*first[:3], before + downloads_html + closing + after)
         downloads_html = ''
     main_findings = [item for item in blocks if sections[item[0]]['heading'].casefold() in {'main finding', 'bottom line'}]
-    compact = orientation_data['kind'] != 'design' and bool(main_findings or lead)
+    compact = orientation_data['kind'] != 'design' and bool(main_findings)
     orientation = orientation_html(orientation_data, findings='reader-findings',
                                    downloads=downloads[0][1] if downloads else 'reader-output-files' if downloads_html else None,
                                    limitations=limits[1] if limits else None, compact=compact)
@@ -759,8 +759,17 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
         blocks = [item for item in blocks if item not in main_findings]
     else:
         opening = orientation + lead
+    if explorer:
+        # The explorer supplies the opening facts and candidate view. Preserve
+        # every source paragraph and stable anchor in the deeper analysis.
+        from .report_orientation import notice_list_html
+        opening = notice_list_html(orientation_data)
+        analysis = lead + ''.join(item[3] for item in blocks) + ''.join(item[3] for item in evidence)
+        blocks = []
+        evidence = [(-1, 'reader-analysis', 'Analysis and selection evidence',
+                     _disclosure('reader-analysis', 'Analysis and selection evidence', analysis))]
     from .report_tables import page_large_tables
-    return page_large_tables(readable_prose(opening + ''.join(item[3] for item in blocks)
+    return explorer + page_large_tables(readable_prose(opening + ''.join(item[3] for item in blocks)
             + tools
             + ''.join(item[3] for item in evidence) + ''.join(item[3] for item in downloads) + downloads_html
             + detail_html + terms))
@@ -814,8 +823,10 @@ addEventListener('afterprint',()=>{readerPrintState.forEach(([item,open])=>item.
 </script><noscript><style>.reader-tools button,.reader-column-toggle,.tabs{display:none}</style></noscript>"""
 
 from .report_tables import TABLE_CSS, TABLE_SCRIPT
-READER_CSS += TABLE_CSS
-READER_SCRIPT = TABLE_SCRIPT + READER_SCRIPT
+from .report_theme import REPORT_CSS
+from .report_explorer import EXPLORER_SCRIPT
+READER_CSS += TABLE_CSS + REPORT_CSS
+READER_SCRIPT = TABLE_SCRIPT + READER_SCRIPT + EXPLORER_SCRIPT
 
 
 def concise_title(title, *, fallback='ASO analysis'):
@@ -825,7 +836,7 @@ def concise_title(title, *, fallback='ASO analysis'):
     return HEADING_LABELS.get(value.casefold(), value)
 
 
-def basic_document(title, markdown, report_dir=None):
+def basic_document(title, markdown, report_dir=None, *, candidate_data=None):
     display_title = concise_title(title)
     if display_title == 'ASO analysis':
         sections = _sections(markdown)
@@ -837,7 +848,12 @@ def basic_document(title, markdown, report_dir=None):
             kind = build_orientation(sections)['kind']
             display_title = {'evaluation': 'Supplied ASO evaluation', 'comparison': 'ASO panel comparison',
                              'sequence_checks': 'Candidate sequence checks'}.get(kind, display_title)
-    body = readable_markdown_html(markdown, report_dir, header_title=display_title)
+    from .report_explorer import explorer_html
+    if candidate_data is None and report_dir:
+        from .report_explorer_data import project_analysis
+        candidate_data = project_analysis(report_dir)
+    body = readable_markdown_html(markdown, report_dir, header_title=display_title,
+                                  explorer=explorer_html(candidate_data))
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             '<title>' + html.escape(display_title) + '</title><style>' + READER_CSS + '</style></head><body>'
@@ -854,7 +870,8 @@ def design_downloads(payload):
               'Complete native candidate evidence': 'All candidate details (JSON)',
               'Scored steric pool (Excel)': 'Scored steric candidates (Excel)',
               'Scored gapmer pool (Excel)': 'Scored gapmer candidates (Excel)'}
-    links, secondary, seen = [], [], set()
+    links, secondary, seen, contents = [], [], set(), set()
+    directory = payload.get('oligoai_report_dir') or (payload.get('meta') or {}).get('run_dir')
     artifacts = (payload.get('overview') or {}).get('primary_artifacts') or []
     inventory = (payload.get('outputs') or {}).get('artifacts') or {}
     if inventory.get('items'):
@@ -865,6 +882,18 @@ def design_downloads(payload):
         if not isinstance(href, str) or not href or href in seen or urlsplit(href).scheme not in {'', 'file', 'http', 'https'}:
             continue
         seen.add(href)
+        if directory:
+            from pathlib import Path
+            import hashlib
+            from .report_exports import _reference, asset_exclusion
+            root = Path(directory).resolve()
+            ref = _reference(root/'report.html',root,href)
+            path = ref.get('path') if ref and not ref.get('reason') else None
+            if path and not asset_exclusion(path,max_bytes=512*1024):
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                if digest in contents:
+                    continue
+                contents.add(digest)
         label = labels.get(item.get('label'), item.get('label') or 'Output file')
         if item.get('variant'):
             label += ' · ' + str(item['variant'])
@@ -888,10 +917,12 @@ def design_results(payload):
     new success count. The original scope explanation stays with its table.
     """
     from .report_tables import page_large_tables
+    from .report_explorer import explorer_html
+    explorer = explorer_html(payload.get('candidate_explorer'))
     saved = payload.get('results_html') or ''
     markdown = (payload.get('overview') or {}).get('report_markdown') or ''
     if not markdown:
-        return (page_large_tables(saved) if saved else '<p>Final results are not recorded.</p>') + design_downloads(payload)
+        return explorer + (page_large_tables(saved) if saved else '<p>Final results are not recorded.</p>') + design_downloads(payload)
     meta = payload.get('meta') or {}
     from .report_orientation import design_reader_context
     reader_context = payload.get('reader_context')
@@ -904,7 +935,7 @@ def design_results(payload):
     body = readable_markdown_html(markdown, payload.get('oligoai_report_dir'), header_request=meta.get('user_request'),
                                   context={**reader_context, 'kind': 'design', 'gene': meta.get('gene_symbol') or meta.get('gene_id'),
                                            'evaluations': payload.get('oligoai_evaluations') or []},
-                                  inventory_html=inventory if separator else '', downloads_html=design_downloads(payload))
+                                  inventory_html=inventory if separator else '', downloads_html=design_downloads(payload), explorer=explorer)
     if saved and not separator:
         # Older or unknown payload layouts are never silently discarded.
         body += '<details><summary>Additional saved results</summary>' + saved + '</details>'
@@ -935,7 +966,7 @@ body{background:#f7f9f7;color:var(--reader-ink)}
 #quick-overview-alerts:empty{display:none}#quick-overview-alerts ul{margin-top:8px}
 @media(max-width:600px){.shell{padding:20px 12px 40px}.hero h1{font-size:1.6rem}.tabs{gap:6px}.tab-btn{padding:8px 10px;font-size:.85rem}.panel{padding:16px}.meta-row{display:block}}
 @media print{.tabs,.reader-footer{display:none}.shell{max-width:none;padding:0}.tab-panel{display:block!important}.is-hidden{display:none!important}}
-"""
+""" + REPORT_CSS
 
 
 def composite_document(title, markdown, entries, report_dir):
@@ -945,8 +976,8 @@ def composite_document(title, markdown, entries, report_dir):
     panels = ["<section class='tab-panel reader-content report-content' id='tab-panel-summary'>"
               + readable_markdown_html(markdown, report_dir, context={'kind': 'combined', 'design_labels': [entry['tab_label'] for entry in entries]}) + '</section>']
     rules = ["#tab-control-summary:checked ~ #tab-panel-summary{display:block}",
-             "#tab-control-summary:checked ~ .tab-list label[for='tab-control-summary']{background:#23624e;color:white}",
-             "#tab-control-summary:focus-visible ~ .tab-list label[for='tab-control-summary']{outline:3px solid #23624e;outline-offset:3px}"]
+             "#tab-control-summary:checked ~ .tab-list label[for='tab-control-summary']{background:var(--reader-accent);color:white}",
+             "#tab-control-summary:focus-visible ~ .tab-list label[for='tab-control-summary']{outline:3px solid var(--reader-accent);outline-offset:3px}"]
     counts = {}
     for index, entry in enumerate(entries, 1):
         label = entry['tab_label']; counts[label] = counts.get(label, 0) + 1
@@ -956,8 +987,8 @@ def composite_document(title, markdown, entries, report_dir):
         controls.append(f"<input class='tab-radio' type='radio' name='composite-tabs' id='{control}'>")
         labels.append(f"<label class='tab-button' for='{control}'>" + html.escape(label) + '</label>')
         rules.extend([f'#{control}:checked ~ #{panel}{{display:block}}',
-                      f"#{control}:checked ~ .tab-list label[for='{control}']{{background:#23624e;color:white}}",
-                      f"#{control}:focus-visible ~ .tab-list label[for='{control}']{{outline:3px solid #23624e;outline-offset:3px}}"])
+                      f"#{control}:checked ~ .tab-list label[for='{control}']{{background:var(--reader-accent);color:white}}",
+                      f"#{control}:focus-visible ~ .tab-list label[for='{control}']{{outline:3px solid var(--reader-accent);outline-offset:3px}}"])
         href = html.escape(entry['html_href'], quote=True)
         links = f"<a href='{href}' target='_blank' rel='noopener'>Open full report</a>"
         if entry.get('md_href'):

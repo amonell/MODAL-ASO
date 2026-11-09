@@ -82,17 +82,16 @@ def _recipient_markdown(payload):
 
 
 def _recipient_html(payload, report, directory):
-    from aso_agents.report_presentation import TABLE_CSS, markdown_html
+    from aso_agents.readable_report import basic_document
+    from aso_agents.report_explorer_data import project_records
     # Full records stay downloadable; the HTML opens on the scientific summary,
     # not a many-page JSON dump. Embed the exact payload for integrity checking.
     readable = report.split('## Complete molecule records\n', 1)[0]
-    body = markdown_html(readable, directory)
     evidence = json.dumps(payload, ensure_ascii=True).replace('</', '<\\/')
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>' + html.escape(payload['title']) + '</title><style>'
-            'body{font-family:Arial,sans-serif;color:#153a64;max-width:1200px;margin:32px auto;padding:0 20px;background:#fff}h1{font-size:2rem}h2{margin-top:32px}'
-            + TABLE_CSS + '</style></head><body><main class="report-content">' + body
-            + '</main><script type="application/json" id="molecule-records">' + evidence + '</script></body></html>')
+    document = basic_document(payload['title'], readable, directory,
+        candidate_data=project_records(payload['records'], title='Molecule specifications',
+                                       objective='Review the sequences, chemistry and ordering notation.', kind='chemistry'))
+    return document.replace('</body>', '<script type="application/json" id="molecule-records">' + evidence + '</script></body>')
 
 
 def write_recipient_report(directory, records, *, title, context, provenance):

@@ -68,6 +68,40 @@ def _summary(rows):
             'physical_splice_elements': [list(site) for site in sorted(sites, key=str)]}
 
 
+def applied_filter_thresholds(goal):
+    """Copy executed thresholds; never infer bounds from surviving candidates."""
+    receipts = []
+    completed = {item.get('group_id') for item in goal.get('tiling_group_results') or []
+                 if isinstance(item,dict) and item.get('json_path') and item.get('row_count') is not None}
+    for group in goal.get('tiling_group_configs') or []:
+        config = group.get('config') or {}
+        if group.get('group_id') in completed and config.get('filter_thresholds'):
+            receipts.append({'stage':'steric_scoring_annotations','group_id':group.get('group_id'),
+                'job_ids':group.get('job_ids') or [], 'program_ids':group.get('program_ids') or [],
+                'source':'tiling_group_configs.config.filter_thresholds', 'thresholds':config['filter_thresholds']})
+    for field in ('gapmer_tiling_results_by_job','steric_tiling_results_by_job'):
+        for job, result in (goal.get(field) or {}).items():
+            initial = result.get('initial_filtering') or {}
+            if initial.get('constraint_summary'):
+                receipts.append({'stage':'initial_filtering','job_ids':[job],
+                    'source':field+'.initial_filtering.constraint_summary',
+                    'thresholds':initial['constraint_summary'],
+                    'default_gc_minimum_recovery':initial.get('default_gc_minimum_recovery')})
+            filtering = result.get('constraint_filtering') or {}
+            if filtering.get('applied') and filtering.get('applied_thresholds'):
+                receipts.append({'stage':'parameter_constraints','job_ids':[job],
+                    'source':field+'.constraint_filtering.applied_thresholds',
+                    'thresholds':filtering['applied_thresholds']})
+    for field in ('tiling_results','gapmer_tiling_results'):
+        result = goal.get(field) or {}
+        initial = result.get('initial_filtering') or {}
+        if initial.get('constraint_summary'):
+            receipts.append({'stage':'initial_filtering','source':field+'.initial_filtering.constraint_summary',
+                'thresholds':initial['constraint_summary'],
+                'default_gc_minimum_recovery':initial.get('default_gc_minimum_recovery')})
+    return {'status':'recorded' if receipts else 'unavailable', 'stages':receipts}
+
+
 def qualify_panel(goal, pool, selected, selection):
     catalog = goal.get('isoform_transcripts') or {}
     programs = [program for program in goal.get('design_programs') or [] if isinstance(program, dict)]
@@ -96,6 +130,7 @@ def qualify_panel(goal, pool, selected, selection):
             'pool': _summary(candidates), 'selected': _summary(chosen),
             'completion_status': 'no_selected_candidates' if not chosen else 'computational_panel_exported'})
     return {'version': VERSION, 'scope': 'computational_evidence_and_panel_coverage',
+            'applied_filter_thresholds':applied_filter_thresholds(goal),
             'programs': contracts, 'pool': _summary(pool), 'selected': _summary(selected),
             'selection': selection, 'explicit_priorities': goal.get('candidate_panel_objectives') or [],
             'exon_conversion_bindings': goal.get('exon_conversion_bindings') or [],

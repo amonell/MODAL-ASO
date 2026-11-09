@@ -61,17 +61,30 @@ def test_reference_assets_and_large_evidence_are_excluded_before_read_or_hash(tm
 def test_many_small_downloads_cannot_exceed_the_total_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(standalone_report, 'MAX_DOWNLOAD_TOTAL_BYTES', 16)
     for name in ['a.csv', 'b.csv', 'c.csv']:
-        (tmp_path/name).write_bytes(b'12345678')
+        (tmp_path/name).write_bytes(name[0].encode() * 8)
     source = tmp_path/'report.html'; source.write_text('<html><body>'+''.join(f'<a href="{n}.csv">{n}</a>' for n in 'abc')+'</body></html>')
     _, receipt = standalone_report.standalone_html(source.read_text(), source_path=source, source_root=tmp_path)
     assert receipt['embedded_bytes'] == 16
     assert receipt['omitted_links'] == [{'name':'c.csv','reason':'download_size_limit','bytes':8}]
 
 
+def test_identical_downloads_share_content_and_preserve_all_aliases(tmp_path, monkeypatch):
+    monkeypatch.setattr(standalone_report, 'MAX_DOWNLOAD_TOTAL_BYTES', 8)
+    for name in ('a.csv','b.csv'):
+        (tmp_path/name).write_bytes(b'12345678')
+    source=tmp_path/'report.html'
+    document='<html><body><a href="a.csv">First</a><a href="b.csv">Second</a></body></html>'
+    page,receipt=standalone_report.standalone_html(document,source_path=source,source_root=tmp_path)
+    payload=json.loads(re.search(r'<script id="modal-portable-assets" type="application/json">(.*?)</script>',page,re.S)[1])
+    assert receipt['embedded_bytes']==8 and receipt['omitted_links']==[]
+    assert len(payload['files'])==1
+    assert {'a.csv','b.csv'}<=set(next(iter(payload['files'].values()))['aliases'])
+
+
 def test_primary_downloads_get_the_budget_before_earlier_supporting_links(tmp_path, monkeypatch):
     monkeypatch.setattr(standalone_report, 'MAX_DOWNLOAD_TOTAL_BYTES', 16)
     for name in ['detail_a.csv', 'detail_b.csv', 'panel.csv']:
-        (tmp_path/name).write_bytes(b'12345678')
+        (tmp_path/name).write_bytes(name.encode()[:8].ljust(8, b'0'))
     source = tmp_path/'report.html'
     source.write_text('<html><body><p>Scientific result: 0</p><a href="detail_a.csv">First details</a>'
                       '<a href="detail_b.csv">Second details</a>'

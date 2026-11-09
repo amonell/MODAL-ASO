@@ -277,6 +277,14 @@ def rank_candidates(rows):
 def write_assessment_artifacts(pool, selected, goal, directory):
     """Retain full pre-selection evidence and a distinct, explained shortlist."""
     directory = Path(directory)
+    from .candidate_export_evidence import export_context, named_rank_components, with_native_ranks, candidate_context_key
+    pool = [{**row, 'recommendation_rank_components':named_rank_components(row)} for row in with_native_ranks(pool)]
+    rank_lookup = {candidate_context_key(row):row for row in reversed(pool)}
+    selected = [{**row, **{key:rank_lookup.get(candidate_context_key(row),{}).get(key,row.get(key))
+                          for key in ('native_rank','native_rank_basis')}} for row in selected]
+    contexts_by_molecule = {}
+    for member in pool:
+        contexts_by_molecule.setdefault(molecule_key(member), []).append(export_context(member))
     pool_path, shortlist_path = directory / "candidate_assessments.json", directory / "recommended_shortlist.json"
     csv_path, md_path = directory / "recommended_shortlist.csv", directory / "recommended_shortlist.md"
     seen, shortlisted = set(), []
@@ -311,7 +319,8 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         records.append({"recommendation_order":rank,"antisense_5to3":row.get("synthesized_antisense_sequence"),
             "molecule_identity":molecule_key(row),"assessment":a,
             "reason":" ".join(reasons),
-            "native_rank":row.get("selection_rank"),"binding_intervals":row.get("binding_intervals_bed0_half_open") or [],
+            **export_context(row),"binding_intervals":row.get("binding_intervals_bed0_half_open") or [],
+            "binding_contexts":contexts_by_molecule.get(molecule_key(row), []),
             "off_target_status":screen.get("status"),"off_target_counts":screen.get("counts_by_mismatch"),
             "motif_flags":[flag["rule_id"] for flag in (a.get("motifs") or {}).get("flags",[])],
             "cryptic_splice_evidence":a.get("cryptic_splice_evidence"),
@@ -329,7 +338,11 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         "pool_artifact":str(pool_path),"pool_sha256":file_sha256(pool_path),
         "count":len(records),"requested_count":goal.get("candidate_limit"),"minimum_count_shortfall":shortfall,"records":records}
     write_json(shortlist_path, shortlist)
-    fields = ["recommendation_order","antisense_5to3","native_rank","recommendation_status","off_target_status",
+    fields = ["recommendation_order","antisense_5to3","native_rank","native_rank_basis","native_rank_scope",
+              "recommendation_rank_components","chrom","start","end","strand","coordinate_system","binding_intervals_1based",
+              "program_id","job_id","route_label","primary_objective_site","primary_objective_direction",
+              "primary_objective_delta_deletion","primary_objective_delta_replacement","primary_objective_directional_mean",
+              "binding_contexts","recommendation_status","off_target_status",
               "off_target_counts","motif_flags","cryptic_splice_evidence","safeguard_status","safeguard_report","reference_tm_c","reference_delta_g_kcal_mol","thermodynamic_status","reason"]
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle,fieldnames=fields,extrasaction="ignore")

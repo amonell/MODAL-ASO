@@ -1840,6 +1840,8 @@ def filter_tiles_json(
     else:
         output_path = json_path
 
+    gc_min, gc_max = _collect_gc_bounds_from_constraints(constraints)
+    gc_min_inclusive, gc_max_inclusive = get_gc_inclusive_flags(constraints)
     return {
         "applied": True,
         "changed": changed,
@@ -1848,4 +1850,11 @@ def filter_tiles_json(
         "removed_count": removed_count,
         "total_count": len(rows),
         "reason_counts": reason_counts,
+        "applied_thresholds": {
+            "gc_fraction": {"min":gc_min, "max":gc_max,
+                            "min_inclusive":gc_min_inclusive, "max_inclusive":gc_max_inclusive},
+            "max_binding_sites":get_max_binding_sites(constraints),
+            "homopolymer_max_run_by_base":get_homopolymer_per_base_limits(
+                constraints, fallback_default=DEFAULT_HOMOPOLYMER_LIMIT),
+        },
     }

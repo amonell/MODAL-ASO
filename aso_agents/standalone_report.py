@@ -76,7 +76,7 @@ def standalone_html(document: str, *, source_path: Path, source_root: Path):
     source, root = Path(source_path).resolve(), Path(source_root).resolve()
     if not source.is_relative_to(root):
         raise ValueError('standalone_report_source_outside_run:'+str(source))
-    files, admitted, omitted, replacements = {}, {}, [], []
+    files, admitted, omitted, replacements, by_content = {}, {}, [], [], {}
     total = 0
     links = _HTMLLinks(document)
     # Reserve the bounded download budget for the reader's main output files.
@@ -97,19 +97,24 @@ def standalone_html(document: str, *, source_path: Path, source_root: Path):
                 reason = asset_exclusion(path,max_bytes=MAX_DOWNLOAD_BYTES)
             if not reason and path not in admitted:
                 size = path.stat().st_size
-                if total+size > MAX_DOWNLOAD_TOTAL_BYTES:
+                data = path.read_bytes()
+                if len(data)!=size:
+                    raise ValueError('standalone_report_source_changed:'+str(path))
+                digest = hashlib.sha256(data).hexdigest()
+                if digest in by_content:
+                    admitted[path] = by_content[digest]
+                    files[admitted[path]]['aliases'].extend([path.relative_to(root).as_posix(),str(path),path.as_uri()])
+                elif total+size > MAX_DOWNLOAD_TOTAL_BYTES:
                     reason = 'download_size_limit'
                 else:
-                    data = path.read_bytes()
-                    if len(data)!=size:
-                        raise ValueError('standalone_report_source_changed:'+str(path))
-                    key = hashlib.sha256(path.relative_to(root).as_posix().encode()).hexdigest()[:16]
+                    key = digest[:16]
                     mime = mimetypes.guess_type(path.name)[0] or 'application/octet-stream'
                     files[key] = {'name':path.name,'mime':mime,'bytes':size,
-                        'sha256':hashlib.sha256(data).hexdigest(),
+                        'sha256':digest,
                         'base64':base64.b64encode(data).decode('ascii'),
                         'aliases':[path.relative_to(root).as_posix(),str(path),path.as_uri()]}
                     admitted[path]=key
+                    by_content[digest]=key
                     total += size
         if reason:
             omitted.append({'name':path.name if path else Path(value).name,'reason':reason,

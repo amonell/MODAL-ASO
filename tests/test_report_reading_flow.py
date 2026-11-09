@@ -149,7 +149,7 @@ The second input needs a complete search.
 '''
     page = readable_markdown_html(text)
     assert 'This report assesses' not in page
-    assert page.index('The second input needs') < page.index('Counts and search coverage')
+    assert page.index('The second input needs') < page.index('class="reader-facts"')
     assert 'Off-target search results are unavailable or incomplete' in page
 
 

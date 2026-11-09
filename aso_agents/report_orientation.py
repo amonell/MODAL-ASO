@@ -422,14 +422,11 @@ def orientation_html(orientation, *, findings, downloads=None, limitations=None,
             actions += '<a href="#' + esc(source, quote=True) + '">' + esc(label) + '</a>'
     if downloads:
         actions += '<a href="#' + esc(downloads, quote=True) + '">Get the files</a>'
-    if compact:
-        count_label = 'Comparison counts' if orientation['kind'] == 'comparison' else 'Counts and search coverage'
-        counts = ('<details class="reader-basics"><summary>' + count_label + '</summary>'
-                  + ('<div class="reader-facts">' + cards + '</div>' if cards else '')
-                  + ('<p>' + esc(orientation['meaning']) + '</p>' if orientation['meaning'] else '') + '</details>') if cards else ''
-        return '<section class="reader-orientation">' + notices + counts + '<nav class="reader-actions" aria-label="Explore results">' + actions + '</nav></section>'
-    return ('<section class="reader-orientation" aria-labelledby="reader-start">'
-            + '<h2 id="reader-start">' + esc(orientation.get('title', 'Results')) + '</h2><p class="reader-purpose">' + esc(orientation['purpose']) + '</p>'
+    return ('<section class="reader-orientation" aria-label="Results at a glance">'
             + ('<div class="reader-facts">' + cards + '</div>' if cards else '')
-            + ('<p>' + esc(orientation['meaning']) + '</p>' if orientation['meaning'] else '') + notices
-            + '<nav class="reader-actions" aria-label="Start reading">' + actions + '</nav></section>')
+            + ('' if compact else '<div class="report-goal"><span class="report-goal-label" id="reader-start">'
+               + esc(orientation.get('title', 'Results')) + '</span><p class="reader-purpose">' + esc(orientation['purpose']) + '</p></div>')
+            + notices
+            + '<nav class="reader-actions" aria-label="Start reading">' + actions + '</nav>'
+            + ('<details class="reader-basics"><summary>About these results</summary><p>' + esc(orientation['meaning']) + '</p></details>' if orientation['meaning'] else '')
+            + '</section>')

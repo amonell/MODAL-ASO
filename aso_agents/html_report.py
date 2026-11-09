@@ -273,7 +273,14 @@ def build_goal_intake_html_payload(
 
 
 def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
-    data_json = json.dumps(report_payload, ensure_ascii=True, indent=2).replace("</", "<\\/")
+    if not report_payload.get('candidate_explorer'):
+        from .report_explorer_data import project_run
+        report_payload = {**report_payload, 'candidate_explorer': project_run(
+            report_payload.get('oligoai_report_dir') or (report_payload.get('meta') or {}).get('run_dir'))}
+    # The explorer owns its compact packet. Legacy tabs have no dependency on
+    # that pool; embedding a second expanded copy makes large reports unwieldy.
+    data_json = json.dumps({k:v for k,v in report_payload.items() if k!='candidate_explorer'},
+                           ensure_ascii=True, separators=(',', ':')).replace("</", "<\\/")
     html = """<!DOCTYPE html>
 <html lang="en">
   <head>

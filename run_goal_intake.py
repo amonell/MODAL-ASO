@@ -29940,6 +29940,8 @@ def _apply_initial_tiling_filters(tiles_json_path: str, constraints: Optional[Di
         "constraint_summary": {
             "gc_min_percent": round(gc_min_pct, 2),
             "gc_max_percent": round(gc_max_pct, 2),
+            "gc_fraction": {"min":gc_min_pct / 100.0,"max":gc_max_pct / 100.0,
+                            "min_inclusive":not gc_min_exclusive,"max_inclusive":not gc_max_exclusive},
             "gc_min_exclusive": gc_min_exclusive,
             "gc_max_exclusive": gc_max_exclusive,
             "max_binding_sites": binding_limit,

@@ -73,7 +73,8 @@ class _Tables(HTMLParser):
         if tag == 'table':
             self.depth += 1
             if self.depth == 1:
-                self.current = {'start': self.source_offset(), 'rows': [], 'bodies': 0, 'safe': True}
+                self.current = {'start': self.source_offset(), 'rows': [], 'bodies': 0,
+                                'safe': dict(attrs).get('data-report-native') != 'true'}
             else:
                 self.current['safe'] = False
         if self.depth != 1:
