@@ -235,7 +235,8 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   sortValue:(id,row)=>{const a=catalog.get(id);return !a||!known(a,row).length?null:a.kind==='number'?numeric(a,row):categoryLabel(a,categoryKey(a,row));},
   cell:(a,row)=>{const v=known(a,row),missing=values(a,row).length-v.length;return v.length?(a.kind==='number'?v.slice(0,5).map(x=>format(x,a.unit)).join(' / ')+(v.length>5?' · '+(v.length-5)+' more values':''):categoryLabel(a,categoryKey(a,row)))+(missing?' · '+missing+' unavailable':''):'Unavailable';},
   exportValue:(a,row)=>{const v=values(a,row);return v.length===1&&v[0]==null?'':v.map(x=>x==null?'Unavailable':Object.hasOwn(a.labels||{},String(x))?a.labels[String(x)]:x).join('; ');},
-  metric:()=>{const a=catalog.get(colorId);return a?{...a,...domain(a),value:row=>a.kind==='number'?numeric(a,row):null,format:value=>format(value,a.unit)}:null;},
+  metric:()=>{const a=catalog.get(colorId);return a?{...a,...domain(a),value:row=>a.kind==='number'?numeric(a,row):null,format:value=>format(value,a.unit),
+   tick:value=>finite(value)?value.toLocaleString(undefined,{maximumSignificantDigits:4,notation:Math.abs(value)>=10000?'compact':'standard'}):'Unavailable'}:null;},
   exportAttributes};
 }
 '''

@@ -298,11 +298,12 @@ function setup(root){
   const sites=(context.sites||[]).filter(s=>chromKey(s.chrom)===chromosome);
   const intervals=all.flatMap(r=>r.intervals.map(p=>[Math.max(1,p.start-12),p.end+12])).concat(sites.map(s=>[Math.max(1,s.position-12),s.position+12])).sort((a,b)=>a[0]-b[0]);
   const segments=[];intervals.forEach(p=>{const last=segments.at(-1);if(last&&p[0]<=last[1]+70)last[1]=Math.max(last[1],p[1]);else segments.push(p.slice());});
-  const canvas=q('map'),width=Math.max(700,Math.floor(canvas.parentElement.clientWidth-24)),left=54,right=20,gap=Math.min(28,width/Math.max(3,segments.length*3));
+  const metric=attributeView.metric(),value=r=>metric?.value(r),direction=metric?.direction==='lower'?1:-1;
+  const tickWidth=metric?.kind==='number'&&metric.exists?Math.max(...[metric.low,metric.high,(metric.low+metric.high)/2].map(v=>metric.tick(v).length*5+12)):54;
+  const canvas=q('map'),width=Math.max(700,Math.floor(canvas.parentElement.clientWidth-24)),left=Math.min(180,Math.max(54,tickWidth)),right=20,gap=Math.min(28,width/Math.max(3,segments.length*3));
   let total=segments.reduce((s,p)=>s+p[1]-p[0]+1,0),available=width-left-right-gap*(segments.length-1),offset=left;
   const axes=segments.map(([a,b])=>{const length=(b-a+1)/total*available;const result={a,b,x:offset,width:length};offset+=length+gap;return result;});
   const axisFor=p=>axes.find(a=>p>=a.a&&p<=a.b),x=p=>{const a=axisFor(p);return a?a.x+(p-a.a)/(a.b-a.a+1)*a.width:null;};
-  const metric=attributeView.metric(),value=r=>metric?.value(r),direction=metric?.direction==='lower'?1:-1;
   candidates.sort((a,b)=>{const x=value(a),y=value(b);return x==null?(y==null?a.order-b.order:1):y==null?-1:(x-y)*direction||(a.native_rank??a.order)-(b.native_rank??b.order);});
   const lanes=[],packed=[];
   // Each lane is ordered by position. Binary search preserves the original
@@ -331,9 +332,10 @@ function setup(root){
   sites.forEach((s,i)=>{const xx=x(s.position);if(xx===null)return;const yy=59+(i%3)*13;line(xx,40,xx,yy-7,s.target?'#15758c':'#a8b4ba');text(s.label+(s.target?' · target':''),Math.min(width-10,Math.max(10,xx+5)),yy,9,s.target?'#15758c':'#5b6670',xx>width-220?'right':'left');});
   let min=metric?.low??0,max=metric?.high??1;if(max===min){const pad=Math.max(1,Math.abs(min)*.05);min=Math.min(min,0);max+=pad;}const range=max-min;
   if(hasMetric){
-  text(metric.label.length>100?metric.label.slice(0,97)+'…':metric.label,4,107,10);
+  const metricTitle=metric.label+(metric.unit?' ('+metric.unit+')':'');
+  text(metricTitle.length>100?metricTitle.slice(0,97)+'…':metricTitle,4,107,10);
   const plotBottom=188,plotHeight=65;
-  [0,.5,1].forEach(f=>{line(left,plotBottom-f*plotHeight,width-right,plotBottom-f*plotHeight,'#eef1f3');text(metric.format(min+range*f),left-7,plotBottom-f*plotHeight+3,9,'#5b6670','right');});
+  [0,.5,1].forEach(f=>{line(left,plotBottom-f*plotHeight,width-right,plotBottom-f*plotHeight,'#eef1f3');text(metric.tick(min+range*f),left-7,plotBottom-f*plotHeight+3,9,'#5b6670','right');});
   if(min<=0&&max>=0)line(left,plotBottom+min/range*plotHeight,width-right,plotBottom+min/range*plotHeight,'#cad4d9');
   candidates.filter(r=>finite(value(r))).forEach(r=>{const p=r.intervals[0],xx=x((p.start+p.end)/2);if(xx===null)return;c.fillStyle=attributeView.color(r);c.beginPath();c.arc(xx,plotBottom-(value(r)-min)/range*plotHeight,r.panel_rank!==null?3:2,0,2*Math.PI);c.fill();});
   }
