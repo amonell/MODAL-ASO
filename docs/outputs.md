@@ -8,6 +8,8 @@ Use the checkboxes or map to collect ASOs in the selection basket. The basket ex
 
 Splice prediction colors run from grey to teal as support for the selected direction increases. The prediction is the mean of the two recorded perturbation simulations; incomplete pairs remain unavailable. Off-target counts retain their search scope and units. The zero-exact-or-one-mismatch filter requires completed screening and both counts.
 
+Gapmer tables show saved **OligoAI RNA reduction** predictions as percentages. Expand a value for its RNA reference, binding site and conditions. A context selector appears when the run contains several references or conditions. Predictions appear first; the analysis-rank column preserves the original design ranking. Ranges cover multiple binding sites in one context, with sorting and minimum filters using the lower value. The CSV includes a row for each saved prediction, with full precision and its dose, delivery method and model provenance.
+
 Use **CSV/TSV tables** to inspect sequences and measurements. Use **GenBank files** to view candidate positions alongside the reference sequence. Chemistry descriptions belong to the individual molecules; sequence alone does not describe their modifications.
 
 Open **`report.md`** for a text version. The **`artifacts/`** directory retains inputs, structured results and calculation details.

@@ -39,14 +39,24 @@ def explorer_html(data):
     # The initial rows make the actual results readable before scripts load.
     rows = []
     initial_context = data['contexts'][0]['id']
-    for row in [r for r in data['records'] if r['context']==initial_context][:25]:
+    initial_rows = [r for r in data['records'] if r['context']==initial_context]
+    activity_id = next((a['scenario_id'] for r in initial_rows for a in r.get('oligoai') or []),None)
+    def activity_values(row):
+        return [a['value'] for a in row.get('oligoai') or [] if a['scenario_id']==activity_id and a['value'] is not None]
+    if any(activity_values(r) for r in initial_rows) and not any(r['effect'] is not None for r in initial_rows):
+        initial_rows.sort(key=lambda r:(not bool(activity_values(r)),-min(activity_values(r) or [0])))
+    for row in initial_rows[:25]:
+        activity = activity_values(row)
+        activity_text = (' / '.join(f'{v:.1f}%' for v in activity) if activity else 'No saved prediction')
         values = ['',row.get('native_rank') if row.get('native_rank') is not None else '—',row['aso'],row['location'],
                   f"{row['effect']:+.3f}" if row['effect'] is not None else 'Unavailable',
                   f"{row['gc']*100:.0f}%" if row['gc'] is not None else 'Unavailable',
                   ' / '.join(str(int(v)) if v is not None else '—' for v in row['off_targets']),
-                  row['guard']['summary']]
+                  activity_text,row['guard']['summary']]
         rows.append('<tr>'+''.join('<td>'+esc(v)+'</td>' for v in values)+'</tr>')
-    return '''<section class="report-explorer" id="candidate-explorer" aria-label="Explore ASO candidates">
+    has_activity = any(r.get('oligoai') or data.get('kind')!='chemistry' and r.get('oligoai_applicable') for r in data['records'])
+    classes = 'report-explorer' + ('' if has_activity else ' report-no-oligoai')
+    return '<section class="'+classes+'''" id="candidate-explorer" aria-label="Explore ASO candidates">
 <div class="report-facts">'''+facts+'''</div>
 <div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['objective'])+'''</p></div>
 <div class="report-controls"><label class="report-context">Target and approach<select data-role="context" aria-label="Target and approach">'''+options+'''</select></label>
@@ -58,8 +68,11 @@ def explorer_html(data):
 <p class="report-map-tip" data-role="map-tip" aria-live="polite">Select an ASO in the map or table to add it to your basket.</p></section>
 <h2>Explore all ASOs</h2>
 <p class="report-sub" data-role="metric-note"></p>
+<p class="report-sub" data-role="activity-note" hidden></p>
+<div class="report-controls" data-role="activity-controls" hidden><label class="report-context">OligoAI RNA context and conditions<select data-role="activity-context" aria-label="OligoAI RNA context and conditions"></select></label></div>
 <div class="report-controls"><label>Sequence, name or position<input type="search" data-role="search" placeholder="Search candidates" autocomplete="off"></label>
 <label data-role="effect-control">Minimum prediction<input type="number" step="any" data-role="minimum" placeholder="Any"></label>
+<label data-role="activity-minimum-control" hidden>Minimum RNA reduction (%)<input type="number" step="any" data-role="activity-minimum" placeholder="Any"></label>
 <label class="report-check"><input type="checkbox" data-role="panel-only">Selected panel only</label>
 <label class="report-check"><input type="checkbox" data-role="clean-only">Zero exact or 1-mismatch off-targets</label>
 <button type="button" class="report-button" data-action="reset">Reset filters</button></div>
@@ -67,7 +80,7 @@ def explorer_html(data):
 <div class="report-table-wrap" tabindex="0" role="region" aria-label="ASO candidate table"><table class="report-table" data-report-native="true"><thead><tr>
 <th scope="col">Select</th><th scope="col" data-sort="native_rank"><button type="button" title="Rank from the saved analysis within this target and approach">Analysis rank</button></th><th scope="col" data-sort="aso"><button type="button">ASO · 5′→3′</button></th>
 <th scope="col" data-sort="start"><button type="button">Binding location</button></th><th scope="col" data-sort="effect"><button type="button">Prediction</button></th>
-<th scope="col" data-sort="gc"><button type="button" title="Percentage of G and C bases">GC</button></th><th scope="col" data-sort="off_targets"><button type="button">Off-targets</button></th><th scope="col">Checks &amp; details</th></tr></thead>
+<th scope="col" data-sort="gc"><button type="button" title="Percentage of G and C bases">GC</button></th><th scope="col" data-sort="off_targets"><button type="button">Off-targets</button></th><th scope="col" data-sort="oligoai"><button type="button" title="Predicted RNA reduction in vitro. Sorting uses the lowest prediction when an ASO has several binding sites in this RNA context.">OligoAI RNA reduction</button></th><th scope="col">Checks &amp; details</th></tr></thead>
 <tbody>'''+''.join(rows)+'''</tbody></table></div>
 <div class="report-pagination"><label>Rows per page <select data-role="page-size" aria-label="Rows per page"><option>25</option><option>50</option><option>100</option></select></label>
 <span data-role="page-status" aria-live="polite"></span><div><button class="report-button" data-action="previous">Previous</button><button class="report-button" data-action="next">Next</button></div></div>
@@ -88,6 +101,7 @@ EXPLORER_SCRIPT = r'''<script>
 const esc=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
 const fmt=value=>finite(value)?(value>0?'+':'')+value.toFixed(3):'Unavailable';
+const percent=value=>finite(value)?value.toFixed(1)+'%':'Unavailable';
 const ramp=value=>{if(!finite(value)||value<=0)return '#e9eded';const a=Math.pow(Math.min(value,1),.7);return `rgb(${Math.round(226-190*a)},${Math.round(234-106*a)},${Math.round(234-106*a)})`;};
 const csvCell=value=>{let text=String(value??'');if(typeof value==='string'&&!['+','-'].includes(text)&&'=+@-'.includes(text.trimStart().charAt(0))&&text.trim())text="'"+text;return '"'+text.replaceAll('"','""')+'"';};
 const download=(name,text,type)=>{const url=URL.createObjectURL(new Blob([text],{type:type||'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();setTimeout(()=>{link.remove();URL.revokeObjectURL(url);},1000);};
@@ -102,19 +116,61 @@ function setup(root){
  const q=role=>root.querySelector(`[data-role="${role}"]`),action=name=>root.querySelector(`[data-action="${name}"]`);
  const rows=data.records,byId=new Map(rows.map(r=>[r.id,r])),contexts=new Map(data.contexts.map(c=>[c.id,c]));
  const basket=new Map(),storageKey='modal-aso-selection:'+data.id;
+ const activityViews=new Map();let activityScenarios=[];
  let page=0,mapPage=0,pageSize=25,sort='effect',ascending=false,filtered=[],mapHits=[],mapFrame=0,printing=false;
  try{const saved=JSON.parse(localStorage.getItem(storageKey)||'[]');if(Array.isArray(saved))saved.forEach(id=>{const r=byId.get(id);if(r)basket.set(r.molecule,r);});}catch{q('storage-notice').textContent='Selections stay available while this report is open. Browser storage is unavailable.';q('storage-notice').hidden=false;}
  const scopeRows=()=>q('context').value==='all'?rows:rows.filter(r=>r.context===q('context').value);
+ const activityFor=row=>activityViews.get(row.id)||{entries:[],values:[],value:null,missing:0};
+ function configureActivity(){
+  const entries=scopeRows().flatMap(r=>r.oligoai||[]),withReference=entries.filter(a=>a.transcript_id||a.context_basis);
+  activityScenarios=[...new Map((withReference.length?withReference:entries).map(a=>[a.scenario_id,a])).values()];
+  const selected=q('activity-context').value;
+  q('activity-context').innerHTML=activityScenarios.map((a,i)=>`<option value="${esc(a.scenario_id)}">${esc(a.label)}${activityScenarios.some(b=>b!==a&&b.label===a.label)?' · record '+(i+1):''}</option>`).join('');
+  if(activityScenarios.some(a=>a.scenario_id===selected))q('activity-context').value=selected;
+  q('activity-controls').hidden=activityScenarios.length<2;
+  updateActivity();
+ }
+ function updateActivity(){
+  const scenario=activityScenarios.find(a=>a.scenario_id===q('activity-context').value);
+  activityViews.clear();
+  scopeRows().forEach(r=>{
+   const all=r.oligoai||[];let entries=all.filter(a=>a.scenario_id===scenario?.scenario_id);
+   if(!entries.length)entries=all.filter(a=>!a.transcript_id&&!a.context_basis&&['dosage_nm','transfection_method'].every(k=>a[k]==null||a[k]===scenario?.[k]));
+   const values=entries.map(a=>a.value).filter(finite);
+   activityViews.set(r.id,{entries,values,value:values.reduce((low,v)=>low===null?v:Math.min(low,v),null),missing:entries.length-values.length});
+  });
+  const applicable=scopeRows().filter(r=>(data.kind!=='chemistry'&&r.oligoai_applicable)||(r.oligoai||[]).length),hasActivity=applicable.length>0;
+  const predicted=new Set(applicable.filter(r=>finite(activityFor(r).value)).map(r=>r.molecule)).size;
+  const total=new Set(applicable.map(r=>r.molecule)).size;
+  root.classList.toggle('report-no-oligoai',!hasActivity);q('activity-note').hidden=!hasActivity;
+  q('activity-minimum-control').hidden=!predicted;
+  const assumed=scenario?['dose_basis','method_basis'].filter(k=>scenario[k]==='assumed_reference_scenario'):[];
+  const basis=assumed.length===2?' Reference dose and delivery.':assumed.length?' Reference '+(assumed[0]==='dose_basis'?'dose.':'delivery.'):'';
+  const ranges=applicable.some(r=>activityFor(r).values.length>1)?' Ranges cover separate binding sites; sorting uses the lower value.':'';
+  q('activity-note').textContent='OligoAI predicts RNA reduction in vitro. '+predicted.toLocaleString()+' of '+total.toLocaleString()+' ASOs have predictions for these conditions.'+(scenario?' '+scenario.label+'.':'')+basis+ranges;
+ }
+ function activityCell(row){
+  const a=activityFor(row);if(!a.entries.length)return '<span class="report-sub">No saved prediction</span>';
+  const labels={disabled:'Disabled',unsupported:'Unsupported chemistry',error:'Prediction failed',pending:'Pending',unavailable:'Unavailable',predicted:'Predicted'};
+  let summary=labels[a.entries[0].status]||'Unavailable';
+  if(a.values.length){const low=a.value,high=a.values.reduce((high,v)=>Math.max(high,v),low);
+   summary=`<span class="report-effect" style="background:${ramp(low/100)};color:${low>55?'#fff':'#1b1f23'}">${percent(low)}${high!==low?'–'+percent(high):''}</span>`;
+   if(a.missing)summary+=` <span class="report-sub">${a.missing} unavailable</span>`;
+  }
+  const details=a.entries.map(v=>`<p><strong>${finite(v.value)?percent(v.value)+' predicted RNA reduction':esc(labels[v.status]||'Unavailable')}</strong><br>${esc(v.label)}${v.location?'<br>'+esc(v.location):''}${v.reason?'<br>'+esc(v.reason):''}${v.masked_flank_nt?'<br>'+esc(v.masked_flank_nt)+' flanking bases were unavailable.':''}</p>`).join('');
+  return `<details class="report-activity-details"><summary>${summary}</summary><div class="report-check-text">${details}</div></details>`;
+ }
  function visible(){
-  const query=q('search').value.trim().toUpperCase(),minimum=q('minimum').value.trim();
+  const query=q('search').value.trim().toUpperCase(),minimum=q('minimum').value.trim(),activityMinimum=q('activity-minimum').value.trim();
   let result=scopeRows().filter(r=>(!q('panel-only').checked||r.panel_rank!==null)&&
    (!q('clean-only').checked||(r.off_target_complete&&r.off_targets[0]===0&&r.off_targets[1]===0))&&
    (!minimum||(finite(r.effect)&&r.effect>=Number(minimum)))&&
+   (!activityMinimum||(finite(activityFor(r).value)&&!activityFor(r).missing&&activityFor(r).value>=Number(activityMinimum)))&&
    (!query||[r.aso,r.name,r.location,contexts.get(r.context)?.label].some(v=>String(v||'').toUpperCase().includes(query))));
   const multi=q('context').value==='all';
   return result.sort((a,b)=>{
    if(multi&&a.context!==b.context)return data.contexts.findIndex(c=>c.id===a.context)-data.contexts.findIndex(c=>c.id===b.context);
-   let x=sort==='off_targets'?a.off_targets[0]:a[sort],y=sort==='off_targets'?b.off_targets[0]:b[sort];
+   let x=sort==='oligoai'?activityFor(a).value:sort==='off_targets'?a.off_targets[0]:a[sort],y=sort==='oligoai'?activityFor(b).value:sort==='off_targets'?b.off_targets[0]:b[sort];
    if(x===null||x===undefined)return y===null||y===undefined?a.order-b.order:1;if(y===null||y===undefined)return -1;
    const delta=typeof x==='string'?x.localeCompare(y):x-y;return (ascending?delta:-delta)||a.order-b.order;
   });
@@ -136,8 +192,9 @@ function setup(root){
    <td><span class="report-sub">${esc(r.location)}</span>${q('context').value==='all'?'<div class="report-sub">'+esc(contexts.get(r.context)?.label)+'</div>':''}</td>
    <td class="report-number"><span class="report-effect" style="background:${color};color:${white?'#fff':'#1b1f23'}">${fmt(r.effect)}</span></td><td class="report-number">${finite(r.gc)?(r.gc*100).toFixed(0)+'%':'—'}</td>
    <td><span class="report-badge">${screen}</span><div class="report-sub">${esc(r.off_target_unit)}${r.off_target_complete?'':r.off_target_status==='unavailable'?' · search result missing':r.off_target_status==='failed'?' · search failed':' · search incomplete'}</div></td>
+   <td data-activity="${esc(r.id)}">${activityCell(r)}</td>
    <td><details><summary>${['passed','review','incomplete'].includes(r.guard.status)?esc(r.guard.summary):'View ASO details'}</summary><div class="report-check-text">${checks||esc(r.guard.summary)}<dl><dt>Selection</dt><dd>${esc(r.selection_note)}</dd><dt>Chemistry</dt><dd>${chemistry}</dd>${raw}<dt>Target and approach</dt><dd>${esc(contexts.get(r.context)?.label)}</dd><dt>Saved rank</dt><dd>${r.native_rank??'Unavailable'}</dd><dt>Ordering notation</dt><dd><code>${esc(r.chemistry.notation||'Unavailable')}</code></dd></dl></div></details></td></tr>`;
-  }).join('')||'<tr><td colspan="8" class="report-empty">No ASOs match these filters.</td></tr>';
+  }).join('')||'<tr><td colspan="9" class="report-empty">No ASOs match these filters.</td></tr>';
   const molecules=new Set(filtered.map(r=>r.molecule)).size;
   q('count').textContent=`${total.toLocaleString()} of ${scoped.length.toLocaleString()} results · ${molecules.toLocaleString()} ASOs.`;
   q('page-status').textContent=total?`${(page*size+1).toLocaleString()}–${Math.min((page+1)*size,total).toLocaleString()} of ${total.toLocaleString()}`:'No matching records';
@@ -156,11 +213,14 @@ function setup(root){
   q('order-notice').hidden=!issues.length;q('order-notice').textContent=(missing?`${missing} selections need ordering notation. `:'')+issues.join(' ');
  }
  function toggle(id){const row=byId.get(id);if(!row)return;if(basket.has(row.molecule))basket.delete(row.molecule);else basket.set(row.molecule,row);save();renderBasket();renderTable();}
- function reset(){q('search').value='';q('minimum').value='';q('panel-only').checked=false;q('clean-only').checked=false;page=0;mapPage=0;renderTable();}
+ function reset(){q('search').value='';q('minimum').value='';q('activity-minimum').value='';q('panel-only').checked=false;q('clean-only').checked=false;page=0;mapPage=0;renderTable();}
  function contextChanged(){
   const context=contexts.get(q('context').value),hasEffects=scopeRows().some(r=>finite(r.effect));
   q('objective').textContent=context?.objective||data.objective;
   q('metric-note').textContent=context?.metric_note||'Each design group keeps its own target, prediction units and recorded ranking.';
+  configureActivity();
+  const hasActivity=scopeRows().some(r=>finite(activityFor(r).value));
+  if(hasActivity&&!hasEffects)q('metric-note').textContent='ASOs with saved activity predictions appear first. Analysis ranks retain the original design order.';
   root.classList.toggle('report-no-predictions',!hasEffects);
   const hasScreen=data.kind!=='chemistry'||scopeRows().some(r=>r.off_targets.some(finite)||r.off_target_status!=='unavailable');
   root.classList.toggle('report-no-screening',!hasScreen);q('clean-only').closest('label').hidden=!hasScreen;q('screen-description').hidden=!hasScreen;
@@ -171,7 +231,7 @@ function setup(root){
   q('panel-only').closest('label').hidden=!hasPanel;if(!hasPanel)q('panel-only').checked=false;
   action('add-panel').hidden=!rows.some(r=>r.panel_rank!==null);
   if(data.contexts.length===1)q('context').closest('.report-controls').hidden=true;
-  q('effect-control').hidden=!hasEffects||!context;q('minimum').value='';sort=hasEffects&&context?'effect':'order';ascending=sort==='order';page=0;mapPage=0;renderTable();
+  q('effect-control').hidden=!hasEffects||!context;q('minimum').value='';q('activity-minimum').value='';sort=hasEffects&&context?'effect':hasActivity?'oligoai':'order';ascending=sort==='order';page=0;mapPage=0;renderTable();
  }
  function scheduleMap(){cancelAnimationFrame(mapFrame);mapFrame=requestAnimationFrame(drawMap);}
  function drawMap(){
@@ -257,12 +317,17 @@ function setup(root){
    download('ASO_order_sheet.csv',values.map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
   }else if(what==='fasta')download('ASO_selection.fasta',selected.map((r,i)=>`>ASO_${i+1} ${r.name.replaceAll('\n',' ').replaceAll('\r',' ')}\n${r.aso}`).join('\n')+'\n');
   else if(what==='csv'){
-   const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_unit','off_target_status','splice_checks','panel_order','selection_note'];
-   const values=rows.filter(r=>basket.has(r.molecule)).map(r=>[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note]);
+   const activityFields=['value','transcript_id','species','context_basis','location','dosage_nm','transfection_method','dose_basis','method_basis','status','reason','model_sha256','source_revision','input_id'];
+   const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_unit','off_target_status','splice_checks','panel_order','selection_note',...activityFields.map(k=>'oligoai_'+(k==='value'?'predicted_rna_reduction_percent':k))];
+   const values=rows.filter(r=>basket.has(r.molecule)).flatMap(r=>{
+    const base=[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note];
+    return ((r.oligoai||[]).length?r.oligoai:[{}]).map(a=>[...base,...activityFields.map(k=>a[k]??'')]);
+   });
    download('ASO_selection.csv',[columns,...values].map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
   }
  });
- ['search','minimum','panel-only','clean-only'].forEach(role=>q(role).addEventListener('input',()=>{page=0;mapPage=0;renderTable();}));
+ ['search','minimum','activity-minimum','panel-only','clean-only'].forEach(role=>q(role).addEventListener('input',()=>{page=0;mapPage=0;renderTable();}));
+ q('activity-context').addEventListener('change',()=>{updateActivity();q('activity-minimum').value='';sort='oligoai';ascending=false;page=0;mapPage=0;renderTable();});
  q('context').addEventListener('change',contextChanged);q('page-size').addEventListener('change',()=>{pageSize=Number(q('page-size').value);page=0;renderTable();});
  q('map-chromosome').addEventListener('change',()=>{mapPage=0;scheduleMap();});
  q('top-count').addEventListener('input',()=>{action('add-top').textContent='Add first '+(Number(q('top-count').value)||10)+' shown';});

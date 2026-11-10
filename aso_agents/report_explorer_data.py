@@ -262,7 +262,8 @@ def _effects(row, label, direction):
     return effect, values
 
 
-def _record(row, context, sites, order, panel_rank=None):
+def _record(row, context, sites, order, panel_rank=None, *, activity=()):
+    from .report_activity import project_activity
     source = source_row(row)
     aso = sequence(row)
     if not aso:
@@ -285,6 +286,7 @@ def _record(row, context, sites, order, panel_rank=None):
     complete = status in {'complete','completed','complete_within_declared_scope'} and not source.get('off_target_mapping_capped')
     gc = number(source.get('gc_fraction', source.get('GC')))
     guards = safeguard_summary(row, sites)
+    oligoai = project_activity(row, activity)
     if context.get('site') and not guards['details']:
         guards['summary'] = 'Splice checks unavailable for this ASO.'
     rank = number(row.get('selection_rank') or row.get('native_rank'))
@@ -305,6 +307,7 @@ def _record(row, context, sites, order, panel_rank=None):
         'off_target_budget':budget,
         'off_target_unit':screen.get('unit') or source.get('off_target_exact_count_unit') or 'recorded matches',
         'guard':guards,'native_rank':rank,'order':order,'panel_rank':panel_rank,'origin':origin,
+        'oligoai':oligoai,'oligoai_applicable':bool(oligoai) or (row.get('molecule_specification') or {}).get('platform')=='gapmer' or source.get('source_modality')=='gapmer',
         'selection_note':'; '.join(str(v) for v in exclusion) if exclusion else ('Selected for the panel.' if panel_rank else
             'Assessed in the design pool.' if assessment else 'Scored in the search pool; final selection checks are available for retained candidates.'),
         'motifs':[f.get('rule_id') for f in (assessment.get('motifs') or {}).get('flags') or [] if isinstance(f,dict)]}
@@ -343,7 +346,10 @@ def project_run(run_dir, *, goal=None, kind='design'):
     from .candidate_export_evidence import with_native_ranks
     pool = with_native_ranks(pool)
     selected = read_record(_root_file(root,'recommended_shortlist.json'))
-    panel = selected.get('records') or read_record(_root_file(root,'generated_aso_set.json')).get('rows') or []
+    generated = read_record(_root_file(root,'generated_aso_set.json'))
+    panel = selected.get('records') or generated.get('rows') or []
+    from .report_activity import activity_index, activity_join_key
+    activities = activity_index(generated.get('rows') or [], generated.get('oligoai_evaluation'))
     programs = {p['program_id']:p for p in goal.get('design_programs') or [] if isinstance(p,dict) and p.get('program_id')}
     jobs = {j['job_id']:j for j in [*(goal.get('steric_design_jobs') or []),*(goal.get('gapmer_design_jobs') or [])]
             if isinstance(j,dict) and j.get('job_id')}
@@ -460,7 +466,8 @@ def project_run(run_dir, *, goal=None, kind='design'):
                 for panel_rank,chosen in panel_by_sequence.get(sequence(row),[]):
                     if physical_identity(row)==physical_identity(chosen) or (notation(row) and notation(row)==notation(chosen)):
                         rank = panel_rank; break
-                record = _record(row,context,context_sites,index,rank)
+                record = _record(row,context,context_sites,index,rank,
+                                 activity=activities.get(activity_join_key(row),()))
                 if record:
                     records.append(record)
                     source = source_row(row)
@@ -529,14 +536,21 @@ def project_run(run_dir, *, goal=None, kind='design'):
     return result
 
 
-def project_records(rows, *, title='Supplied ASOs', objective='Review the supplied ASOs and their recorded evidence.', kind='evaluation'):
+def project_records(rows, *, title='Supplied ASOs', objective='Review the supplied ASOs and their recorded evidence.', kind='evaluation', activity_evaluation=None):
     """Adapt attested molecule records; supplied sequences retain input order."""
     context = {'id':'supplied', 'label':title, 'objective':objective, 'metric':'Recorded evidence',
                'metric_note':'ASOs follow their saved input order. Open a row for its chemistry and checks.',
                'exons':[], 'sites':[], 'transcript':''}
-    records = []
+    from .report_activity import activity_index, activity_join_key
+    normalized = []
     for order, original in enumerate(rows,1):
         row = dict(original)
+        if row.get('input_metadata'):
+            from .oligoai import _physical_candidate
+            try:
+                row = _physical_candidate(row)
+            except ValueError:
+                pass  # Contradictory identity cannot acquire a matched prediction.
         if not sequence(row):
             if row.get('declared_sequence_role') != 'antisense_oligo_sequence':
                 continue
@@ -544,7 +558,14 @@ def project_records(rows, *, title='Supplied ASOs', objective='Review the suppli
         if row.get('genomic_segments'):
             # Evaluation mapping_hits have an explicit genomic 1-based contract.
             row['coordinate_system'] = 'genomic_1based_inclusive'
-        record = _record(row,context,{},order)
+        normalized.append((order,row))
+    activities = activity_index([row for _,row in normalized],activity_evaluation,
+                                candidate_numbers=[order for order,_ in normalized])
+    records = []
+    for order,row in normalized:
+        attached = ([(row['oligoai_evaluation'],activity_evaluation or {})] if row.get('oligoai_evaluation')
+                    else activities.get(activity_join_key(row),()))
+        record = _record(row,context,{},order,activity=attached)
         if record:
             record['selection_note'] = 'Supplied for evaluation.' if kind=='evaluation' else 'Included in the supplied molecule set.'
             record['guard']['summary'] = 'Open the analysis below for the complete evaluation.' if kind=='evaluation' else record['guard']['summary']
@@ -583,7 +604,8 @@ def project_analysis(report_dir):
     context = summary.get('context_summary') or {}
     gene = context.get('gene_symbol')
     result = project_records(summary.get('provided_asos') or [], title=f'{gene} evaluation' if gene else 'Supplied ASOs',
-                             objective=f'Review the supplied ASOs for {gene}.' if gene else 'Review the supplied ASOs and their recorded evidence.')
+                             objective=f'Review the supplied ASOs for {gene}.' if gene else 'Review the supplied ASOs and their recorded evidence.',
+                             activity_evaluation=summary.get('oligoai_evaluation'))
     if result and gene:
         result['facts'].insert(0,{'label':'Gene','value':gene,'note':context.get('transcript_id') or ''})
     return result
