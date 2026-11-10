@@ -283,7 +283,11 @@ def _record(row, context, sites, order, panel_rank=None, *, activity=()):
     if budget is not None:
         counts = [value if index<=budget else None for index,value in enumerate(counts)]
     status = screen.get('status') or source.get('off_target_count_status') or source.get('off_target_search_status') or 'unavailable'
-    complete = status in {'complete','completed','complete_within_declared_scope'} and not source.get('off_target_mapping_capped')
+    failed_statuses = {'incomplete_or_censored', 'incomplete', 'failed', 'unavailable', 'not_run', 'incomplete_or_unavailable'}
+    complete = (status in {'complete','completed','complete_within_declared_scope'}
+                and not source.get('off_target_mapping_capped')
+                and screen.get('search_status') not in failed_statuses
+                and source.get('off_target_search_status') not in failed_statuses)
     gc = number(source.get('gc_fraction', source.get('GC')))
     guards = safeguard_summary(row, sites)
     oligoai = project_activity(row, activity)
@@ -298,7 +302,7 @@ def _record(row, context, sites, order, panel_rank=None, *, activity=()):
         exclusion = [exclusion]
     if assessment and assessment.get('selection_eligible') is False:
         exclusion = [*exclusion,'Excluded by the recorded sequence-motif rules.']
-    return {'id':row_id,'molecule':identity,'context':context['id'],'name':str(source.get('candidate_id') or source.get('Name') or source.get('name') or f'ASO {order}'),
+    record = {'id':row_id,'molecule':identity,'context':context['id'],'name':str(source.get('candidate_id') or source.get('Name') or source.get('name') or f'ASO {order}'),
         'aso':aso,'target':source.get('target_binding_sequence') or source.get('Sequence') or '',
         'chemistry':chemistry_record,'intervals':intervals,'strand':source.get('strand') or source.get('Strand') or source.get('Genomic_strand') or '',
         'location':'; '.join(f"{p['chrom']}:{p['start']:,}–{p['end']:,}" for p in intervals) or 'Location unavailable',
@@ -311,6 +315,10 @@ def _record(row, context, sites, order, panel_rank=None, *, activity=()):
         'selection_note':'; '.join(str(v) for v in exclusion) if exclusion else ('Selected for the panel.' if panel_rank else
             'Assessed in the design pool.' if assessment else 'Scored in the search pool; final selection checks are available for retained candidates.'),
         'motifs':[f.get('rule_id') for f in (assessment.get('motifs') or {}).get('flags') or [] if isinstance(f,dict)]}
+    from .report_attributes import flatten_attributes, common_attributes
+    record['_raw_attributes'] = flatten_attributes(row)
+    record['_common_attributes'] = common_attributes(row, record)
+    return record
 
 
 def _objective(program, gene):
@@ -538,6 +546,8 @@ def project_run(run_dir, *, goal=None, kind='design'):
               'objective':contexts[0]['objective'],
               'panel_label':'Recommended panel' if selected.get('records') else 'Selected panel',
               'scope':'Saved scored and assessed candidates; each binding record retains its design group.'}
+    from .report_attributes import attach_attribute_catalog
+    attach_attribute_catalog(result)
     result['id'] = hashlib.sha256(json.dumps(result,sort_keys=True,default=str).encode()).hexdigest()[:24]
     return result
 
@@ -586,6 +596,8 @@ def project_records(rows, *, title='Supplied ASOs', objective='Review the suppli
         label, detail = next(iter(specifications))
         if detail:
             result['facts'].append({'label':'Chemistry','value':label,'note':detail})
+    from .report_attributes import attach_attribute_catalog
+    attach_attribute_catalog(result)
     result['id'] = hashlib.sha256(json.dumps(result,sort_keys=True,default=str).encode()).hexdigest()[:24]
     return result
 
