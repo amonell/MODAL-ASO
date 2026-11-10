@@ -29687,6 +29687,13 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     from .chemical_identity import attest_candidate_rows
     from .candidate_assessment import assess_candidates, write_assessment_artifacts
     assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
+    # Activity belongs to the full assessed library, independent of panel size
+    # and selection. The evaluator deduplicates identical model inputs and the
+    # runner batches inference; selected copies retain their attached evidence.
+    from .oligoai import evaluate_candidates
+    oligoai_evaluation = evaluate_candidates(
+        assessment_pool, structured_goal, generated_set_path.parent, runtime=_goal_runtime_module(),
+        candidate_scope="assessed_pool_before_panel_selection")
     eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
     eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
     candidate_limit = _structured_candidate_limit(structured_goal)
@@ -29898,9 +29905,6 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     }
     from .chemical_identity import attest_candidate_rows, write_native_chemistry_exports
     eligible_rows = attest_candidate_rows(eligible_rows, structured_goal)
-    from .oligoai import evaluate_candidates
-    oligoai_evaluation = evaluate_candidates(
-        eligible_rows, structured_goal, generated_set_path.parent, runtime=_goal_runtime_module())
     generated_set_payload = {
         "artifact_type": "generated_aso_set",
         "run_dir": run_dir,

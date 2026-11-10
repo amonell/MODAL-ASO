@@ -25078,8 +25078,9 @@ def _design_program_goal_copy(
         "chemistry_policy",
     ):
         if key in program:
-            if key == "oligoai_evaluation" and isinstance(goal_for_program.get(key), dict) and isinstance(program.get(key), dict):
-                goal_for_program[key] = {**goal_for_program[key], **deepcopy(program[key])}
+            if key == "oligoai_evaluation":
+                from aso_agents.oligoai import condition_options
+                goal_for_program[key] = condition_options(structured_goal, program)
             else:
                 goal_for_program[key] = deepcopy(program.get(key))
     flanks = program.get("flanks")

@@ -26,7 +26,7 @@ METHODS = {"Electroporation": 0, "Gymnosis": 1, "Other": 2, "Lipofection": 3}
 SUGARS = {"DNA": "DNA", "2MOE": "MOE", "cET": "cET"}
 SCOPE = ("OligoAI predicts RNA reduction through RNase H activity in vitro. Its inputs are "
          "the ASO sequence, surrounding target RNA, sugar and backbone chemistry, dose and delivery method. "
-         "Base modifications, PS stereochemistry and cell type are outside the model's inputs. "
+         "Base modifications, PS stereochemistry, cell type and treatment duration are outside the model's inputs. "
          "Non-human RNA contexts are extrapolations from the training data. "
          "Predictions are reported as calculated and may fall outside 0–100%.")
 
@@ -35,13 +35,30 @@ def reverse_complement(sequence):
     return sequence.upper().replace("U", "T").translate(str.maketrans("ACGTN", "TGCAN"))[::-1]
 
 
-def evaluation_conditions(goal):
-    """Use explicit structured conditions, otherwise a labelled reference scenario."""
-    options = goal.get("oligoai_evaluation") or (goal.get("constraints") or {}).get("oligoai_evaluation") or {}
+def condition_options(goal, program=None):
+    """Preserve explicit settings across root, legacy and program boundaries."""
+    options = goal.get("oligoai_evaluation", {})
     if not isinstance(options, dict):
         raise ValueError("oligoai_evaluation must be an object")
-    if set(options) - {"enabled", "dosage_nm", "transfection_method"}:
+    if not options:
+        options = (goal.get("constraints") or {}).get("oligoai_evaluation", {})
+        if not isinstance(options, dict):
+            raise ValueError("oligoai_evaluation must be an object")
+    override = (program or {}).get("oligoai_evaluation", {})
+    if not isinstance(override, dict):
+        raise ValueError("Program OligoAI conditions must be an object")
+    return deepcopy({**options, **override})
+
+
+def evaluation_conditions(goal):
+    """Use explicit structured conditions, otherwise a labelled reference scenario."""
+    options = condition_options(goal)
+    if set(options) - {"enabled", "dosage_nm", "transfection_method", "unmodeled_conditions", "unresolved_conditions"}:
         raise ValueError("Unknown OligoAI condition field; do not silently discard inputs")
+    for key in ("unmodeled_conditions", "unresolved_conditions"):
+        if key in options and (not isinstance(options[key], list)
+                               or any(not isinstance(v, str) or not v.strip() for v in options[key])):
+            raise ValueError(f"OligoAI {key} must contain nonempty descriptions")
     if "enabled" in options and type(options["enabled"]) is not bool:
         raise ValueError("OligoAI enabled must be boolean")
     dose = options.get("dosage_nm", 100.0)
@@ -53,7 +70,8 @@ def evaluation_conditions(goal):
     return {"enabled": options.get("enabled", True), "dosage_nm": float(dose),
             "transfection_method": method,
             "dose_basis": "explicit_structured_input" if "dosage_nm" in options else "assumed_reference_scenario",
-            "method_basis": "explicit_structured_input" if "transfection_method" in options else "assumed_reference_scenario"}
+            "method_basis": "explicit_structured_input" if "transfection_method" in options else "assumed_reference_scenario",
+            **{key: deepcopy(options[key]) for key in ("unmodeled_conditions", "unresolved_conditions") if options.get(key)}}
 
 
 def candidate_conditions(row, goal):
@@ -62,11 +80,7 @@ def candidate_conditions(row, goal):
         raise ValueError("Ambiguous producing program for OligoAI conditions")
     if not programs or "oligoai_evaluation" not in programs[0]:
         return evaluation_conditions(goal)
-    options = goal.get("oligoai_evaluation") or (goal.get("constraints") or {}).get("oligoai_evaluation") or {}
-    override = programs[0]["oligoai_evaluation"]
-    if not isinstance(options, dict) or not isinstance(override, dict):
-        raise ValueError("OligoAI conditions must be objects")
-    return evaluation_conditions({"oligoai_evaluation": {**options, **override}})
+    return evaluation_conditions({"oligoai_evaluation": condition_options(goal, programs[0])})
 
 
 def _physical_candidate(row):
@@ -329,12 +343,13 @@ def released_model_predict(inputs, directory, *, use_service=True, gpu_lock_fd=N
     return result
 
 
-def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None, predictor=None):
+def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None, predictor=None, candidate_scope="provided_rows"):
     """Evaluate all supported gapmers; carry per-row noncompletion explicitly."""
     candidates = [(i, row) for i, row in enumerate(rows, 1) if _is_gapmer(row, goal)]
     if not candidates:
         return {}
     result = {"schema_version": "modal-aso-oligoai-evaluation/1.0", "scope": SCOPE,
+              "candidate_scope": candidate_scope,
               "model_sha256": MODEL_SHA256, "source_revision": SOURCE_REVISION,
               "model_revision": MODEL_REVISION, "candidates": []}
     try:
@@ -346,7 +361,8 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
     needs_references = False
     for _, row in candidates:
         try:
-            needs_references |= candidate_conditions(row, goal)["enabled"]
+            settings = candidate_conditions(row, goal)
+            needs_references |= settings["enabled"] and not settings.get("unresolved_conditions")
         except (TypeError, ValueError):
             pass
     if needs_references:
@@ -371,6 +387,9 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
             continue
         if not row_conditions["enabled"]:
             entry.update(status="disabled", reason="explicitly_disabled")
+            continue
+        if row_conditions.get("unresolved_conditions"):
+            entry["reason"] = "OligoAI needs a usable dose or delivery setting: " + "; ".join(row_conditions["unresolved_conditions"])
             continue
         try:
             record = physical_molecule(row, goal)
@@ -433,37 +452,47 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
     result["artifact_json"] = str(directory / "evaluation.json")
     result["artifact_csv"] = str(directory / "predictions.csv")
     write_json(result["artifact_json"], result)
-    fields = ["candidate_id", "antisense_5to3", "status", "reason", "transcript_id", "species", "context_basis", "start1", "end1", "predicted_inhibition_percent", "dosage_nm", "transfection_method", "dose_basis", "method_basis", "physical_molecule_sha256", "input_id"]
+    fields = ["candidate_id", "antisense_5to3", "status", "reason", "transcript_id", "species", "context_basis", "start1", "end1", "predicted_inhibition_percent", "dosage_nm", "transfection_method", "dose_basis", "method_basis", "unmodeled_conditions", "unresolved_conditions", "physical_molecule_sha256", "input_id"]
     with Path(result["artifact_csv"]).open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for entry in result["candidates"]:
             for context in entry["contexts"] or [{}]:
                 writer.writerow({**entry, **context, **entry.get("conditions", {}),
+                    **{key: "; ".join((entry.get("conditions") or {}).get(key, []))
+                       for key in ("unmodeled_conditions", "unresolved_conditions")},
                     "reason": context.get("reason", "") if context.get("status") else entry.get("reason", "")})
     for index, entry in enumerate(result["candidates"]):
         candidates[index][1]["oligoai_evaluation"] = deepcopy(entry)
     return result
 
 
-def markdown_section(evaluation, *, report_dir=None):
+def markdown_section(evaluation, *, report_dir=None, preview_limit=40):
     if not evaluation or not evaluation.get("candidates"):
         return ""
-    cond = evaluation.get("conditions") or {}
     lines = ["## OligoAI gapmer efficacy prediction", "", SCOPE, ""]
     def basis(value):
         return "specified" if value == "explicit_structured_input" else "assumed reference scenario"
-    if cond:
-        lines.append(f"Conditions: **{cond['dosage_nm']:g} nM**, **{cond['transfection_method']}**. "
-                     f"Dose: {basis(cond['dose_basis'])}; delivery: {basis(cond['method_basis'])}. "
-                     "Per-candidate conditions below take precedence where specified.")
+    conditions = [entry.get("conditions") or {} for entry in evaluation["candidates"]]
+    common = conditions[0]
+    fields = ("dosage_nm", "transfection_method", "dose_basis", "method_basis")
+    if (common and not any(c.get("unresolved_conditions") for c in conditions)
+            and all(all(c.get(key) == common.get(key) for key in fields) for c in conditions)):
+        lines.append(f"Prediction conditions: **{common['dosage_nm']:g} nM**, **{common['transfection_method']}**. "
+                     f"Dose: {basis(common['dose_basis'])}; delivery: {basis(common['method_basis'])}.")
+    else:
+        lines.append("Prediction conditions and any settings needing clarification are listed with each ASO.")
+    notes = list(dict.fromkeys(note for entry in evaluation["candidates"]
+                              for note in (entry.get("conditions") or {}).get("unmodeled_conditions", [])))
+    if notes:
+        lines.extend(["", "Requested experiment details outside OligoAI's inputs: " + "; ".join(notes) + "."])
     lines.extend(["", "Mature-RNA contexts are labelled as extrapolations from the genomic pre-mRNA context convention. "
                   "Unencoded base modifications and stereochemistry remain in the molecule records; no chemical substitution was made.", "",
                   "| Candidate | ASO (5′→3′) | Reference / context | Dose (nM) / delivery | Predicted inhibition (%) | Status |",
                   "|---|---|---|---|---:|---|"])
     def cell(v):
         return html.escape(str(v or "")).replace("|", "&#124;").replace("\n", " ")
-    for entry in evaluation["candidates"]:
+    for entry in evaluation["candidates"][:preview_limit]:
         for context in entry["contexts"] or [{}]:
             prediction = context.get("predicted_inhibition_percent")
             value = f"{prediction:.2f}" if prediction is not None else "—"
@@ -476,10 +505,15 @@ def markdown_section(evaluation, *, report_dir=None):
             row_cond = entry.get("conditions") or {}
             condition_text = (f"{row_cond['dosage_nm']:g} / {row_cond['transfection_method']} "
                               f"(dose {basis(row_cond['dose_basis'])}; delivery {basis(row_cond['method_basis'])})") if row_cond else "—"
+            if row_cond.get("unresolved_conditions"):
+                condition_text = "Settings need clarification"
             status = context.get("status") or entry["status"]
             reason = context.get("reason") if context.get("status") else entry.get("reason")
             lines.append("| " + " | ".join([cell(entry['candidate_id']), cell(entry.get('antisense_5to3')), cell(reference),
                                            cell(condition_text), value, cell(status + (": " + reason if reason else ""))]) + " |")
+    if len(evaluation["candidates"]) > preview_limit:
+        lines.extend(["", f"Showing the first {preview_limit} of {len(evaluation['candidates']):,} assessed gapmers. "
+                      "The ASO explorer and predictions CSV include the full results."])
     lines.extend(["", f"Model: `{MODEL_FILE}`; OligoAI source `{SOURCE_REVISION[:12]}`. "
                   f"Evaluated {evaluation.get('predicted_count', 0)}/{evaluation.get('candidate_count', 0)} gapmers."])
     for label, field in (("Complete OligoAI evidence", "artifact_json"), ("OligoAI predictions CSV", "artifact_csv")):

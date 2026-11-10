@@ -350,6 +350,12 @@ def project_run(run_dir, *, goal=None, kind='design'):
     panel = selected.get('records') or generated.get('rows') or []
     from .report_activity import activity_index, activity_join_key
     activities = activity_index(generated.get('rows') or [], generated.get('oligoai_evaluation'))
+    # Pool rows carry their own predictions. Pass the saved model identity with
+    # those records so selected and unselected ASOs share the same scenario.
+    for key, entries in activity_index(
+            [r for r in pool if r.get('oligoai_evaluation')],
+            generated.get('oligoai_evaluation')).items():
+        activities[key].extend(entries)
     programs = {p['program_id']:p for p in goal.get('design_programs') or [] if isinstance(p,dict) and p.get('program_id')}
     jobs = {j['job_id']:j for j in [*(goal.get('steric_design_jobs') or []),*(goal.get('gapmer_design_jobs') or [])]
             if isinstance(j,dict) and j.get('job_id')}

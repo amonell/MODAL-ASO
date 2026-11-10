@@ -7,6 +7,7 @@ from aso_agents.goal_contract import (
     CANONICAL_CLARIFICATION_BOUNDARY_INSTRUCTIONS,
     CANONICAL_DESIGN_GOAL_INSTRUCTIONS,
     REGION_CONSTRAINT_SCOPE_INSTRUCTIONS,
+    OLIGOAI_CONDITIONS_INSTRUCTIONS,
 )
 
 # Reuse environment and settings from parent app via os.environ
@@ -144,7 +145,7 @@ goal_intake_agent = Agent(
         "- When the user requests exactly N distinct molecules, set both candidate_minimum=N and candidate_limit=N for the complete panel. Do not create N duplicate design_programs as candidate slots. A coding-exon or coding-sequence restriction on a gapmer's complete mature-RNA binding site is target_region='cds' on that design program; an exon containing both CDS and UTR is not wholly coding.\n"
         "- When the user requests an inclusive global range of distinct molecules, store its lower bound in candidate_minimum and upper bound in candidate_limit. A bounded range is not an open-ended 'at least' request. Candidate counts refer to physical molecules, not tiled search windows, rows, routes, or oligo nucleotide length.\n"
         "- Set target_accessibility=true only when the user explicitly requires sequence-based target-RNA accessibility prediction. Supply target_accessibility_request_quote as the exact short passage of the user request that states this requirement. Generic requests for candidate evidence, accessible genomic regions, or efficacy discussion do not require RNA accessibility prediction. Omit both fields otherwise.\n"
-        "- oligoai_evaluation optionally records explicit prediction conditions: enabled, dosage_nm (positive nM), transfection_method (Electroporation, Gymnosis, Other or Lipofection). Preserve stated dose/delivery conditions and convert supplied dosage units to nM. Omit unstated fields; never infer delivery method from cell type or invent an experimental dose. Gapmer predictions are automatically added under clearly labelled reference conditions when absent; do not ask unnecessary questions for them.\n"
+        "- " + OLIGOAI_CONDITIONS_INSTRUCTIONS + "\n"
         "- candidate_limit_per_site (optional): positive integer upper bound on final ranked ASO candidates for each distinct requested site/window/route. For an exact per-site count, set both candidate_limit_per_site and min_asos_per_site. For 'at least N per site', set only min_asos_per_site=N; leave the upper bound and program-local limits unspecified for the late size question. For a maximum-only count, set only candidate_limit_per_site. Explicit sequential roles instead use candidate_role_selection.roles[*].count with each role's own program and ranking; a role quota alone does not establish a separate physical per-site count. Do not encode a per-site count only in prose, candidate_limit, routing_min_count, or program notes.\n"
         "  * Off-target/mapping limits MUST use the canonical constraint key: set constraints.max_binding_sites when the user says 'less than X off targets' or 'no mapping more than X times'. Do NOT invent max_off_targets, max_offtarget_mappings, or times_mapped_max; treat off-targets and mapping multiplicity as the same filter.\n"
         "  * Homopolymer/run-length constraints MUST be expressed using the homopolymer schema (never ad-hoc keys). Use:\n"

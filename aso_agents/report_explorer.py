@@ -40,14 +40,30 @@ def explorer_html(data):
     rows = []
     initial_context = data['contexts'][0]['id']
     initial_rows = [r for r in data['records'] if r['context']==initial_context]
-    activity_id = next((a['scenario_id'] for r in initial_rows for a in r.get('oligoai') or []),None)
+    initial_activity = next((a for r in initial_rows for a in r.get('oligoai') or []),None)
+    activity_id = initial_activity['scenario_id'] if initial_activity else None
+    initial_conditions = initial_activity.get('conditions_id') if initial_activity else None
+    combine_contexts = initial_conditions and len({a['scenario_id'] for r in initial_rows for a in r.get('oligoai') or []
+                                                  if a.get('conditions_id')==initial_conditions}) > 1
+    activity_note = ''
+    if initial_activity:
+        label = ('All RNA contexts · ' + initial_activity['conditions_label']) if combine_contexts else initial_activity['label']
+        activity_note = 'OligoAI predicts RNA reduction in vitro. ' + label + '.'
+        assumed = [label for field,label in (('dose_basis','dose'),('method_basis','delivery'))
+                   if initial_activity.get(field) == 'assumed_reference_scenario']
+        if assumed and not initial_activity.get('unresolved_conditions'):
+            activity_note += ' Reference ' + ' and '.join(assumed) + '.'
+        if initial_activity.get('unmodeled_conditions'):
+            activity_note += ' Experiment details outside the model’s inputs: ' + '; '.join(initial_activity['unmodeled_conditions']) + '.'
     def activity_values(row):
-        return [a['value'] for a in row.get('oligoai') or [] if a['scenario_id']==activity_id and a['value'] is not None]
+        return [a['value'] for a in row.get('oligoai') or [] if a['value'] is not None and
+                (a.get('conditions_id')==initial_conditions if combine_contexts else a['scenario_id']==activity_id)]
     if any(activity_values(r) for r in initial_rows) and not any(r['effect'] is not None for r in initial_rows):
         initial_rows.sort(key=lambda r:(not bool(activity_values(r)),-min(activity_values(r) or [0])))
     for row in initial_rows[:25]:
         activity = activity_values(row)
-        activity_text = (' / '.join(f'{v:.1f}%' for v in activity) if activity else 'No saved prediction')
+        activity_text = ((f'{min(activity):.1f}%' + (f'–{max(activity):.1f}%' if min(activity)!=max(activity) else ''))
+                         if activity else 'No saved prediction')
         values = ['',row.get('native_rank') if row.get('native_rank') is not None else '—',row['aso'],row['location'],
                   f"{row['effect']:+.3f}" if row['effect'] is not None else 'Unavailable',
                   f"{row['gc']*100:.0f}%" if row['gc'] is not None else 'Unavailable',
@@ -68,7 +84,7 @@ def explorer_html(data):
 <p class="report-map-tip" data-role="map-tip" aria-live="polite">Select an ASO in the map or table to add it to your basket.</p></section>
 <h2>Explore all ASOs</h2>
 <p class="report-sub" data-role="metric-note"></p>
-<p class="report-sub" data-role="activity-note" hidden></p>
+<p class="report-sub" data-role="activity-note"'''+('' if activity_note else ' hidden')+'''>'''+esc(activity_note)+'''</p>
 <div class="report-controls" data-role="activity-controls" hidden><label class="report-context">OligoAI RNA context and conditions<select data-role="activity-context" aria-label="OligoAI RNA context and conditions"></select></label></div>
 <div class="report-controls"><label>Sequence, name or position<input type="search" data-role="search" placeholder="Search candidates" autocomplete="off"></label>
 <label data-role="effect-control">Minimum prediction<input type="number" step="any" data-role="minimum" placeholder="Any"></label>
@@ -123,7 +139,11 @@ function setup(root){
  const activityFor=row=>activityViews.get(row.id)||{entries:[],values:[],value:null,missing:0};
  function configureActivity(){
   const entries=scopeRows().flatMap(r=>r.oligoai||[]),withReference=entries.filter(a=>a.transcript_id||a.context_basis);
-  activityScenarios=[...new Map((withReference.length?withReference:entries).map(a=>[a.scenario_id,a])).values()];
+  const contexts=[...new Map((withReference.length?withReference:entries).map(a=>[a.scenario_id,a])).values()];
+  const conditions=[...new Map(contexts.filter(a=>a.conditions_id).map(a=>[a.conditions_id,a])).values()];
+  const combined=conditions.filter(a=>contexts.filter(b=>b.conditions_id===a.conditions_id).length>1)
+   .map(a=>({...a,scenario_id:'conditions:'+a.conditions_id,combined:true,label:'All RNA contexts · '+a.conditions_label}));
+  activityScenarios=[...combined,...contexts];
   const selected=q('activity-context').value;
   q('activity-context').innerHTML=activityScenarios.map((a,i)=>`<option value="${esc(a.scenario_id)}">${esc(a.label)}${activityScenarios.some(b=>b!==a&&b.label===a.label)?' · record '+(i+1):''}</option>`).join('');
   if(activityScenarios.some(a=>a.scenario_id===selected))q('activity-context').value=selected;
@@ -134,7 +154,7 @@ function setup(root){
   const scenario=activityScenarios.find(a=>a.scenario_id===q('activity-context').value);
   activityViews.clear();
   scopeRows().forEach(r=>{
-   const all=r.oligoai||[];let entries=all.filter(a=>a.scenario_id===scenario?.scenario_id);
+   const all=r.oligoai||[];let entries=all.filter(a=>scenario?.combined?a.conditions_id===scenario.conditions_id:a.scenario_id===scenario?.scenario_id);
    if(!entries.length)entries=all.filter(a=>!a.transcript_id&&!a.context_basis&&['dosage_nm','transfection_method'].every(k=>a[k]==null||a[k]===scenario?.[k]));
    const values=entries.map(a=>a.value).filter(finite);
    activityViews.set(r.id,{entries,values,value:values.reduce((low,v)=>low===null?v:Math.min(low,v),null),missing:entries.length-values.length});
@@ -144,10 +164,11 @@ function setup(root){
   const total=new Set(applicable.map(r=>r.molecule)).size;
   root.classList.toggle('report-no-oligoai',!hasActivity);q('activity-note').hidden=!hasActivity;
   q('activity-minimum-control').hidden=!predicted;
-  const assumed=scenario?['dose_basis','method_basis'].filter(k=>scenario[k]==='assumed_reference_scenario'):[];
+  const assumed=scenario&&!scenario.unresolved_conditions?.length?['dose_basis','method_basis'].filter(k=>scenario[k]==='assumed_reference_scenario'):[];
   const basis=assumed.length===2?' Reference dose and delivery.':assumed.length?' Reference '+(assumed[0]==='dose_basis'?'dose.':'delivery.'):'';
-  const ranges=applicable.some(r=>activityFor(r).values.length>1)?' Ranges cover separate binding sites; sorting uses the lower value.':'';
-  q('activity-note').textContent='OligoAI predicts RNA reduction in vitro. '+predicted.toLocaleString()+' of '+total.toLocaleString()+' ASOs have predictions for these conditions.'+(scenario?' '+scenario.label+'.':'')+basis+ranges;
+  const ranges=applicable.some(r=>activityFor(r).values.length>1)?' Ranges cover separate RNA contexts or binding sites; sorting uses the lower value.':'';
+  const unmodeled=scenario?.unmodeled_conditions?.length?' Experiment details outside the model’s inputs: '+scenario.unmodeled_conditions.join('; ')+'.':'';
+  q('activity-note').textContent='OligoAI predicts RNA reduction in vitro. '+predicted.toLocaleString()+' of '+total.toLocaleString()+' ASOs have predictions for these conditions.'+(scenario?' '+scenario.label+'.':'')+basis+ranges+unmodeled;
  }
  function activityCell(row){
   const a=activityFor(row);if(!a.entries.length)return '<span class="report-sub">No saved prediction</span>';
@@ -157,7 +178,7 @@ function setup(root){
    summary=`<span class="report-effect" style="background:${ramp(low/100)};color:${low>55?'#fff':'#1b1f23'}">${percent(low)}${high!==low?'–'+percent(high):''}</span>`;
    if(a.missing)summary+=` <span class="report-sub">${a.missing} unavailable</span>`;
   }
-  const details=a.entries.map(v=>`<p><strong>${finite(v.value)?percent(v.value)+' predicted RNA reduction':esc(labels[v.status]||'Unavailable')}</strong><br>${esc(v.label)}${v.location?'<br>'+esc(v.location):''}${v.reason?'<br>'+esc(v.reason):''}${v.masked_flank_nt?'<br>'+esc(v.masked_flank_nt)+' flanking bases were unavailable.':''}</p>`).join('');
+  const details=a.entries.map(v=>`<p><strong>${finite(v.value)?percent(v.value)+' predicted RNA reduction':esc(labels[v.status]||'Unavailable')}</strong><br>${esc(v.label)}${v.location?'<br>'+esc(v.location):''}${v.reason?'<br>'+esc(v.reason):''}${v.unmodeled_conditions?.length?'<br>Experiment details outside the model’s inputs: '+esc(v.unmodeled_conditions.join('; ')):''}${v.masked_flank_nt?'<br>'+esc(v.masked_flank_nt)+' flanking bases were unavailable.':''}</p>`).join('');
   return `<details class="report-activity-details"><summary>${summary}</summary><div class="report-check-text">${details}</div></details>`;
  }
  function visible(){
@@ -317,11 +338,11 @@ function setup(root){
    download('ASO_order_sheet.csv',values.map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
   }else if(what==='fasta')download('ASO_selection.fasta',selected.map((r,i)=>`>ASO_${i+1} ${r.name.replaceAll('\n',' ').replaceAll('\r',' ')}\n${r.aso}`).join('\n')+'\n');
   else if(what==='csv'){
-   const activityFields=['value','transcript_id','species','context_basis','location','dosage_nm','transfection_method','dose_basis','method_basis','status','reason','model_sha256','source_revision','input_id'];
+   const activityFields=['value','transcript_id','species','context_basis','location','dosage_nm','transfection_method','dose_basis','method_basis','unmodeled_conditions','unresolved_conditions','status','reason','model_sha256','source_revision','input_id'];
    const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_unit','off_target_status','splice_checks','panel_order','selection_note',...activityFields.map(k=>'oligoai_'+(k==='value'?'predicted_rna_reduction_percent':k))];
    const values=rows.filter(r=>basket.has(r.molecule)).flatMap(r=>{
     const base=[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note];
-    return ((r.oligoai||[]).length?r.oligoai:[{}]).map(a=>[...base,...activityFields.map(k=>a[k]??'')]);
+    return ((r.oligoai||[]).length?r.oligoai:[{}]).map(a=>[...base,...activityFields.map(k=>Array.isArray(a[k])?a[k].join('; '):a[k]??'')]);
    });
    download('ASO_selection.csv',[columns,...values].map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
   }

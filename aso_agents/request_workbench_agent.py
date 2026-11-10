@@ -3,7 +3,7 @@ from typing import Optional
 
 from agents import Agent, ModelSettings
 
-from aso_agents.goal_contract import CANONICAL_DESIGN_GOAL_INSTRUCTIONS
+from aso_agents.goal_contract import CANONICAL_DESIGN_GOAL_INSTRUCTIONS, OLIGOAI_CONDITIONS_INSTRUCTIONS
 from aso_agents.task_capabilities import (
     ANALYSIS_TASK_CAPABILITIES, EVALUATION_TARGET_CONTRACT,
     SUBMITTED_MOLECULE_INPUT_CONTRACT,
@@ -188,7 +188,7 @@ request_workbench_agent = Agent(
         "windows. Keep selected-panel counts separate from complete-library row counts.\n"
         "For design_new_asos, context may contain only explicitly supplied scoping "
         "fields: gene_symbol, gene_id, transcript_id, species, target_context, "
-        "chemistry, platform, oligoai_evaluation, and artifact_refs. For OligoAI preserve explicit enabled, dosage_nm and transfection_method conditions only, omitting unstated values. Put every explicitly supplied local "
+        "chemistry, platform, oligoai_evaluation, and artifact_refs. " + OLIGOAI_CONDITIONS_INSTRUCTIONS + " Put every explicitly supplied local "
         "file, run, or artifact reference consumed by that design task in "
         "context.artifact_refs with its path preserved character-for-character; do "
         "not preserve a consumed artifact only in assumptions or prose. Do not create context.structured_goal, "

@@ -279,7 +279,13 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
             report_payload.get('oligoai_report_dir') or (report_payload.get('meta') or {}).get('run_dir'))}
     # The explorer owns its compact packet. Legacy tabs have no dependency on
     # that pool; embedding a second expanded copy makes large reports unwieldy.
-    data_json = json.dumps({k:v for k,v in report_payload.items() if k!='candidate_explorer'},
+    from .report_activity import evaluation_preview
+    legacy_payload = {k:v for k,v in report_payload.items() if k!='candidate_explorer'}
+    if legacy_payload.get('oligoai_evaluation'):
+        legacy_payload['oligoai_evaluation'] = evaluation_preview(legacy_payload['oligoai_evaluation'])
+    if legacy_payload.get('oligoai_evaluations'):
+        legacy_payload['oligoai_evaluations'] = [evaluation_preview(e) for e in legacy_payload['oligoai_evaluations']]
+    data_json = json.dumps(legacy_payload,
                            ensure_ascii=True, separators=(',', ':')).replace("</", "<\\/")
     html = """<!DOCTYPE html>
 <html lang="en">

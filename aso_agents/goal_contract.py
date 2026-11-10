@@ -140,7 +140,7 @@ CANONICAL_TASK_CONTEXT_FIELDS = frozenset(
 CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS = {
     "num_mismatches": "Explicit requested maximum substitution count for off-target sequence searching in this task, including zero. This is a search budget, not a maximum off-target hit count or permission to mismatch the intended target.",
     "off_target_screening": "For supplied-ASO evaluation or comparison, enabled requests external transcriptome gene screening and disabled explicitly excludes that screening. Matching against the requested reference transcripts still runs. Preserve explicit user exclusions independently from local-reference mismatch counts; omit when unspecified to retain normal screening.",
-    "oligoai_evaluation": "Explicit OligoAI prediction conditions: enabled, dosage_nm and transfection_method; omit unstated values so runtime assumptions remain labelled.",
+    "oligoai_evaluation": "Explicit OligoAI prediction conditions: enabled, dosage_nm, transfection_method, unmodeled_conditions and unresolved_conditions. Preserve requested dose/delivery; omit unstated values so runtime assumptions remain labelled.",
     "artifact_refs": "User-supplied run, file, or artifact references consumed by this task.",
     "chemistry": "User-supplied ASO chemistry or mechanism context for this task.",
     "chemistry_policy": "Explicit chemical-architecture selection policy: select or leave_unspecified, independent of biological mechanism.",
@@ -386,9 +386,27 @@ def _closed_object(properties: Dict[str, Any]) -> Dict[str, Any]:
 
 _OLIGOAI_CONDITIONS_SCHEMA = _closed_object({
     "enabled": {"type": "boolean"},
-    "dosage_nm": {"type": "number", "exclusiveMinimum": 0},
-    "transfection_method": {"type": "string", "enum": ["Electroporation", "Gymnosis", "Other", "Lipofection"]},
+    "dosage_nm": {"type": "number", "exclusiveMinimum": 0,
+                  "description": "Explicit concentration converted to nM; 0.025 µM is 25 nM. Omit when unspecified."},
+    "transfection_method": {"type": "string", "enum": ["Electroporation", "Gymnosis", "Other", "Lipofection"],
+                            "description": "Explicit delivery category. Free uptake maps to Gymnosis; lipid transfection maps to Lipofection. Use Other only for an explicit delivery method outside these categories."},
+    "unmodeled_conditions": {"type": "array", "items": {"type": "string", "minLength": 1},
+                             "description": "Requested experimental conditions outside the model inputs, such as cell type, treatment duration, medium or delivery reagent. Retain their supplied values as readable descriptions."},
+    "unresolved_conditions": {"type": "array", "items": {"type": "string", "minLength": 1},
+                              "description": "Explicit dose or delivery requirements that cannot be represented unambiguously. Explain the missing information. These prevent a reference-condition prediction from substituting for the request."},
 })
+
+OLIGOAI_CONDITIONS_INSTRUCTIONS = (
+    "Preserve explicitly requested prediction conditions in oligoai_evaluation, including dose and delivery even when the user does not name OligoAI. "
+    "Convert concentration units to positive dosage_nm (0.025 µM = 25 nM). Map free uptake to Gymnosis, lipid transfection to Lipofection, "
+    "and electroporation to Electroporation; use Other for an explicitly supplied delivery method outside these categories. "
+    "Preserve cell type, treatment duration, medium and reagent details as readable unmodeled_conditions; these describe the requested experiment and remain outside the model inputs. "
+    "If an explicit dose or delivery cannot be represented (for example mg/kg without a molar concentration, conflicting doses or an ambiguous method), "
+    "record the requirement and missing information in unresolved_conditions and request clarification. OligoAI waits for resolution while other analyses can continue. "
+    "Omit unspecified fields; defaults are a labelled 100 nM lipofection reference. Never infer delivery from cell type. "
+    "Bind program-specific conditions to that program; root conditions apply across programs. Preserve each explicitly requested condition set separately. "
+    "Respect an explicit enabled=false."
+)
 
 
 _STRING_OR_INTEGER_SCHEMA = {
@@ -1125,7 +1143,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "candidate_panel_objectives": "For an explicitly requested joint comparison of complete feasible panels, preserve every criterion in order, its metric units, aggregation, minimization/maximization direction, any requested absolute-distance target, and exact transcript reference for mature coordinates. Minimize the worst distance with aggregate=maximum and direction=minimize; an ordered ascending coordinate tuple uses sorted_ascending and minimize. Do not invent a preferred numeric target, replace a maximum with a sum, or scalar-weight priorities. Ordinary individual candidate ranking, branch-local sorting and experimental efficacy are not joint panel objectives. Count and physical constraints stay separate and remain hard; unresolved objective evidence must not be represented as an optimal default ranking.",
     "target_accessibility": "Whether candidate selection requires sequence-based target RNA accessibility predictions. This measures full binding-window unpaired probability on the target transcript, separately from oligo self-folding. It provides relative ranking, not an experimentally validated efficacy threshold.",
     "target_accessibility_request_quote": "An exact passage from the user's request explicitly requiring sequence-based target RNA accessibility prediction. Required when target_accessibility is true; generic evidence or accessibility of a genomic region is insufficient.",
-    "oligoai_evaluation": "Explicit OligoAI efficacy prediction conditions: enabled, positive dosage_nm and supported transfection_method. Omit any unstated field; runtime labels missing conditions as an assumed reference scenario. This does not measure efficacy or alter physical chemistry, candidate selection or safeguards.",
+    "oligoai_evaluation": OLIGOAI_CONDITIONS_INSTRUCTIONS,
     "conditional_exon_skip_events": "User-requested hypothetical complete exon removals to assess from the named reference sequence, independent of the desired ASO intervention direction.",
     "chemistry": "Requested oligonucleotide chemical architecture, distinct from mechanism and selection policy.",
     "chemistry_policy": "select permits ordinary chemistry selection. leave_unspecified records an explicit instruction to defer chemical architecture/platform and deliver base sequences without synthesis encoding. Omitted chemistry alone does not imply leave_unspecified; scope this policy per affected design program.",

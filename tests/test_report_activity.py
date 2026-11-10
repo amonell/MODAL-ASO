@@ -14,6 +14,26 @@ from aso_agents.readable_report import basic_document
 SEQ = 'ACGTCAGACTTAGCACTGCA'
 
 
+def test_legacy_report_preview_is_bounded_and_keeps_full_evidence_untouched():
+    from aso_agents.report_activity import evaluation_preview
+    from aso_agents.html_report import render_goal_intake_html
+    row = candidate()
+    saved = entry(row)
+    saved['contexts'][0]['rna_context'] = 'PRIVATE_RNA_CONTEXT'
+    saved['contexts'][0]['provenance'] = {'reference_path': '/reference/genome.fa'}
+    evaluation = {'candidates': [deepcopy(saved) for _ in range(100)], 'candidate_count': 100,
+                  'predicted_count': 100, 'artifact_json': '/run/full-evidence.json'}
+    original = deepcopy(evaluation)
+    preview = evaluation_preview(evaluation)
+    assert len(preview['candidates']) == 40 and preview['candidate_preview_truncated']
+    assert preview['candidate_count'] == preview['predicted_count'] == 100
+    assert preview['artifact_json'] == '/run/full-evidence.json'
+    document = render_goal_intake_html({'oligoai_evaluation': evaluation, 'oligoai_evaluations':[evaluation]})
+    assert 'PRIVATE_RNA_CONTEXT' not in document and '/reference/genome.fa' not in document
+    assert '53.44' in document
+    assert evaluation == original
+
+
 def candidate(architecture='5-10-5', job='j', start=100):
     notation = encode_idt_oligo(SEQ, architecture)
     return {'synthesized_antisense_sequence': SEQ, 'source_modality': 'gapmer',
@@ -78,6 +98,8 @@ def test_multiple_conditions_and_references_keep_separate_values():
     result = project_activity(row, [(first, {}), (second, {}), (first, {})])
     assert [a['value'] for a in result] == [0, 110.5, -3.25]
     assert len({a['scenario_id'] for a in result}) == 3
+    assert result[1]['conditions_id'] == result[2]['conditions_id']
+    assert result[0]['conditions_id'] != result[1]['conditions_id']
     assert [row, first, second] == before
 
 
