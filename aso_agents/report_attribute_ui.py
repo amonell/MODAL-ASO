@@ -1,9 +1,9 @@
 """Offline, typed attribute exploration shared by native ASO reports."""
 
 ATTRIBUTE_HTML = '''
-<section class="report-attributes" data-role="attribute-explorer" aria-label="ASO attributes and filters" hidden>
-<div class="report-attribute-toolbar"><div><h2>Explore ASO attributes</h2><p class="report-sub">Color the plot, compare distributions, and combine filters.</p></div>
-<button type="button" class="report-button" data-attribute-action="add">Add attribute filter</button>
+<aside class="report-attributes" data-role="attribute-explorer" aria-label="ASO attributes and filters" hidden>
+<div class="report-attribute-toolbar report-sidebar-toolbar"><h2>Filters</h2>
+<button type="button" class="report-button" data-attribute-action="add">Add filter</button>
 <button type="button" class="report-button" data-action="filtered-csv">Download matching ASOs</button></div>
 <div class="report-color-controls"><span>Color by</span><div data-role="attribute-quick" class="report-attribute-quick"></div>
 <button type="button" class="report-button" data-attribute-action="color"><span data-role="attribute-color-label">Choose an attribute</span> ▾</button></div>
@@ -18,7 +18,7 @@ ATTRIBUTE_HTML = '''
 <select size="9" data-role="attribute-options" aria-label="Stored ASO attributes"></select>
 <p class="report-sub" data-role="attribute-picker-description"></p>
 <button type="button" class="report-button report-button-primary" data-attribute-action="choose">Use attribute</button>
-</dialog></section>
+</dialog></aside>
 '''
 
 
@@ -140,7 +140,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   const a=catalog.get(id);if(!a)return;
   if(filters.has(id)){q('attribute-filters').querySelector(`[data-filter-id="${id}"]`).scrollIntoView({block:'nearest'});return;}
   const d=domain(a),f={low:d.low,high:d.high,includeMissing:false,mode:'all',categories:new Set(),text:'',categorySearch:''};filters.set(id,f);
-  const card=document.createElement('section');card.className='report-attribute-filter';card.dataset.filterId=id;card.setAttribute('aria-label',a.label+' filter');card.innerHTML=filterMarkup(a,f);q('attribute-filters').append(card);changed();card.querySelector('input')?.focus({preventScroll:true});
+  const card=document.createElement('section');card.className='report-attribute-filter';card.dataset.filterId=id;card.setAttribute('aria-label',a.label+' filter');card.innerHTML=filterMarkup(a,f);q('attribute-filters').append(card);changed();card.scrollIntoView({block:'nearest'});card.querySelector('input')?.focus({preventScroll:true});
  }
  function clear(){filters.clear();q('attribute-filters').replaceChildren();}
  function render(){

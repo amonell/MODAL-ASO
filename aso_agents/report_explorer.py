@@ -82,12 +82,14 @@ def explorer_html(data):
 <p class="report-sub">Choose a target to explore its predictions and ASOs.</p></div>
 <div class="report-controls" data-role="activity-controls" hidden><label class="report-context">OligoAI RNA context and conditions<select data-role="activity-context" aria-label="OligoAI RNA context and conditions"></select></label></div>
 <p class="report-sub" data-role="activity-note"'''+('' if activity_note else ' hidden')+'''>'''+esc(activity_note)+'''</p>
+<div class="report-exploration-layout" data-role="exploration-layout">
 '''+ATTRIBUTE_HTML+'''
-<section data-role="map-section" hidden><h2>Where the ASOs bind</h2><label class="report-sub" data-role="chromosome-control" hidden>Chromosome <select data-role="map-chromosome" aria-label="Map chromosome"></select></label><p class="report-map-description" data-role="map-description"></p>
+<section class="report-binding-view" data-role="map-section" hidden><h2>Where the ASOs bind</h2><label class="report-sub" data-role="chromosome-control" hidden>Chromosome <select data-role="map-chromosome" aria-label="Map chromosome"></select></label><p class="report-map-description" data-role="map-description"></p>
 <div class="report-map" tabindex="0" role="region" aria-label="Scrollable map of ASO binding sites"><canvas data-role="map" role="img" aria-label="ASO binding map; use the candidate table to select ASOs with a keyboard"></canvas></div>
 <div class="report-legend"><span class="report-gradient"></span><span data-role="legend"></span><div class="report-category-legend" data-role="category-legend"></div></div>
 <div class="report-pagination"><span data-role="map-status"></span><div><button class="report-button" data-action="map-previous">Previous rows</button><button class="report-button" data-action="map-next">Next rows</button></div></div>
 <p class="report-map-tip" data-role="map-tip" aria-live="polite">Select an ASO in the map or table to add it to your basket.</p></section>
+</div>
 <h2>Explore all ASOs</h2>
 <p class="report-sub" data-role="metric-note"></p>
 <div class="report-controls"><label>Sequence, name or position<input type="search" data-role="search" placeholder="Search candidates" autocomplete="off"></label>
