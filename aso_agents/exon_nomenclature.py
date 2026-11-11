@@ -28,6 +28,7 @@ from jsonschema import Draft202012Validator
 
 from aso_agents.async_utils import run_async_from_sync
 from aso_agents.structured_outputs import strict_json_text_format
+from aso_agents.curated_exon_nomenclature import fetch_curated_exon_nomenclature, resolve_curated_label
 
 
 _MAPPER_SCHEMA: dict[str, Any] = {
@@ -573,6 +574,7 @@ async def resolve_transcript_exon_nomenclature(
     requested_exon_label: Any,
     transcript_exons: Sequence[Mapping[str, Any]],
     reference_annotation: str | None = None,
+    reference_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a verified structural mapping without changing the request label."""
 
@@ -584,6 +586,11 @@ async def resolve_transcript_exon_nomenclature(
             "requested_exon_label": str(requested_exon_label or ""),
             "reason": "requested exon label or transcript exon structure is missing",
         }
+    if reference_context is not None:
+        curated = fetch_curated_exon_nomenclature(transcript_id=transcript_id,
+            transcript_exons=transcript_exons, context=reference_context)
+        if curated.get('status') != 'not_attempted':
+            return resolve_curated_label(curated, requested_exon_label)
     source = fetch_authoritative_exon_nomenclature_source(
         transcript_id,
         expected_exon_count=len(transcript_exons),
@@ -706,6 +713,7 @@ def resolve_transcript_exon_nomenclature_sync(
     requested_exon_label: Any,
     transcript_exons: Sequence[Mapping[str, Any]],
     reference_annotation: str | None = None,
+    reference_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return run_async_from_sync(
         lambda: resolve_transcript_exon_nomenclature(
@@ -713,6 +721,7 @@ def resolve_transcript_exon_nomenclature_sync(
             requested_exon_label=requested_exon_label,
             transcript_exons=transcript_exons,
             reference_annotation=reference_annotation,
+            reference_context=reference_context,
         )
     )
 

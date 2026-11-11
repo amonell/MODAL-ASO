@@ -6435,6 +6435,8 @@ def _persist_outputs(
             normalized_goal = apply_parameter_constraints_to_goal(deepcopy(embedded), user_request)
             _normalize_requested_accessibility_provenance(normalized_goal, user_request)
             _normalize_region_constraints_in_goal(normalized_goal)
+            from aso_agents.curated_exon_nomenclature import annotate_goal_exon_nomenclature
+            annotate_goal_exon_nomenclature(normalized_goal)
             container[key] = normalized_goal
         except Exception:
             pass
@@ -6500,6 +6502,10 @@ def _persist_outputs(
                     final_payload["structured_goal"] = normalized_goal
                 except Exception:
                     final_payload["structured_goal"] = structured_goal
+
+    if isinstance(final_payload.get('structured_goal'), dict):
+        from aso_agents.curated_exon_nomenclature import annotate_goal_exon_nomenclature
+        annotate_goal_exon_nomenclature(final_payload['structured_goal'])
 
     request_path = str(canonical_run_path(run_dir, "request.txt"))
     with open(request_path, "w", encoding="utf-8") as handle:
@@ -13458,6 +13464,7 @@ def _cached_authoritative_exon_nomenclature_mapping(
     transcript_entry: Dict[str, Any],
     requested_exon_label: int,
 ) -> Dict[str, Any]:
+    from aso_agents.curated_exon_nomenclature import ensure_entry_nomenclature, resolve_curated_label
     mappings = transcript_entry.get("exon_nomenclature_resolutions")
     if not isinstance(mappings, dict):
         metadata = transcript_entry.get("metadata")
@@ -13469,6 +13476,11 @@ def _cached_authoritative_exon_nomenclature_mapping(
             mappings = {}
             metadata["exon_nomenclature_resolutions"] = mappings
     cache_key = str(int(requested_exon_label))
+    curated = ensure_entry_nomenclature(transcript_entry)
+    if curated.get('status') != 'not_attempted':
+        resolution = resolve_curated_label(curated, requested_exon_label)
+        mappings[cache_key] = resolution
+        return resolution
     cached = mappings.get(cache_key)
     if isinstance(cached, dict):
         return cached
@@ -13533,6 +13545,7 @@ def _resolve_authoritative_transcript_exon_ordinal(
     requested_exon_label: int,
     structured_goal: Optional[Dict[str, Any]] = None,
 ) -> int:
+    from aso_agents.curated_exon_nomenclature import VERIFIED_NOMENCLATURE_STATUSES, verified_mapping_for_entry
     from aso_agents.design_event_consistency import (
         ExonConversionConflict, record_event_binding, structural_exon_resolution,
     )
@@ -13545,7 +13558,7 @@ def _resolve_authoritative_transcript_exon_ordinal(
         if event["explicit_transcript_ordinals"] and event["explicit_transcript_ordinals"] != [resolved]:
             raise ExonConversionConflict(event["reference_transcript_id"], requested_exon_label,
                 event["candidates"], "explicit transcript ordinal disagrees with the requested structural conversion")
-        if (known.get("status") == "verified_alternate_mapping"
+        if (verified_mapping_for_entry(known, transcript_entry)
                 and known.get("resolved_transcript_ordinal") != resolved):
             raise ExonConversionConflict(event["reference_transcript_id"], requested_exon_label,
                 event["candidates"], "verified exon naming disagrees with the requested structural conversion")
@@ -13557,15 +13570,13 @@ def _resolve_authoritative_transcript_exon_ordinal(
     )
     if event and event["status"] == "ambiguous_structural_events":
         resolved = resolution.get("resolved_transcript_ordinal")
-        if (resolution.get("status") != "verified_alternate_mapping"
+        if (resolution.get("status") not in VERIFIED_NOMENCLATURE_STATUSES
                 or resolved not in {row["resolved_transcript_ordinal"] for row in event["candidates"]}):
             raise ExonConversionConflict(event["reference_transcript_id"], requested_exon_label,
                 event["candidates"], "more than one internal cassette event fits the transcript conversion")
         record_event_binding(structured_goal, {**event, "status": "verified_nomenclature_disambiguated_event",
                                               "resolved_transcript_ordinal": resolved})
-    if str(resolution.get("status") or "").strip().lower() != (
-        "verified_alternate_mapping"
-    ):
+    if resolution.get("status") not in VERIFIED_NOMENCLATURE_STATUSES:
         return int(requested_exon_label)
     resolved = resolution.get("resolved_transcript_ordinal")
     if isinstance(resolved, int) and not isinstance(resolved, bool) and resolved > 0:
@@ -22054,6 +22065,7 @@ def _resolve_splice_relative_effective_exon(
     requested_exon_label: int,
     requested_site: str,
 ) -> Tuple[int, Dict[str, Any]]:
+    from aso_agents.curated_exon_nomenclature import VERIFIED_NOMENCLATURE_STATUSES
     metadata: Dict[str, Any] = {
         "source": "transcript_exon_index",
         "requested_exon_label": int(requested_exon_label),
@@ -22072,9 +22084,7 @@ def _resolve_splice_relative_effective_exon(
         transcript_entry,
         int(requested_exon_label),
     )
-    if str(nomenclature_resolution.get("status") or "").strip().lower() == (
-        "verified_alternate_mapping"
-    ):
+    if nomenclature_resolution.get("status") in VERIFIED_NOMENCLATURE_STATUSES:
         resolved_ordinal = nomenclature_resolution.get(
             "resolved_transcript_ordinal"
         )

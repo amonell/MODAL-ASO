@@ -12,6 +12,7 @@ import numpy as np
 
 from aso_chemistry import encode_idt_oligo, gapmer_architecture
 from .preservation_context import preserved_catalog_labels, preservation_resolution_objectives
+from .curated_exon_nomenclature import verified_mapping_for_entry
 
 
 def _aliases(label, entry, *, include_accessions=True):
@@ -220,7 +221,7 @@ def bind_uniqueness_context(context, catalog, resolved):
 def _ordinal(entry, requested):
     mappings = entry.get('exon_nomenclature_resolutions') or (entry.get('metadata') or {}).get('exon_nomenclature_resolutions') or {}
     mapping = mappings.get(str(requested)) or {}
-    if mapping.get('status') == 'verified_alternate_mapping':
+    if verified_mapping_for_entry(mapping, entry):
         return mapping['resolved_transcript_ordinal']
     return requested
 

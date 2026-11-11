@@ -168,7 +168,8 @@ def _resolved_accession_and_record(goal, row=None):
         if len(lengths) != len(exons):
             return False
         for resolution in resolutions.values():
-            if not isinstance(resolution, dict) or resolution.get("status") != "verified_alternate_mapping":
+            from .curated_exon_nomenclature import verified_mapping_for_entry
+            if not verified_mapping_for_entry(resolution, value):
                 continue
             alias = str(resolution.get("refseq_accession") or "")
             if not alias or alias.split(".", 1)[0] != requested.split(".", 1)[0]:

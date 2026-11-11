@@ -133,6 +133,30 @@ expandable, and the complete original value is retained in
 the cell's `data-recorded-value`. No complement is calculated and no missing
 ASO strand is inferred. Chemistry descriptions come from the saved molecule specification.
 
+## Exon names
+
+Runs retrieve the NCBI RefSeqGene/LRG index and the relevant LRG XML record on
+demand. Curated names require an exact transcript identifier and version, genome
+assembly, chromosome, strand and complete exon-coordinate match to the source's
+transcript annotation. Each name additionally requires an exact match to a
+curated exon. Transcript ends with different boundaries retain annotation-order
+labels while matching internal exons receive their verified names. Structured
+alternative naming includes its published attribution. The resolver handles
+reverse-strand alignments and explicit intronic insertions/deletions. Conflicting
+names, exonic alignment gaps and incompatible references retain annotation-order
+wording, such as “Acceptor of the eighth annotated exon.”
+
+The report's **Exon names and reference** section shows the name, order within
+the selected transcript, coordinates and source links. Plot labels and splice
+site labels use the same evidence. A scored splice site must also match the
+reference's exact splice boundary. Changing the reference invalidates its saved
+naming receipt.
+
+Small source records are fetched automatically and held briefly in process
+memory. An unavailable source preserves the run's annotation-order labels. The
+saved receipt contains names, coordinates, source URLs and hashes; reference
+sequences stay out of the report. Report rendering and viewing work offline.
+
 ## Small downloads
 
 Individual HTML exports are self-contained reading copies. Small linked files

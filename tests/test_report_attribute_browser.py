@@ -32,6 +32,8 @@ class AttributeBrowserTest(unittest.TestCase):
                  'IDT': ['Order A', 'Order B', 'Order B', 'Order A'][i]}
                 for i in range(4)]
         data = project_records(rows)
+        data['contexts'][0]['exon_naming'] = {'verified': False, 'description': 'Annotation order for the selected reference.',
+            'links': [], 'exons': [{'name': 'second annotated exon', 'annotation_order': 'second', 'coordinates': 'chr1:100–200'}]}
         attributes = {a['label']: a['id'] for a in data['attributes']}
         names = {r['id']: r['name'] for r in data['records']}
         document = basic_document('Attribute regression', '# Results\nSynthetic interaction checks.', candidate_data=data)
@@ -42,6 +44,9 @@ class AttributeBrowserTest(unittest.TestCase):
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.set_content(document)
+            self.assertEqual(page.locator('[data-exon-context] tbody tr').count(), 1)
+            self.assertEqual(page.locator('[data-exon-context] td').all_text_contents(),
+                             ['second annotated exon', 'Second', 'chr1:100–200'])
 
             def choose(label, action='color'):
                 page.locator(f'[data-attribute-action={action}]').click()
@@ -95,7 +100,9 @@ class AttributeBrowserTest(unittest.TestCase):
             choose('Special label')
             page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
             self.assertIn('constructor', page.locator('[data-role=category-legend]').inner_text())
-            self.assertNotIn('[object', page.locator('tbody').inner_text())
+            self.assertNotIn('[object', page.locator('[data-role=candidate-table] tbody').inner_text())
+            self.assertEqual(page.locator('[data-exon-context] td').all_text_contents(),
+                             ['second annotated exon', 'Second', 'chr1:100–200'])
             page.set_viewport_size({'width': 390, 'height': 844})
             self.assertFalse(page.evaluate('document.documentElement.scrollWidth>innerWidth+1'))
             self.assertEqual(errors, [])

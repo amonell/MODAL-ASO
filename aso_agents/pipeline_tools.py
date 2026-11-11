@@ -47646,8 +47646,9 @@ def _resolved_target_reference_identity_evidence(
             continue
         mapping = (entry.get("exon_nomenclature_resolutions") or
                    metadata.get("exon_nomenclature_resolutions") or {}).get(str(exon_number)) or {}
+        from .curated_exon_nomenclature import verified_mapping_for_entry
         if resolved_ordinal != exon_number and not (
-            mapping.get("status") == "verified_alternate_mapping"
+            verified_mapping_for_entry(mapping, entry)
             and mapping.get("resolved_transcript_ordinal") == resolved_ordinal
         ):
             continue

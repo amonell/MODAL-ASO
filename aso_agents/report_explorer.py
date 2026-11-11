@@ -3,6 +3,7 @@ import html
 import json
 from .report_attribute_ui import ATTRIBUTE_HTML, ATTRIBUTE_SCRIPT
 from .report_approaches import approach_html, context_approaches, ordered_contexts
+from .report_exon_names import exon_naming_html
 
 
 def pack_data(data):
@@ -95,7 +96,7 @@ def explorer_html(data):
 '''+('<h2>Targets and approaches</h2>' if data.get('kind') == 'design' else '')+'''
 <div class="report-controls"><label class="report-context">Target and approach<select data-role="context" aria-label="Target and approach">'''+options+'''</select></label>
 <p class="report-sub">Choose a target to explore its predictions and ASOs.</p></div>
-'''+approach_html(data)+'''
+'''+approach_html(data)+exon_naming_html(data['contexts'])+'''
 <div class="report-controls" data-role="activity-controls" hidden><label class="report-context">OligoAI RNA context and conditions<select data-role="activity-context" aria-label="OligoAI RNA context and conditions"></select></label></div>
 <p class="report-sub" data-role="activity-note"'''+('' if activity_note else ' hidden')+'''>'''+esc(activity_note)+'''</p>
 <div class="report-exploration-layout" data-role="exploration-layout">
@@ -115,7 +116,7 @@ def explorer_html(data):
 <label class="report-check"><input type="checkbox" data-role="clean-only">Zero exact or 1-mismatch off-targets</label>
 <button type="button" class="report-button" data-action="reset">Reset filters</button></div>
 <p class="report-sub"><span data-role="count" aria-live="polite">'''+str(len(data['records']))+''' results available.</span> <span data-role="screen-description">Off-targets are other sequences an ASO may also bind. Counts below show exact / 1-mismatch / 2-mismatch matches.</span></p>
-<div class="report-table-wrap" tabindex="0" role="region" aria-label="ASO candidate table"><table class="report-table" data-report-native="true"><thead><tr>
+<div class="report-table-wrap" tabindex="0" role="region" aria-label="ASO candidate table"><table class="report-table" data-role="candidate-table" data-report-native="true"><thead><tr>
 <th scope="col">Select</th><th scope="col" data-sort="native_rank"><button type="button" title="Rank from the saved analysis within this target and approach">Analysis rank</button></th><th scope="col" data-sort="aso"><button type="button">ASO · 5′→3′</button></th>
 <th scope="col" data-sort="start"><button type="button">Binding location</button></th><th scope="col" data-sort="effect"><button type="button">Prediction</button></th>
 <th scope="col" data-sort="gc"><button type="button" title="Percentage of G and C bases">GC</button></th><th scope="col" data-sort="off_targets"><button type="button">Off-targets</button></th><th scope="col" data-sort="oligoai"><button type="button" title="Predicted RNA reduction in vitro. Sorting uses the lowest prediction when an ASO has several binding sites in this RNA context.">OligoAI RNA reduction</button></th><th scope="col">Checks &amp; details</th></tr></thead>
@@ -231,7 +232,7 @@ function setup(root){
   });
  }
  function renderTable(){
-  const tableAttributes=attributeView.tableAttributes(),header=root.querySelector('thead tr');
+  const tableAttributes=attributeView.tableAttributes(),header=q('candidate-table').querySelector('thead tr');
   const signature=tableAttributes.map(a=>a.id).join(',');
   if(header.dataset.attributeColumns!==signature){
    header.querySelectorAll('[data-attribute-column]').forEach(th=>th.remove());
@@ -243,7 +244,7 @@ function setup(root){
   page=Math.max(0,Math.min(page,Math.max(0,Math.ceil(total/size)-1)));
   const shown=filtered.slice(page*size,(page+1)*size),scoped=scopeRows();
   const maxima=new Map();scoped.forEach(r=>{if(finite(r.effect))maxima.set(r.context,Math.max(maxima.get(r.context)||.000001,r.effect));});
-  root.querySelector('tbody').innerHTML=shown.map(r=>{
+  q('candidate-table').querySelector('tbody').innerHTML=shown.map(r=>{
    const max=maxima.get(r.context)||.000001;
    const color=ramp(finite(r.effect)?r.effect/max:null),white=finite(r.effect)&&r.effect/max>.55;
    const raw=r.predictions.length?`<dt>Deletion / replacement prediction</dt><dd>${r.predictions.map(fmt).join(' / ')}</dd>`:'';
@@ -282,6 +283,7 @@ function setup(root){
  function contextChanged(){
   const context=contexts.get(q('context').value),hasEffects=scopeRows().some(r=>finite(r.effect));
   root.querySelectorAll('[data-approach-context]').forEach(el=>{el.hidden=el.dataset.approachContext!==q('context').value;});
+  root.querySelectorAll('[data-exon-context]').forEach(el=>{el.hidden=el.dataset.exonContext!==q('context').value;});
   q('objective').textContent=context?.objective||data.objective;
   q('metric-note').textContent=context?.metric_note||'Each design group keeps its own target, prediction units and recorded ranking.';
   configureActivity();
@@ -347,7 +349,7 @@ function setup(root){
   text(context.transcript||'Recorded binding region',4,12,11);
   axes.forEach(a=>line(a.x,33,a.x+a.width,33,'#b5c2c8'));
   if(context.reference_chrom&&chromKey(context.reference_chrom)===chromosome)
-   (context.exons||[]).forEach(e=>axes.forEach(a=>{const lo=Math.max(e.start,a.a),hi=Math.min(e.end,a.b);if(hi<lo)return;const xx=x(lo),ww=Math.max(2,x(hi)-xx);c.fillStyle='#c9d6dc';c.fillRect(xx,26,ww,14);if(ww>36)text('exon '+e.index,xx+ww/2,23,9,'#48565e','center');}));
+   (context.exons||[]).forEach(e=>axes.forEach(a=>{const lo=Math.max(e.start,a.a),hi=Math.min(e.end,a.b);if(hi<lo)return;const xx=x(lo),ww=Math.max(2,x(hi)-xx);c.fillStyle='#c9d6dc';c.fillRect(xx,26,ww,14);const name=e.label||'Annotated exon '+e.index;if(ww>name.length*5)text(name,xx+ww/2,23,9,'#48565e','center');}));
   sites.forEach((s,i)=>{const xx=x(s.position);if(xx===null)return;const yy=59+(i%3)*13;line(xx,40,xx,yy-7,s.target?'#15758c':'#a8b4ba');text(s.label+(s.target?' · target':''),Math.min(width-10,Math.max(10,xx+5)),yy,9,s.target?'#15758c':'#5b6670',xx>width-220?'right':'left');});
   let min=metric?.low??0,max=metric?.high??1;if(max===min){const pad=Math.max(1,Math.abs(min)*.05);min=Math.min(min,0);max+=pad;}const range=max-min;
   if(hasMetric){
@@ -365,7 +367,7 @@ function setup(root){
   const bottom=trackY+visibleLanes*6+12;
   axes.forEach((a,i)=>{line(a.x,bottom,a.x+a.width,bottom,'#b7c4ca');if(a.width>75||i===0)text(a.a.toLocaleString(),a.x,bottom+14,9);if(a.width>140)text(a.b.toLocaleString(),a.x+a.width,bottom+14,9,'#5b6670','right');
    if(i<axes.length-1){c.setLineDash([3,3]);line(a.x+a.width+gap/2,25,a.x+a.width+gap/2,bottom,'#b3bfc5');c.setLineDash([]);if(axes.length<5)text((axes[i+1].a-a.b-1).toLocaleString()+' bp omitted',a.x+a.width+gap/2,bottom+31,9,'#5b6670','center');}});
-  q('map-description').textContent=`Chromosome ${chromosome} · 1-based genomic coordinates${context.reference_strand?' · '+context.reference_strand+' strand':''}. ${context.transcript?'Exon numbers follow '+context.transcript+'. ':''}${axes.length>1?(axes.length-1)+(axes.length===2?' untiled gap is collapsed. ':' untiled gaps are collapsed. '):''}The table retains every binding interval.`;
+  q('map-description').textContent=`Chromosome ${chromosome} · 1-based genomic coordinates${context.reference_strand?' · '+context.reference_strand+' strand':''}. ${context.exon_naming?.verified?'Curated exon names; expand “Exon names and reference” for their source. ':context.transcript?'Exons are numbered in RNA order along this transcript. ':''}${axes.length>1?(axes.length-1)+(axes.length===2?' untiled gap is collapsed. ':' untiled gaps are collapsed. '):''}The table retains every binding interval.`;
   const legend=attributeView.legend(),gradient=root.querySelector('.report-gradient');gradient.hidden=!legend.gradient;gradient.style.background=legend.background||'';
   q('legend').textContent=legend.text;
   q('category-legend').innerHTML=(legend.items||[]).map(item=>`<span><i style="background:${item.color}"></i>${esc(item.label)} (${item.count.toLocaleString()})</span>`).join('');

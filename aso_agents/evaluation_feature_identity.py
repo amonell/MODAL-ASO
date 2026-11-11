@@ -1,6 +1,7 @@
 """Resolve requested feature labels independently of supplied ASO alignments."""
 from copy import deepcopy
 import json
+from .curated_exon_nomenclature import VERIFIED_NOMENCLATURE_STATUSES, verified_mapping_for_entry
 
 
 def transcript_identifier(entry, fallback=''):
@@ -110,11 +111,14 @@ def resolve_evaluation_target_identities(targets, catalog, default_transcript_id
                 metadata = entry.get('metadata') or {}
                 resolution = deepcopy((entry.get('exon_nomenclature_resolutions')
                     or metadata.get('exon_nomenclature_resolutions') or {}).get(str(label)))
+                if ((resolution or {}).get('status') in VERIFIED_NOMENCLATURE_STATUSES
+                        and not verified_mapping_for_entry(resolution, entry)):
+                    resolution = None
                 if resolution is None and callable(resolver):
                     resolution = resolver(entry, _positive_ordinal(label))
                 identity['nomenclature_evidence'] = deepcopy(resolution)
                 resolved = _positive_ordinal((resolution or {}).get('resolved_transcript_ordinal'))
-                if (resolution or {}).get('status') == 'verified_alternate_mapping' and resolved:
+                if verified_mapping_for_entry(resolution, entry) and resolved:
                     identity.update(status='verified_biological_label', biological_label_verified=True,
                                     resolved_transcript_ordinal=resolved)
                     ordinal = resolved

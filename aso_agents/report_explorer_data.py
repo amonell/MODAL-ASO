@@ -174,6 +174,10 @@ def site_name(label, sites):
     exon = site.get('verified_exon_label')
     if exon is not None:
         return f'Exon {exon} {kind}'
+    from .report_exon_names import ordinal_word
+    ordinal = ordinal_word(site.get('annotation_exon_index'))
+    if ordinal:
+        return f'{kind.capitalize()} of the {ordinal} annotated exon'
     return kind.capitalize() + (f' at {int(position):,}' if number(position) is not None else '')
 
 
@@ -430,24 +434,27 @@ def project_run(run_dir, *, goal=None, kind='design'):
                        {name,entry.get('transcript_id'),(entry.get('metadata') or {}).get('versioned_id')}]
             if not matches and len(catalog)==1:
                 matches = list(catalog.items())
+            entry = None
             if len(matches)==1:
                 name,entry = matches[0]
-                context.update(transcript=(entry.get('metadata') or {}).get('declared_reference') or name,reference_label=name,
+                from .report_exon_names import project_exon_names
+                from .curated_exon_nomenclature import reference_context
+                context.update(transcript=(entry.get('metadata') or {}).get('declared_reference') or reference_context(entry)['transcript_id'] or name,reference_label=name,
                                reference_chrom=entry.get('chrom') or (entry.get('metadata') or {}).get('seq_region_name'),
-                               reference_strand=entry.get('strand'),exons=[{k:e[k] for k in ('index','start','end') if k in e}
-                                  for e in entry.get('exons_tx') or []])
+                               reference_strand=reference_context(entry)['strand'], **project_exon_names(entry))
             # Exon names come from exact reference-bound junction records.
             # Planner prose and proximity alone never establish exon numbering.
-            context_sites = dict(sites)
+            context_sites = {key: {**value, 'verified_exon_label': None, 'annotation_exon_index': None}
+                             for key, value in sites.items()}
             for candidate in [*raw_by_job[job_id], *assessed]:
                 for s in collection(source_row(candidate).get('splice_site_deltas')) or []:
                     if not isinstance(s,dict):
                         continue
                     key = s.get('canonical_label') or s.get('display_label') or s.get('label')
                     kind = s.get('site_kind'); point = s.get(kind) or {}
-                    annotated = s.get('reference_binding_status') == 'resolved_catalog_identity'
+                    from .report_exon_names import bind_site_exon_name
                     context_sites[key] = {**context_sites.get(key,{}), **s, **point,
-                        'verified_exon_label':s.get('exon_index') if annotated else None}
+                        **bind_site_exon_name(s, entry, context['exons'])}
             if route:
                 context['label'] = label.rsplit(' · ',1)[0] + ' · ' + site_name(route,context_sites)
                 action = {'increase':'Increase use of', 'decrease':'Decrease use of'}.get(direction)
