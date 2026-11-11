@@ -2,6 +2,7 @@
 import html
 import json
 from .report_attribute_ui import ATTRIBUTE_HTML, ATTRIBUTE_SCRIPT
+from .report_approaches import approach_html, context_approaches, ordered_contexts
 
 
 def pack_data(data):
@@ -23,19 +24,32 @@ def pack_data(data):
         columns.append({'name':field, **({'values':unique} if use_dictionary else {})})
         for row,value in zip(encoded,indices if use_dictionary else values):
             row.append(value)
-    from .report_attributes import pack_attributes
-    return {**data, 'attributes':pack_attributes(data.get('attributes',[])),
+    from .report_attributes import is_color_identity, pack_attributes
+    attributes = []
+    for attribute in data.get('attributes') or []:
+        # Older saved catalogs carry display labels and the same exact values.
+        if attribute.get('group') == 'Saved attributes' and is_color_identity(
+                attribute['label'].split(' · '), attribute.get('labels') or {}):
+            attribute = {**attribute, 'color_identity': True}
+        attributes.append(attribute)
+    return {**data, 'attributes':pack_attributes(attributes),
             'encoding':'columns-v1', 'record_columns':columns, 'records':encoded}
 
 
 def explorer_html(data):
     if not data or not data.get('records'):
         return ''
+    data = {**data, 'contexts': ordered_contexts(data)}
     esc = lambda value: html.escape(str(value if value is not None else ''), quote=True)
     facts = ''.join('<div class="report-fact"><span class="report-fact-label">'+esc(f['label'])
         +'</span><span class="report-fact-value">'+esc(f['value'])+'</span><span class="report-fact-note">'
         +esc(f.get('note'))+'</span></div>' for f in data.get('facts') or [])
-    options = ''.join('<option value="'+esc(c['id'])+'">'+esc(c['label'])+'</option>' for c in data['contexts'])
+    approaches = context_approaches(data)
+    def option_label(context):
+        choices = approaches[context['id']]
+        rank = choices[0]['rank'] if len(choices) == 1 else None
+        return (f'Approach rank {rank} · ' if rank is not None else '') + context['label']
+    options = ''.join('<option value="'+esc(c['id'])+'">'+esc(option_label(c))+'</option>' for c in data['contexts'])
     if len(data['contexts'])>1:
         options += '<option value="all">All design groups</option>'
     payload = json.dumps(pack_data(data), ensure_ascii=False, separators=(',',':'), allow_nan=False).replace('<','\\u003c').replace('&','\\u0026')
@@ -77,9 +91,11 @@ def explorer_html(data):
     classes = 'report-explorer' + ('' if has_activity else ' report-no-oligoai')
     return '<section class="'+classes+'''" id="candidate-explorer" aria-label="Explore ASO candidates">
 <div class="report-facts">'''+facts+'''</div>
-<div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['objective'])+'''</p></div>
+<div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['contexts'][0].get('objective') or data['objective'])+'''</p></div>
+'''+('<h2>Targets and approaches</h2>' if data.get('kind') == 'design' else '')+'''
 <div class="report-controls"><label class="report-context">Target and approach<select data-role="context" aria-label="Target and approach">'''+options+'''</select></label>
 <p class="report-sub">Choose a target to explore its predictions and ASOs.</p></div>
+'''+approach_html(data)+'''
 <div class="report-controls" data-role="activity-controls" hidden><label class="report-context">OligoAI RNA context and conditions<select data-role="activity-context" aria-label="OligoAI RNA context and conditions"></select></label></div>
 <p class="report-sub" data-role="activity-note"'''+('' if activity_note else ' hidden')+'''>'''+esc(activity_note)+'''</p>
 <div class="report-exploration-layout" data-role="exploration-layout">
@@ -265,6 +281,7 @@ function setup(root){
  function reset(){q('search').value='';q('minimum').value='';q('activity-minimum').value='';q('panel-only').checked=false;q('clean-only').checked=false;attributeView.clear();page=0;mapPage=0;renderTable();}
  function contextChanged(){
   const context=contexts.get(q('context').value),hasEffects=scopeRows().some(r=>finite(r.effect));
+  root.querySelectorAll('[data-approach-context]').forEach(el=>{el.hidden=el.dataset.approachContext!==q('context').value;});
   q('objective').textContent=context?.objective||data.objective;
   q('metric-note').textContent=context?.metric_note||'Each design group keeps its own target, prediction units and recorded ranking.';
   configureActivity();
@@ -341,7 +358,7 @@ function setup(root){
   if(min<=0&&max>=0)line(left,plotBottom+min/range*plotHeight,width-right,plotBottom+min/range*plotHeight,'#cad4d9');
   candidates.filter(r=>finite(value(r))).forEach(r=>{const p=r.intervals[0],xx=x((p.start+p.end)/2);if(xx===null)return;c.fillStyle=attributeView.color(r);c.beginPath();c.arc(xx,plotBottom-(value(r)-min)/range*plotHeight,r.panel_rank!==null?3:2,0,2*Math.PI);c.fill();});
   }
-  text(candidates.length?(hasMetric?'ASOs · '+(direction===1?'lower':'higher')+' values in the top rows':'ASOs · colored by '+(metric?.label||'recorded attributes')):'No ASOs match the current filters',4,trackY-10,10);
+  text(candidates.length?(hasMetric?'ASOs · '+(direction===1?'lower':'higher')+' values in the top rows':metric?'ASOs · colored by '+metric.label:'ASOs'):'No ASOs match the current filters',4,trackY-10,10);
   mapHits=[];packed.forEach(({r,blocks,lane})=>{if(lane<mapPage*laneSize||lane>=(mapPage+1)*laneSize)return;const yy=trackY+(lane-mapPage*laneSize)*6;
    blocks.forEach(([x0,x1])=>{const w=Math.max(2,x1-x0);c.fillStyle=attributeView.color(r);c.fillRect(x0,yy,w,4.8);
     if(r.panel_rank!==null||basket.has(r.molecule)){c.strokeStyle=basket.has(r.molecule)?'#111':'#15758c';c.lineWidth=1;c.strokeRect(x0,yy,w,4.8);}mapHits.push({x:x0,y:yy,w,h:6,id:r.id});});});
@@ -360,6 +377,8 @@ function setup(root){
  q('map').addEventListener('pointermove',event=>{const hit=mapHit(event),r=hit&&byId.get(hit.id);q('map').style.cursor=r?'pointer':'default';q('map-tip').textContent=r?`${r.name} · ${r.aso} · ${r.location} · ${attributeView.describe(r)}`:'Select an ASO in the map or table to add it to your basket.';});
  root.addEventListener('change',event=>{if(event.target.dataset.pick)toggle(event.target.dataset.pick);});
  root.addEventListener('click',event=>{
+  const approach=event.target.closest('[data-approach-select]');
+  if(approach){q('context').value=approach.dataset.approachSelect;contextChanged();q('context').focus({preventScroll:true});q('context').scrollIntoView({block:'nearest'});return;}
   const remove=event.target.closest('[data-remove]');if(remove){basket.delete(remove.dataset.remove);save();renderBasket();renderTable();return;}
   const th=event.target.closest('th[data-sort]');if(th){const next=th.dataset.sort;ascending=next===sort?!ascending:['order','native_rank','start','aso','off_targets'].includes(next);sort=next;page=0;renderTable();return;}
   const button=event.target.closest('[data-action]');if(!button||button.disabled)return;

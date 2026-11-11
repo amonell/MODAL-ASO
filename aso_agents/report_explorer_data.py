@@ -546,6 +546,9 @@ def project_run(run_dir, *, goal=None, kind='design'):
               'objective':contexts[0]['objective'],
               'panel_label':'Recommended panel' if selected.get('records') else 'Selected panel',
               'scope':'Saved scored and assessed candidates; each binding record retains its design group.'}
+    from .report_approaches import project_approaches
+    result['approach_rankings'] = project_approaches(
+        goal, contexts, read_record(_root_file(root, 'strategy_router_summary.json')))
     from .report_attributes import attach_attribute_catalog
     attach_attribute_catalog(result)
     result['id'] = hashlib.sha256(json.dumps(result,sort_keys=True,default=str).encode()).hexdigest()[:24]

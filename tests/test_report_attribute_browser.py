@@ -27,7 +27,9 @@ class AttributeBrowserTest(unittest.TestCase):
                  'ordering_notation': ['ACGT', 'CGTA', 'GTAC', 'TACG'][i],
                  'binding_intervals_bed0_half_open': [['chr1', 100 + i * 5, 104 + i * 5]],
                  'novel_measurement': [0, 10, 20, None][i], 'novel_batch': ['A', 'B', 'B', 'A'][i],
-                 'special_label': ['constructor', '__proto__', 'toString', 'safe'][i]}
+                 'special_label': ['constructor', '__proto__', 'constructor', '__proto__'][i],
+                 'custom_tag': f'tag-{i}', 'candidate_number': i + 1,
+                 'IDT': ['Order A', 'Order B', 'Order B', 'Order A'][i]}
                 for i in range(4)]
         data = project_records(rows)
         attributes = {a['label']: a['id'] for a in data['attributes']}
@@ -50,6 +52,16 @@ class AttributeBrowserTest(unittest.TestCase):
             def shown():
                 ids = page.locator('tbody tr[data-record]').evaluate_all('(rows)=>rows.map(r=>r.dataset.record)')
                 return {names[key] for key in ids}
+
+            page.locator('[data-attribute-action=color]').click()
+            for label in ('IDT', 'Custom tag', 'Candidate number'):
+                page.locator('[data-role=attribute-search]').fill(label)
+                self.assertEqual(page.locator('[data-role=attribute-options] option').count(), 0, label)
+                self.assertFalse(page.locator('[data-attribute-action=choose]').is_enabled())
+            page.locator('[data-attribute-action=close]').click()
+            choose('IDT', 'add')
+            self.assertTrue(page.locator('[data-filter-id="' + attributes['IDT'] + '"]').is_visible())
+            page.locator('[data-attribute-action=clear]').click()
 
             choose('Novel measurement')
             colors = page.locator('.report-attribute-swatch').evaluate_all('(els)=>els.map(e=>e.style.backgroundColor)')

@@ -81,6 +81,23 @@ def _label(path):
     return ' · '.join(field_label(key).replace('@', ' at ') for key in path if key!='[]')
 
 
+def is_color_identity(path, labels=()):
+    """Identify per-record text and references that carry no color scale."""
+    if any(key.startswith('content:') for key in labels):
+        return True
+    key = next((part for part in reversed(path) if part != '[]'), '')
+    key = '_'.join(key.lower().replace('-', ' ').replace('_', ' ').split())
+    return key in {
+        'id', 'name', 'aso', 'candidate', 'idt', 'synthesis', 'sequence',
+        'aso_name', 'candidate_name', 'record_name', 'candidate_number',
+        'aso_id', 'candidate_id', 'molecule_id', 'record_id', 'tile_id',
+        'molecule_identity', 'input_id', 'row_index', 'tile_index',
+        'rna_context', 'antisense_5to3', 'antisense_5_to_3',
+        'synthesized_antisense_sequence', 'target_5to3', 'ordering_notation', 'notation',
+    } or key.endswith(('_sequence', '_sequences', '_notation',
+                       '_sha256', '_sha1', '_hash', '_checksum', '_path', '_file'))
+
+
 def _number(source, *keys):
     for key in keys:
         if key in source and source[key] is not None:
@@ -203,7 +220,8 @@ def attach_attribute_catalog(result):
             'description':('Values across saved records for each ASO.' if '[]' in path else 'Value recorded with each ASO.')
                           + (' Full reference content stays in the evidence files.' if any(k.startswith('content:') for k in labels) else ''),
             'multiple':any(len(column)>1 for column in columns), 'unit':'', 'direction':'higher',
-            'values':values, **({'labels':labels} if labels else {})})
+            'values':values, **({'labels':labels} if labels else {}),
+            **({'color_identity':True} if is_color_identity(path, labels) else {})})
     result['attributes']=attributes
     return result
 

@@ -27,6 +27,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  const q=role=>root.querySelector(`[data-role="${role}"]`),dialog=root.querySelector('.report-attribute-picker');
  const rowIndex=new Map(rows.map((r,i)=>[r.id,i])),catalog=new Map((attributes||[]).map(a=>[a.id,a]));
  const filters=new Map(),domains=new Map(),categoryColors=new Map(),categoryChoices=new Map(),knownValues=new Map(),decodedArrays=new WeakMap();let colorId='',pickerMode='color',histogramOpen=true;
+ const colorChoices=new Map();
  const missingColor='#b9c0c8',palette=['#16788c','#b16b2e','#8863aa','#44865b','#bc5d82','#5279b6','#a38c27','#755b4b','#529b99','#8b738a'];
  const format=(value,unit='')=>finite(value)?value.toLocaleString(undefined,{maximumSignificantDigits:5})+(unit?' '+unit:''):'Unavailable';
  const label=(a,v)=>Object.hasOwn(a.labels||{},String(v))?a.labels[String(v)]:(typeof v==='boolean'?(v?'Yes':'No'):String(v));
@@ -69,6 +70,43 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   domains.set(a.id,result);return result;
  }
  function categoryKey(a,row){return JSON.stringify(known(a,row));}
+ function hasSharedCategories(attribute){
+  const groups=new Map(),molecules=new Set();
+  let booleanValues=true;
+  for(const row of scopeRows()){
+   const present=known(attribute,row);
+   if(!present.length)continue;
+   const key=JSON.stringify(present),molecule=row.molecule||row.id;
+   if(!groups.has(key)){
+    if(groups.size===palette.length)return false;
+    groups.set(key,new Set());
+   }
+   groups.get(key).add(molecule);
+   molecules.add(molecule);
+   booleanValues=booleanValues&&present.length===1&&typeof present[0]==='boolean';
+  }
+  if(groups.size<2)return false;
+  if(booleanValues)return true;
+  // Repeated rows for one molecule do not make a shared category.
+  const shared=new Set();
+  for(const members of groups.values()){
+   if(members.size>1)for(const molecule of members)shared.add(molecule);
+  }
+  return shared.size>0&&shared.size*2>=molecules.size;
+ }
+ function canColor(attribute){
+  if(!attribute||attribute.color_identity)return false;
+  const source=catalog.get(attribute.value_ref)||attribute;
+  // Several saved fields can share the same packed column.
+  const key=attribute.kind+':'+(attribute.dynamic?attribute.id:source.id);
+  if(!colorChoices.has(key)){
+   const eligible=attribute.kind==='number'
+    ?scopeRows().some(row=>known(attribute,row).length)
+    :!Object.hasOwn(source,'constant')&&hasSharedCategories(attribute);
+   colorChoices.set(key,eligible);
+  }
+  return colorChoices.get(key);
+ }
  function categoryLabel(a,key){
   const values=JSON.parse(key),parts=[];let last,count=0;
   for(const v of values){if(v===last){count++;parts[parts.length-1]=label(a,v)+' × '+count;}else{parts.push(label(a,v));last=v;count=1;}}
@@ -122,10 +160,14 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  }
  function options(){
   const search=q('attribute-search').value.toLocaleLowerCase(),previous=q('attribute-options').value;
-  const matches=[...catalog.values()].filter(a=>[a.label,a.group,a.description].join(' ').toLocaleLowerCase().includes(search));
+  const matches=[...catalog.values()].filter(a=>[a.label,a.group,a.description].join(' ').toLocaleLowerCase().includes(search)
+   &&(pickerMode!=='color'||canColor(a)));
   const visible=matches.slice(0,200);q('attribute-options').innerHTML=visible.map(a=>`<option value="${esc(a.id)}">${esc(a.label)}${domain(a).exists?'':' · no values in this target'}</option>`).join('');
   q('attribute-options').value=visible.some(a=>a.id===previous)?previous:visible[0]?.id||'';
-  q('attribute-search-count').textContent=`${matches.length.toLocaleString()} attributes${matches.length>200?' · showing the first 200; refine the search.':'.'}`;
+  const noun=pickerMode==='color'?'color attributes':'attributes';
+  q('attribute-search-count').textContent=matches.length
+   ?`${matches.length.toLocaleString()} ${noun}${matches.length>200?' · showing the first 200; refine the search.':'.'}`
+   :'No matching '+noun+'.';
   selectionDescription();
  }
  function selectionDescription(){const a=catalog.get(q('attribute-options').value);q('attribute-picker-description').textContent=a?a.description:'';root.querySelector('[data-attribute-action=choose]').disabled=!a;}
@@ -152,7 +194,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   const oldHistogram=q('attribute-color-histogram').querySelector('details');if(oldHistogram)histogramOpen=oldHistogram.open;
   q('attribute-color-histogram').innerHTML=a?`<details ${histogramOpen?'open':''}><summary>Distribution · ${esc(a.label)}</summary>${histogram(a,base.filter(r=>matches(r,a.id)),filters.get(a.id))}${filters.has(a.id)?'':`<button type="button" class="report-button" data-attribute-action="filter-color">Filter this attribute</button>`}</details>`:'';
   q('attribute-color-histogram').hidden=!!a&&filters.has(a.id);
-  q('attribute-quick').innerHTML=[...catalog.values()].filter(a=>a.id==='oligoai'||a.id==='effect'||a.id.startsWith('uniqueness')||a.id==='phastcons').map(a=>`<button type="button" class="report-button" data-attribute-action="quick-color" data-attribute-id="${a.id}" aria-pressed="${a.id===colorId}" title="${esc(a.label)}">${a.id==='oligoai'?'OligoAI':a.id==='effect'?'Splicing':a.id==='phastcons'?'Conservation':'Uniqueness'}</button>`).join('');
+  q('attribute-quick').innerHTML=[...catalog.values()].filter(a=>(a.id==='oligoai'||a.id==='effect'||a.id.startsWith('uniqueness')||a.id==='phastcons')&&canColor(a)).map(a=>`<button type="button" class="report-button" data-attribute-action="quick-color" data-attribute-id="${a.id}" aria-pressed="${a.id===colorId}" title="${esc(a.label)}">${a.id==='oligoai'?'OligoAI':a.id==='effect'?'Splicing':a.id==='phastcons'?'Conservation':'Uniqueness'}</button>`).join('');
   if(quickFocus)q('attribute-quick').querySelector(`[data-attribute-id="${quickFocus}"]`)?.focus({preventScroll:true});
   q('attribute-summary').textContent=filters.size?`${visible.length.toLocaleString()} of ${base.length.toLocaleString()} ASO records match ${filters.size===1?'this filter':'all '+filters.size+' filters'}. ${filters.size>1?'Each distribution shows ASOs that pass the other filters.':'The distribution shows ASOs before this filter.'}`:'Add filters to choose ranges or categories. The plot and table show the same matching ASOs.';
   root.querySelector('[data-attribute-action=clear]').hidden=!filters.size;
@@ -173,8 +215,11 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   }
  }
  function refresh(){
-  domains.clear();categoryColors.clear();categoryChoices.clear();knownValues.clear();
-  if(!colorId){const preferred=['oligoai','effect','uniqueness','phastcons','gc'];colorId=preferred.find(id=>catalog.has(id)&&domain(catalog.get(id)).exists)||catalog.keys().next().value||'';}
+  domains.clear();categoryColors.clear();categoryChoices.clear();knownValues.clear();colorChoices.clear();
+  if(!canColor(catalog.get(colorId))){
+   const preferred=['oligoai','effect','uniqueness','phastcons','gc'];
+   colorId=preferred.find(id=>canColor(catalog.get(id)))||[...catalog.values()].find(canColor)?.id||'';
+  }
   for(const [id,f] of filters){
    const a=catalog.get(id);if(a.kind!=='number')continue;const d=domain(a),card=q('attribute-filters').querySelector(`[data-filter-id="${id}"]`);
    card.querySelectorAll('input[type=number]').forEach(input=>input.disabled=!d.exists);
@@ -182,17 +227,17 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   }
  }
  function legend(){
-  const a=catalog.get(colorId);if(!a)return {text:'Grey: attribute unavailable.',gradient:false};
+  const a=catalog.get(colorId);if(!a)return {text:'',gradient:false};
   const d=domain(a),shown=baseRows().filter(r=>matches(r)),missing=shown.filter(r=>!known(a,r).length).length;
   if(a.kind==='number')return {text:d.exists?`${format(d.low,a.unit)} → ${format(d.high,a.unit)} · ${d.low<0&&d.high>0?'Ochre: negative. Teal: positive.':a.direction==='lower'?'Lower values are darker.':'Higher values are darker.'} Grey: unavailable (${missing.toLocaleString()}).`:`${a.label}: no recorded values for this target.`,gradient:d.exists,
    background:d.low<0&&d.high>0?`linear-gradient(90deg,#a75e2a,#eaf4f6 ${-d.low/(d.high-d.low)*100}%,#12687f)`:a.direction==='lower'?'linear-gradient(90deg,#12687f,#dbedf4)':'linear-gradient(90deg,#dbedf4,#12687f)'};
   const counts=new Map();shown.forEach(r=>{if(known(a,r).length){const k=categoryKey(a,r);counts.set(k,(counts.get(k)||0)+1);}});
-  const entries=[...counts].sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const entries=[...counts].sort((a,b)=>b[1]-a[1]);
   return {text:`${counts.size.toLocaleString()} recorded categories · Grey: unavailable (${missing.toLocaleString()}).`,gradient:false,
    items:entries.map(([key,count])=>({label:categoryLabel(a,key),color:categoryPalette(a).get(key),count}))};
  }
  function describe(row){
-  const ids=[...new Set([colorId,...filters.keys()])];
+  const ids=[...new Set([colorId,...filters.keys()])].filter(id=>catalog.has(id));
   return ids.map(id=>{const a=catalog.get(id),v=known(a,row);return a.label+': '+(v.length?(a.kind==='number'?v.map(x=>format(x,a.unit)).slice(0,5).join(' / '):categoryLabel(a,categoryKey(a,row))):'Unavailable');}).join(' · ');
  }
  root.addEventListener('click',event=>{
