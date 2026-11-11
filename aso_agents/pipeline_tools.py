@@ -28617,6 +28617,8 @@ def _bind_candidate_physical_site_groups(rows, groups, intervals_for_row):
 
 
 def _sort_generated_candidate_indexed_rows(indexed_rows: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int, Dict[str, Any]]]:
+    if indexed_rows and all(type(row.get("_recommendation_order")) is int for _, row in indexed_rows):
+        return sorted(indexed_rows, key=lambda item: item[1]["_recommendation_order"])
     native = _native_sort_generated_candidate_indexed_rows(indexed_rows)
     if not any(row.get("candidate_assessment") for _, row in native):
         return native
@@ -28781,12 +28783,21 @@ def _apply_generated_candidate_limit(
     diversify: bool = False,
     candidate_minimum: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    from .candidate_presentation import molecule_key
+    def distinct(indexed):
+        seen, result = set(), []
+        for item in indexed:
+            key = molecule_key(item[1])
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+        return result
     if candidate_limit is None:
         if not per_site:
             return list(rows), {}
         candidate_limit = None
     if not per_site:
-        indexed_rows = _sort_generated_candidate_indexed_rows(list(enumerate(rows)))
+        indexed_rows = distinct(_sort_generated_candidate_indexed_rows(list(enumerate(rows))))
         ranked_rows = [row for _idx, row in indexed_rows]
         if diversify:
             from .target_accessibility import select_panel_rows
@@ -28823,7 +28834,7 @@ def _apply_generated_candidate_limit(
     selected_indexed: List[Tuple[int, Dict[str, Any]]] = []
     groups_summary: List[Dict[str, Any]] = []
     for label in group_order:
-        indexed_rows = _sort_generated_candidate_indexed_rows(grouped.get(label, []))
+        indexed_rows = distinct(_sort_generated_candidate_indexed_rows(grouped.get(label, [])))
         limits = [value for value in (candidate_limit, (group_limits or {}).get(label)) if value is not None]
         group_limit = min(limits) if limits else None
         if diversify:
@@ -29575,7 +29586,10 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
+def _emit_v2_generated_design_artifacts(run_dir: str, *, review_recommendations=False, retry_recommendations=False) -> Dict[str, Any]:
+    if review_recommendations:
+        return _build_v2_generated_design_artifacts(run_dir, review_recommendations=True,
+                                                     retry_recommendations=retry_recommendations)
     from .report_build import build_identity, read_receipt, verified_artifacts, write_receipt
     context = _goal_payload_context(run_dir)
     goal = context.get("structured_goal") or {}
@@ -29610,92 +29624,12 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     return artifacts
 
 
-def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
-    stage_payload = _collect_generated_stage_sets(run_dir)
-    stage_sets = stage_payload.get("stage_sets") if isinstance(stage_payload.get("stage_sets"), dict) else {}
-    context = _goal_payload_context(run_dir)
-    structured_goal = context.get("structured_goal") if isinstance(context.get("structured_goal"), dict) else {}
-    final_payload = context.get("final_payload") if isinstance(context.get("final_payload"), dict) else {}
-    candidate_rows = _collect_generated_candidate_rows(run_dir, structured_goal=structured_goal)
-    branches = _build_branch_outcomes_for_report(structured_goal, final_payload)
-    completed_empty = bool(branches) and all(
-        branch.get("status") in {"no_candidates_after_constraints", "no_candidates_found"}
-        for branch in branches.values() if branch.get("requested"))
-    if not candidate_rows and not any(stage_sets.values()) and not completed_empty:
-        return {}
-
-    run_path = Path(run_dir)
-    generated_set_path = _write_run_path(run_path, "generated_aso_set.json")
-    generated_trace_path = _write_run_path(run_path, "generated_filter_trace.json")
-
-    normalized_rows = [_normalized_generated_candidate_row(row) for row in candidate_rows]
-    from .candidate_region_gate import filter_final_rows_by_regions
-    normalized_rows, global_region_filter = filter_final_rows_by_regions(
-        normalized_rows, structured_goal, _goal_runtime_module()._tile_row_overlap_intervals)
-    gapmer_results = (
-        final_payload.get("gapmer_tiling_results")
-        if isinstance(final_payload.get("gapmer_tiling_results"), dict)
-        else {}
-    )
-    steric_results = (
-        final_payload.get("tiling_results")
-        if isinstance(final_payload.get("tiling_results"), dict)
-        else {}
-    )
-    gapmer_required_filter = (
-        gapmer_results.get("required_evidence_filtering")
-        if isinstance(gapmer_results.get("required_evidence_filtering"), dict)
-        else {}
-    )
-    steric_required_filter = (
-        steric_results.get("required_evidence_filtering")
-        if isinstance(steric_results.get("required_evidence_filtering"), dict)
-        else {}
-    )
-    persisted_required_filter = gapmer_required_filter or steric_required_filter
-    trace_eligibility_rows = list(normalized_rows)
-    required_filter_input_path = str(persisted_required_filter.get("input_path") or "").strip()
-    if required_filter_input_path and Path(required_filter_input_path).exists():
-        input_rows = _load_candidate_rows_from_json(Path(required_filter_input_path))
-        if input_rows:
-            trace_eligibility_rows = [_normalized_generated_candidate_row(row) for row in input_rows]
-    cross_species_required = bool(
-        _cross_species_required(None, structured_goal)
-        or (not _request_contract_cross_species_optional(structured_goal)
-            and any(_coerce_bool(row.get("cross_species_required")) is True for row in normalized_rows))
-    )
-    cross_species_values = [_row_cross_species_pass(row) for row in normalized_rows]
-    trace_cross_species_values = [_row_cross_species_pass(row) for row in trace_eligibility_rows]
-    unchecked_count = (
-        sum(1 for value in trace_cross_species_values if value is None)
-        if cross_species_required
-        else 0
-    )
-    failed_cross_species_count = (
-        sum(1 for value in trace_cross_species_values if value is False)
-        if cross_species_required
-        else 0
-    )
-    requested_cross_species = _requested_species_from_contexts(None, structured_goal)
-    if cross_species_required:
-        eligible_rows = [
-            row for row, passed in zip(normalized_rows, cross_species_values) if passed is True
-        ]
-    else:
-        eligible_rows = list(normalized_rows)
-    _annotate_requested_exon_proximity(eligible_rows, structured_goal)
-    from .chemical_identity import attest_candidate_rows
-    from .candidate_assessment import assess_candidates, write_assessment_artifacts
-    assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
-    # Activity belongs to the full assessed library, independent of panel size
-    # and selection. The evaluator deduplicates identical model inputs and the
-    # runner batches inference; selected copies retain their attached evidence.
-    from .oligoai import evaluate_candidates
-    oligoai_evaluation = evaluate_candidates(
-        assessment_pool, structured_goal, generated_set_path.parent, runtime=_goal_runtime_module(),
-        candidate_scope="assessed_pool_before_panel_selection")
-    eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
-    eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+def _select_generated_design_panel(rows, structured_goal, *, directory, region_status="complete", persisted=None):
+    """Apply the existing typed panel contract to the supplied evidence ordering."""
+    eligible_rows = list(rows)
+    generated_set_path = Path(directory) / "generated_aso_set.json"
+    gapmer_results = {"candidate_selection": persisted or {}}
+    global_region_filter = {"status": region_status}
     candidate_limit = _structured_candidate_limit(structured_goal)
     candidate_limit_per_site = _structured_candidate_limit_is_per_site(structured_goal)
     candidate_group_scope = _structured_candidate_group_scope(structured_goal)
@@ -29845,6 +29779,103 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
                                    "export_selection": export_selection}
             if export_selection.get("unselected_count"):
                 candidate_selection["selected_count"] = len(eligible_rows)
+    return eligible_rows, candidate_selection
+
+
+def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations=False, retry_recommendations=False) -> Dict[str, Any]:
+    stage_payload = _collect_generated_stage_sets(run_dir)
+    stage_sets = stage_payload.get("stage_sets") if isinstance(stage_payload.get("stage_sets"), dict) else {}
+    context = _goal_payload_context(run_dir)
+    structured_goal = context.get("structured_goal") if isinstance(context.get("structured_goal"), dict) else {}
+    final_payload = context.get("final_payload") if isinstance(context.get("final_payload"), dict) else {}
+    candidate_rows = _collect_generated_candidate_rows(run_dir, structured_goal=structured_goal)
+    branches = _build_branch_outcomes_for_report(structured_goal, final_payload)
+    completed_empty = bool(branches) and all(
+        branch.get("status") in {"no_candidates_after_constraints", "no_candidates_found"}
+        for branch in branches.values() if branch.get("requested"))
+    if not candidate_rows and not any(stage_sets.values()) and not completed_empty:
+        return {}
+
+    run_path = Path(run_dir)
+    generated_set_path = _write_run_path(run_path, "generated_aso_set.json")
+    generated_trace_path = _write_run_path(run_path, "generated_filter_trace.json")
+
+    normalized_rows = [_normalized_generated_candidate_row(row) for row in candidate_rows]
+    from .candidate_region_gate import filter_final_rows_by_regions
+    normalized_rows, global_region_filter = filter_final_rows_by_regions(
+        normalized_rows, structured_goal, _goal_runtime_module()._tile_row_overlap_intervals)
+    gapmer_results = (
+        final_payload.get("gapmer_tiling_results")
+        if isinstance(final_payload.get("gapmer_tiling_results"), dict)
+        else {}
+    )
+    steric_results = (
+        final_payload.get("tiling_results")
+        if isinstance(final_payload.get("tiling_results"), dict)
+        else {}
+    )
+    gapmer_required_filter = (
+        gapmer_results.get("required_evidence_filtering")
+        if isinstance(gapmer_results.get("required_evidence_filtering"), dict)
+        else {}
+    )
+    steric_required_filter = (
+        steric_results.get("required_evidence_filtering")
+        if isinstance(steric_results.get("required_evidence_filtering"), dict)
+        else {}
+    )
+    persisted_required_filter = gapmer_required_filter or steric_required_filter
+    trace_eligibility_rows = list(normalized_rows)
+    required_filter_input_path = str(persisted_required_filter.get("input_path") or "").strip()
+    if required_filter_input_path and Path(required_filter_input_path).exists():
+        input_rows = _load_candidate_rows_from_json(Path(required_filter_input_path))
+        if input_rows:
+            trace_eligibility_rows = [_normalized_generated_candidate_row(row) for row in input_rows]
+    cross_species_required = bool(
+        _cross_species_required(None, structured_goal)
+        or (not _request_contract_cross_species_optional(structured_goal)
+            and any(_coerce_bool(row.get("cross_species_required")) is True for row in normalized_rows))
+    )
+    cross_species_values = [_row_cross_species_pass(row) for row in normalized_rows]
+    trace_cross_species_values = [_row_cross_species_pass(row) for row in trace_eligibility_rows]
+    unchecked_count = (
+        sum(1 for value in trace_cross_species_values if value is None)
+        if cross_species_required
+        else 0
+    )
+    failed_cross_species_count = (
+        sum(1 for value in trace_cross_species_values if value is False)
+        if cross_species_required
+        else 0
+    )
+    requested_cross_species = _requested_species_from_contexts(None, structured_goal)
+    if cross_species_required:
+        eligible_rows = [
+            row for row, passed in zip(normalized_rows, cross_species_values) if passed is True
+        ]
+    else:
+        eligible_rows = list(normalized_rows)
+    _annotate_requested_exon_proximity(eligible_rows, structured_goal)
+    from .chemical_identity import attest_candidate_rows
+    from .candidate_assessment import assess_candidates, write_assessment_artifacts
+    assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
+    # Activity belongs to the full assessed library, independent of panel size
+    # and selection. The evaluator deduplicates identical model inputs and the
+    # runner batches inference; selected copies retain their attached evidence.
+    from .oligoai import evaluate_candidates
+    oligoai_evaluation = evaluate_candidates(
+        assessment_pool, structured_goal, generated_set_path.parent, runtime=_goal_runtime_module(),
+        candidate_scope="assessed_pool_before_panel_selection")
+    eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
+    eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+    from .shortlist_review import recommend_panel
+    eligible_rows, candidate_selection, recommendation_review = recommend_panel(
+        assessment_pool, structured_goal, generated_set_path.parent,
+        select_panel=lambda rows, goal: _select_generated_design_panel(
+            rows, goal, directory=generated_set_path.parent,
+            region_status=global_region_filter["status"],
+            persisted=gapmer_results.get("candidate_selection")),
+        allow_model_calls=review_recommendations, retry_failed=retry_recommendations)
     persisted_total_count = persisted_required_filter.get("total_count")
     unfiltered_row_count = int(
         persisted_total_count
@@ -29917,6 +29948,7 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         "global_region_filter": global_region_filter,
         "sources": stage_payload.get("sources") if isinstance(stage_payload.get("sources"), dict) else {},
     }
+    generated_set_payload["recommendation_review"] = recommendation_review
     if oligoai_evaluation:
         generated_set_payload["oligoai_evaluation"] = oligoai_evaluation
     if completed_empty:
@@ -29994,7 +30026,7 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     from aso_agents.design_delivery import write_design_panel
     panel_artifacts = write_design_panel(generated_set_payload, structured_goal, generated_set_path.parent)
     chemistry_artifacts = write_native_chemistry_exports(eligible_rows, generated_set_path.parent)
-    assessment_artifacts = write_assessment_artifacts(assessment_pool, eligible_rows, structured_goal, generated_set_path.parent)
+    assessment_artifacts = write_assessment_artifacts(assessment_pool, eligible_rows, structured_goal, generated_set_path.parent, review=recommendation_review)
     write_layout_manifest(run_path)
     return {
         "generated_aso_set_json": str(generated_set_path),
@@ -56241,19 +56273,8 @@ def tool_build_report_payload(
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
     existing_payload = final_payload.get("report_payload") if isinstance(final_payload.get("report_payload"), dict) else {}
-    from .shortlist_clarification import size_question
-    question = size_question(structured_goal, bool(_collect_generated_candidate_rows(run_dir, structured_goal)))
-    if question:
-        _apply_clarification_request_to_state(state, question)
-        state["pending_questions"] = question["questions"]
-        state["status"] = "needs_user_input"
-        state["phase"] = "awaiting_clarification"
-        _mark_last_tool(state, "tool_build_report_payload", "ok")
-        _save_state(state_path, state, snapshot_reason="shortlist_size_requested")
-        return {"status":"needs_user_input", "needs_user_input":True, "state_path":state_path,
-                "run_dir":run_dir, "questions":question["questions"], "clarification_kind":"shortlist_size",
-                "clarification_request":question}
-    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
+    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True,
+                                                           retry_recommendations=force_stage)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
     report_payload = _build_report_payload_manifest(
@@ -56341,7 +56362,7 @@ def tool_write_markdown_report(
     payload = context["payload"]
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
-    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
+    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
     report_payload = _build_report_payload_manifest(

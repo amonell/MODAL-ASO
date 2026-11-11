@@ -39,6 +39,10 @@ FIELD_LABELS = {
     'off_target_position_preview_limit': 'Locations shown per mismatch group',
     'off_target_search_method': 'Search method',
     'off_target_gene_annotation_status': 'Gene annotation coverage',
+    'off_target_expression_weighted_risk': 'Weighted expression of matching RNAs',
+    'expression_weighted_risk': 'Weighted expression of matching RNAs',
+    'off_target_expression_sum': 'Expression of matching RNAs',
+    'off_target_expression_sum_2mm': 'Expression of RNAs matched with two mismatches',
 }
 
 # Explicit vocabulary, rather than replacing underscores in arbitrary values.

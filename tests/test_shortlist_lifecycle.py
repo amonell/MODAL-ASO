@@ -24,8 +24,13 @@ def test_late_answer_preserves_science_history_and_resumes_only_report(tmp_path,
     monkeypatch.setattr(pipeline,"_collect_generated_candidate_rows",lambda *args:[{"Sequence":"ACGT"}])
     monkeypatch.setattr(pipeline,"_save_goal_payload",lambda *args:None)
     monkeypatch.setattr(pipeline,"_run_clarification_request_scope_sync",lambda *args:pytest.fail("Size answer must not launch a new model/intake pass"))
-    question = pipeline.tool_build_report_payload(str(state_path))
-    assert question["needs_user_input"] and question["clarification_kind"] == "shortlist_size"
+    # Resume an older run that already asked this question. New runs choose a
+    # compact panel automatically, while saved pending answers remain supported.
+    from aso_agents.shortlist_clarification import size_question
+    question = size_question(goal, True)
+    pipeline._apply_clarification_request_to_state(state, question)
+    state.update(pending_questions=question['questions'], status='needs_user_input', phase='awaiting_clarification')
+    state_path.write_text(json.dumps(state))
     pipeline.submit_clarification_answers(str(state_path),["7"])
     result = pipeline.apply_clarification_to_goal(str(state_path))
     assert result["scientific_recomputation"] is False
@@ -43,6 +48,26 @@ def test_late_answer_preserves_science_history_and_resumes_only_report(tmp_path,
     assert "tool_build_report_payload" in json.dumps(next_actions)
     assert "tool_run_steric_tiling" not in json.dumps(next_actions)
     assert hashlib.sha256(science.read_bytes()).hexdigest() == before
+
+
+def test_new_report_reviews_candidates_without_a_size_question(tmp_path, monkeypatch):
+    state_path = tmp_path/'state.json'
+    state = {'run_dir': str(tmp_path), 'request': 'Design ASOs'}
+    state_path.write_text(json.dumps(state))
+    goal = {'gene_symbol': 'TEST', 'intent': 'knockdown'}
+    context = {'payload': {}, 'structured_goal': goal, 'final_payload': {}}
+    seen = []
+    monkeypatch.setattr(pipeline, '_prepare_execution_stage', lambda **kw: {
+        'status': 'ok', 'state': state, 'run_dir': str(tmp_path)})
+    monkeypatch.setattr(pipeline, '_load_goal_context_from_run_dir', lambda _: context)
+    monkeypatch.setattr(pipeline, '_emit_v2_generated_design_artifacts', lambda *a, **kw: seen.append(kw) or {})
+    monkeypatch.setattr(pipeline, '_build_report_payload_manifest', lambda **kw: {'report': True})
+    monkeypatch.setattr(pipeline, '_save_goal_payload', lambda *a: None)
+    monkeypatch.setattr(pipeline, '_promote_atomic_status', lambda **kw: kw)
+    result = pipeline.tool_build_report_payload(str(state_path))
+    assert result['status'] == 'report_payload_ready'
+    assert seen == [{'review_recommendations': True, 'retry_recommendations': False}]
+    assert 'candidate_limit' not in goal
 
 
 def test_refseq_program_resolves_exact_xref_before_structure_fetch(monkeypatch):

@@ -84,22 +84,39 @@ def attest_candidate_rows(rows, goal):
     return result
 
 
+def _presentation_identity():
+    """Version recipient views independently of their unchanged molecule inventory."""
+    from .artifact_io import file_sha256
+    from .readable_report import READER_CSS, READER_SCRIPT
+    root = Path(__file__).parent
+    sources = sorted({*root.glob('report*.py'), root/'readable_report.py',
+                      root.parent/'aso_recipient_report.py', root.parent/'aso_molecule.py'})
+    return hashlib.sha256(json.dumps({
+        'sources': {path.name: file_sha256(path) for path in sources},
+        'stylesheet': READER_CSS, 'script': READER_SCRIPT}, sort_keys=True).encode()).hexdigest()
+
+
 def write_native_chemistry_exports(rows, directory):
     """Content-addressed, idempotent recipient views of the selected native inventory."""
-    records = []
-    for index, row in enumerate(rows, 1):
+    records, seen = [], set()
+    for row in rows:
         molecule = row.get("molecule_specification")
         if not molecule:
             continue
         validate_molecule_record(molecule)
-        records.append(attest_record(f"candidate_{index}", molecule["antisense_5to3"],
+        identity = molecule["physical_molecule_sha256"]
+        if identity in seen:
+            continue
+        seen.add(identity)
+        records.append(attest_record(f"candidate_{len(records) + 1}", molecule["antisense_5to3"],
             molecule["architecture"], molecule["ordering_notation"],
             linkages=molecule["linkages_5to3"] if molecule["ordering_status"] == "attested" else None,
             assumption_status=molecule["chemistry_assumption_status"], native_rank=row.get("selection_rank")))
     if not records:
         return {}
     digest = hashlib.sha256(json.dumps(records, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    path = Path(directory) / "chemistry" / digest
+    presentation = _presentation_identity()
+    path = Path(directory) / "chemistry" / (digest + '-' + presentation[:16])
     if path.exists():
         validate_recipient_report(path)
         if json.loads((path / "candidates.json").read_text())["records"] != records:
@@ -107,7 +124,8 @@ def write_native_chemistry_exports(rows, directory):
     else:
         write_recipient_report(path, records, title="ASO chemistry",
             context="Selected native candidates. Physical sequence and chemistry are preserved across all views. PMO and unspecified chemistry have no supported vendor ordering notation.",
-            provenance={"source": "selected_native_generated_aso_set", "inventory_sha256": digest})
+            provenance={"source": "selected_native_generated_aso_set", "inventory_sha256": digest,
+                        "presentation_sha256": presentation})
     return {"chemical_identity_json": str(path / "candidates.json"),
             "chemical_identity_csv": str(path / "candidates.csv"),
             "chemical_identity_xlsx": str(path / "candidates.xlsx"),

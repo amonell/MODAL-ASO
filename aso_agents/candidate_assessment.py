@@ -274,7 +274,7 @@ def rank_candidates(rows):
     return sorted(ranked, key=evidence_sort_key)
 
 
-def write_assessment_artifacts(pool, selected, goal, directory):
+def write_assessment_artifacts(pool, selected, goal, directory, *, review=None):
     """Retain full pre-selection evidence and a distinct, explained shortlist."""
     directory = Path(directory)
     from .candidate_export_evidence import export_context, named_rank_components, with_native_ranks, candidate_context_key
@@ -293,9 +293,7 @@ def write_assessment_artifacts(pool, selected, goal, directory):
         if identity not in seen:
             seen.add(identity)
             shortlisted.append(row)
-    pending = bool(pool) and not shortlist_size_specified(goal)
-    if pending:
-        shortlisted = []
+    review = review or {}
     payload = {"version":VERSION,"pool_row_count":len(pool),"pool_molecule_count":len({molecule_key(r) for r in pool}),
         "scope":"native_hard_eligible_pool_before_final_panel_selection_and_explicit_motif_exclusions",
         "rows":pool}
@@ -316,9 +314,14 @@ def write_assessment_artifacts(pool, selected, goal, directory):
             reasons.append("Splice safeguards: " + str(guards["status"]) + ".")
         if a.get("unavailable_evidence"):
             reasons.append("Unavailable evidence: " + ", ".join(a["unavailable_evidence"]) + ".")
+        from .shortlist_evidence import molecule_id
+        recommendation = (review.get("recommendations") or {}).get(molecule_id(row)) or {}
         records.append({"recommendation_order":rank,"antisense_5to3":row.get("synthesized_antisense_sequence"),
             "molecule_identity":molecule_key(row),"assessment":a,
-            "reason":" ".join(reasons),
+            "molecule_specification":row.get("molecule_specification"),
+            "reason":recommendation.get("why_chosen") or " ".join(reasons),
+            "panel_role":recommendation.get("panel_role"), "tradeoff":recommendation.get("tradeoff"),
+            "recommendation_review":recommendation,
             **export_context(row),"binding_intervals":row.get("binding_intervals_bed0_half_open") or [],
             "binding_contexts":contexts_by_molecule.get(molecule_key(row), []),
             "off_target_status":screen.get("status"),"off_target_counts":screen.get("counts_by_mismatch"),
@@ -329,12 +332,15 @@ def write_assessment_artifacts(pool, selected, goal, directory):
             "thermodynamic_status":thermo.get("status"),"recommendation_status":a.get("recommendation_status")})
     minimum = goal.get("candidate_minimum")
     shortfall = max(0,minimum-len(records)) if type(minimum) is int else 0
-    shortlist = {"version":VERSION,"status":"no_eligible_candidates" if not pool else "awaiting_size_preference" if pending else "insufficient_eligible_candidates" if shortfall else "ready",
+    shortlist = {"version":VERSION,"status":("no_recommended_candidates" if not shortlisted and pool and review.get("status") == "completed"
+        else "no_eligible_candidates" if not shortlisted else "insufficient_eligible_candidates" if shortfall else "ready"),
+        "review": review,
         "ranking_use":{"off_target":"Comparable search scopes, count units and tissue evidence only",
             "motifs":"Only applicable or explicit user flags affect ordering; published flags never imply universal toxicity",
             "duplex_reference":"Descriptive reference proxy; never maximized as a potency score",
             "cryptic_splice_evidence":"Review flags with exact genomic scope; no validated biological cutoff is assumed"},
-        "selection_policy":"hard_constraints_then_evidence_triage_with_explicit_objective_precedence",
+        "selection_policy":("llm_evidence_review_with_checked_constraints" if review.get("status") == "completed"
+                            else "hard_constraints_then_evidence_triage_with_explicit_objective_precedence"),
         "pool_artifact":str(pool_path),"pool_sha256":file_sha256(pool_path),
         "count":len(records),"requested_count":goal.get("candidate_limit"),"minimum_count_shortfall":shortfall,"records":records}
     write_json(shortlist_path, shortlist)
@@ -343,7 +349,7 @@ def write_assessment_artifacts(pool, selected, goal, directory):
               "program_id","job_id","route_label","primary_objective_site","primary_objective_direction",
               "primary_objective_delta_deletion","primary_objective_delta_replacement","primary_objective_directional_mean",
               "binding_contexts","recommendation_status","off_target_status",
-              "off_target_counts","motif_flags","cryptic_splice_evidence","safeguard_status","safeguard_report","reference_tm_c","reference_delta_g_kcal_mol","thermodynamic_status","reason"]
+              "off_target_counts","motif_flags","cryptic_splice_evidence","safeguard_status","safeguard_report","reference_tm_c","reference_delta_g_kcal_mol","thermodynamic_status","reason","panel_role","tradeoff","recommendation_review"]
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle,fieldnames=fields,extrasaction="ignore")
         writer.writeheader()
@@ -351,7 +357,8 @@ def write_assessment_artifacts(pool, selected, goal, directory):
             writer.writerow({k:json.dumps(v) if isinstance(v,(list,dict)) else v for k,v in record.items()})
     from .report_assessment import render_shortlist_markdown
     md_path.write_text(render_shortlist_markdown(shortlist, payload['pool_molecule_count']))
-    return {"candidate_assessments_json":str(pool_path),"recommended_shortlist_json":str(shortlist_path),
+    return {**({"recommendation_review_json": review["receipt_path"]} if review.get("receipt_path") else {}),
+            "candidate_assessments_json":str(pool_path),"recommended_shortlist_json":str(shortlist_path),
             "recommended_shortlist_csv":str(csv_path),"recommended_shortlist_md":str(md_path)}
 
 

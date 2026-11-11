@@ -485,11 +485,17 @@ def project_run(run_dir, *, goal=None, kind='design'):
             for index,row in enumerate(combined,1):
                 rank = None
                 for panel_rank,chosen in panel_by_sequence.get(sequence(row),[]):
-                    if physical_identity(row)==physical_identity(chosen) or (notation(row) and notation(row)==notation(chosen)):
+                    both_attested = all((item.get('molecule_specification') or {}).get('physical_molecule_sha256')
+                                        for item in (row, chosen))
+                    if physical_identity(row)==physical_identity(chosen) or (
+                            not both_attested and notation(row) and notation(row)==notation(chosen)):
                         rank = panel_rank; break
                 record = _record(row,context,context_sites,index,rank,
                                  activity=activities.get(activity_join_key(row),()))
                 if record:
+                    record['recommendation'] = (chosen.get('recommendation_review') or {}) if rank is not None else {}
+                    if record['recommendation']:
+                        record['selection_note'] = record['recommendation']['why_chosen']
                     records.append(record)
                     source = source_row(row)
                     for s in collection(source.get('splice_site_deltas')) or []:
@@ -553,6 +559,10 @@ def project_run(run_dir, *, goal=None, kind='design'):
               'objective':contexts[0]['objective'],
               'panel_label':'Recommended panel' if selected.get('records') else 'Selected panel',
               'scope':'Saved scored and assessed candidates; each binding record retains its design group.'}
+    review = selected.get('review') or generated.get('recommendation_review') or {}
+    result['recommendation_review'] = {key: review[key] for key in (
+        'status', 'summary', 'size_reason', 'reviewer', 'eligible_molecule_count',
+        'reviewed_molecule_count', 'reviewed_binding_record_count') if key in review}
     from .report_approaches import project_approaches
     result['approach_rankings'] = project_approaches(
         goal, contexts, read_record(_root_file(root, 'strategy_router_summary.json')))

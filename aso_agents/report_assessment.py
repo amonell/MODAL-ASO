@@ -75,7 +75,17 @@ def render_shortlist_markdown(shortlist, pool_molecule_count):
     if guarded:
         headers.append('Splice safeguards')
     headers += ['Off-target screen', 'Motif flags', 'Reference Tm (°C)', 'Reference ΔG (kcal/mol)']
-    lines = ['# Recommended shortlist', '',
+    review = shortlist.get('review') or {}
+    introduction = []
+    if review.get('summary'):
+        introduction += [review['summary'], '', review.get('size_reason') or '', '']
+    for record in records:
+        item = record.get('recommendation_review') or {}
+        if item:
+            introduction += [f"## {record['recommendation_order']}. {record['antisense_5to3']}", '',
+                item['why_chosen'], '', '**Tradeoff:** ' + item['tradeoff'], '',
+                '**Panel role:** ' + item['panel_role'], '']
+    lines = ['# Recommended shortlist', '', *introduction,
         f'{len(records)} distinct molecules selected; {pool_molecule_count} in the assessed eligible pool.', '',
         'This table gives the selection checks for the ASOs in panel order. Evidence gaps name the checks still missing.', '',
         'Off-targets are other sequences an ASO may also bind.' + (' Splice safeguards check whether predicted changes at protected splice sites stay within the specified limits.' if guarded else ''), '',

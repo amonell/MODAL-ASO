@@ -604,8 +604,9 @@ def write_design_panel(candidate_set, goal, output_directory):
     markdown_path = directory / "design_panel.md"
     role_selection = candidate_set.get("candidate_selection") or {}
     ordered_roles = role_selection.get("method") == "ordered_role_local_lexicographic_selection"
-    rows = list(candidate_set.get("rows") or []) if ordered_roles else ordered_rows(candidate_set.get("rows") or [])
-    if ordered_roles:
+    reviewed_order = (candidate_set.get('recommendation_review') or {}).get('status') == 'completed'
+    rows = list(candidate_set.get("rows") or []) if ordered_roles or reviewed_order else ordered_rows(candidate_set.get("rows") or [])
+    if ordered_roles or reviewed_order:
         seen, distinct = set(), []
         for row in rows:
             key = molecule_key(row)
@@ -616,7 +617,7 @@ def write_design_panel(candidate_set, goal, output_directory):
         distinct = distinct_ranked_rows(rows)
     preview = distinct if len(distinct) <= 20 else distinct[:10]
     exported = []
-    order_description = ("requested role order" if ordered_roles else "recorded rank order"
+    order_description = ("requested role order" if ordered_roles else "recommendation order" if reviewed_order else "recorded rank order"
                          if all(row.get('selection_rank') is not None for row in preview) else "panel order")
     lines = ["# Candidate panel", "", f"Selected candidate rows: {len(rows)}. Distinct molecules (antisense sequence plus chemistry): {len(distinct)}. Preview: {len(preview)} molecules in {order_description}.", "",
              "ASO sequences are written 5′→3′.", "",
@@ -647,6 +648,9 @@ def write_design_panel(candidate_set, goal, output_directory):
                         annotations.get("gapmer_preservation_assessment") or {})
         protected_references = preservation.get("protected_references") or []
         record = {"candidate": index, "antisense_5to3": row.get("synthesized_antisense_sequence"),
+                  "recommendation_reason": (row.get('recommendation_review') or {}).get('why_chosen'),
+                  "recommendation_tradeoff": (row.get('recommendation_review') or {}).get('tradeoff'),
+                  "recommendation_panel_role": (row.get('recommendation_review') or {}).get('panel_role'),
                   "program_id": row.get("program_id"), "source_modality": row.get("source_modality"),
                   "target_5to3": row.get("target_binding_sequence"), "length": row.get("length"),
                   "gc_fraction": physical_gc,

@@ -40,6 +40,9 @@ def changed_exon_spans(runtime, objective, base_label, base_entry, goal):
     strand = runtime._strand_char(base_entry.get("strand"))
     chrom = str(base_entry.get("chrom") or (base_entry.get("metadata") or {}).get("seq_region_name") or "")
     targets, seen = {}, set()
+    # Name resolution can append reference annotations. Keep the supplied parent
+    # and the product's base-reference snapshot byte-for-byte comparable.
+    naming_reference = deepcopy(base_entry)
     changes = objective.get("junction_changes")
     if not isinstance(changes, list) or not changes:
         raise ValueError("junction_product_changes_required")
@@ -52,7 +55,7 @@ def changed_exon_spans(runtime, objective, base_label, base_entry, goal):
         requested = change.get("exon_label")
         if type(requested) is not int or requested < 1:
             raise ValueError("junction_product_exon_label_required")
-        ordinal = runtime._resolve_authoritative_transcript_exon_ordinal(base_entry, requested, goal)
+        ordinal = runtime._resolve_authoritative_transcript_exon_ordinal(naming_reference, requested, goal)
         matches = [e for e in exons if e.get("index") == ordinal]
         if len(matches) != 1:
             raise ValueError("junction_product_exon_unresolved")

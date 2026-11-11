@@ -36,6 +36,8 @@ def _offline_safeguard_review(monkeypatch):
     def unavailable(*args, **kwargs):
         raise ConnectionError('No provider configured for this unit test')
     monkeypatch.setattr(safeguard_review, '_review_batch', unavailable)
+    from aso_agents import shortlist_review
+    monkeypatch.setattr(shortlist_review, '_model_call', unavailable)
 
 
 @pytest.fixture(autouse=True)

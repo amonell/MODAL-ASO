@@ -52,11 +52,17 @@ def bind_candidate_program_groups(rows, goal):
 
 def molecule_key(row):
     annotations = row.get("source_annotations") or {}
-    sequence = (row.get("synthesized_antisense_sequence") or row.get("Synthesis")
+    molecule = row.get("molecule_specification") or {}
+    sequence = (molecule.get("antisense_5to3") or row.get("synthesized_antisense_sequence") or row.get("Synthesis")
                 or row.get("chemistry_synthesis") or annotations.get("chemistry_synthesis")
                 or annotations.get("Synthesis"))
     chemistry = (row.get("IDT") or row.get("chemistry_idt") or annotations.get("IDT")
-                 or annotations.get("chemistry_idt") or row.get("chemistry_label") or row.get("chemistry"))
+                 or annotations.get("chemistry_idt") or molecule.get("ordering_notation"))
+    # Preserve existing ordering-based identities. Chemistries without supplier
+    # notation (including PMO) still have an attested physical identity.
+    if not chemistry and molecule.get("physical_molecule_sha256"):
+        chemistry = {"physical_molecule_sha256": molecule["physical_molecule_sha256"]}
+    chemistry = chemistry or row.get("chemistry_label") or row.get("chemistry")
     if not sequence:
         # Unverified sequence identity cannot justify deduplicating molecules.
         return ("unverified", json.dumps(row, sort_keys=True, default=str))

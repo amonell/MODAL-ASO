@@ -861,7 +861,7 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
     "candidate_limit": {"type": ["integer", "null"], "minimum": 1,
         "description": "Maximum distinct eligible molecules in the selected panel, not the number of rows or windows retained in a complete library."},
     "shortlist_size_preference": {"type":"string", "enum":["all_eligible"],
-        "description":"Only when the user explicitly wants every eligible molecule in the recommendation panel. Otherwise preserve an explicit count or leave it unstated for the late shortlist question."},
+        "description":"Only when the user explicitly wants every eligible molecule in the recommendation panel. Otherwise preserve an explicit count or leave it unstated for an automatically sized, evidence-reviewed shortlist."},
     "sequence_motif_rules": {"type":"array", "items":{"type":"object", "properties":{
         "rule_id":{"type":"string","minLength":1}, "motif":{"type":"string","pattern":"^[ACGTURYSWKMBDHVNacgturyswkmbdhvn]+$"},
         "action":{"type":"string","enum":["flag","exclude"]}, "reason":{"type":"string"}},
@@ -1130,7 +1130,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "artifact_refs": "User-supplied local or external artifacts that are inputs to the design.",
     "aso_overlap_requirement": "any_overlap means the ASO intersects the feature; full_containment means the ASO lies inside the feature; contains_feature means the ASO covers the entire feature and may extend beyond it.",
     "candidate_limit": "Maximum distinct eligible molecules in the final selected panel for the complete goal or one design program. A complete enumeration, annotation table, or unfiltered library has a separate reporting scope and never sets this count. Use null when no maximum applies to the selected panel; independent per-site limits retain their own field.",
-    "shortlist_size_preference": "Preserve an explicit all-eligible panel preference. Otherwise use the requested counts; if unstated, leave them unspecified for the late selection question, not an intake blocker.",
+    "shortlist_size_preference": "Preserve an explicit all-eligible panel preference. Otherwise use the requested counts; if unstated, leave them unspecified; the recommendation review chooses and explains a compact panel size.",
     "sequence_motif_rules": "Explicit user IUPAC motif flags or exclusions on synthesized antisense sequence. Published context-qualified flags are automatic; do not turn them into universal toxicity filters.",
     "thermodynamic_reference_conditions": "Optional temperature and strand concentration for the unmodified RNA/DNA reference at 1 M sodium. No validated modified-ASO parameters are implied.",
     "splice_event": "Intron retention or excision with the exact transcript reference and 1-based intron ordinal. Separate from exon inclusion/skipping; flanking splice-site effects are only mechanistic proxies.",

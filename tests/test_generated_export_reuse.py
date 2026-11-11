@@ -25,9 +25,9 @@ def run(tmp_path, monkeypatch):
             'program_id': 'neutral', 'source_modality': 'steric', 'selection_rank': index + 1})
     write_json(path, {'rows': rows})
     original, builds = pipeline._build_v2_generated_design_artifacts, []
-    def build(root):
+    def build(root, **kwargs):
         builds.append(root)
-        return original(root)
+        return original(root, **kwargs)
     monkeypatch.setattr(pipeline, '_build_v2_generated_design_artifacts', build)
     return tmp_path, context, path, rows, builds
 
@@ -78,3 +78,37 @@ def test_source_edit_and_newly_available_input_change_identity(tmp_path):
     assert first != second
     missing.write_text('new evidence')
     assert build_identity({}, [present, missing], source) != second
+
+
+def test_reviewed_membership_reaches_all_native_exports_and_reopens_offline(run, monkeypatch):
+    from aso_agents import shortlist_review
+    from aso_agents.candidate_presentation import molecule_key
+    from test_shortlist_review import model
+    root, context, source, source_rows, _ = run
+    before = source.read_bytes()
+    monkeypatch.setattr(shortlist_review, '_model_call', model)
+    paths = pipeline._emit_v2_generated_design_artifacts(str(root), review_recommendations=True)
+    read = lambda key: json.loads(Path(paths[key]).read_text())
+    generated = read('generated_aso_set_json')
+    assert generated['recommendation_review']['status'] == 'completed'
+    assessed = read('candidate_assessments_json')['rows']
+    expected = {molecule_key(row) for row in assessed[-2:]}
+    assert {molecule_key(row) for row in generated['rows']} == expected
+    assert all(row['recommendation_review']['why_chosen'] for row in generated['rows'])
+    shortlist = read('recommended_shortlist_json')
+    assert shortlist['review']['status'] == 'completed'
+    assert len(shortlist['records']) == 2
+    chemistry = read('chemical_identity_json')
+    assert {row['antisense_5to3'] for row in chemistry['records']} == {key[0] for key in expected}
+    import csv
+    with Path(paths['design_panel_csv']).open() as handle:
+        panel = list(csv.DictReader(handle))
+    sequences = [row['synthesized_antisense_sequence'] for row in generated['rows']]
+    assert [row['antisense_5to3'] for row in panel] == sequences
+    assert [row['antisense_5to3'] for row in shortlist['records']] == sequences
+    assert [row['antisense_5to3'] for row in chemistry['records']] == sequences
+    assert all(row['recommendation_reason'] and row['recommendation_tradeoff'] for row in panel)
+    assert source.read_bytes() == before and len(assessed) == 4
+    monkeypatch.setattr(shortlist_review, '_model_call', lambda *a: pytest.fail('Accepted review must reopen offline'))
+    again = pipeline._emit_v2_generated_design_artifacts(str(root), review_recommendations=True)
+    assert json.loads(Path(again['generated_aso_set_json']).read_text())['rows'] == generated['rows']

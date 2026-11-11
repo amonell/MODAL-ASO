@@ -4,6 +4,7 @@ import json
 from .report_attribute_ui import ATTRIBUTE_HTML, ATTRIBUTE_SCRIPT
 from .report_approaches import approach_html, context_approaches, ordered_contexts
 from .report_exon_names import exon_naming_html
+from .report_recommendations import recommendations_html
 
 
 def pack_data(data):
@@ -93,6 +94,7 @@ def explorer_html(data):
     return '<section class="'+classes+'''" id="candidate-explorer" aria-label="Explore ASO candidates">
 <div class="report-facts">'''+facts+'''</div>
 <div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['contexts'][0].get('objective') or data['objective'])+'''</p></div>
+'''+recommendations_html(data)+'''
 '''+('<h2>Targets and approaches</h2>' if data.get('kind') == 'design' else '')+'''
 <div class="report-controls"><label class="report-context">Target and approach<select data-role="context" aria-label="Target and approach">'''+options+'''</select></label>
 <p class="report-sub">Choose a target to explore its predictions and ASOs.</p></div>
@@ -224,7 +226,7 @@ function setup(root){
   let result=baseVisible().filter(r=>attributeView.matches(r));
   const multi=q('context').value==='all';
   return result.sort((a,b)=>{
-   if(multi&&a.context!==b.context)return data.contexts.findIndex(c=>c.id===a.context)-data.contexts.findIndex(c=>c.id===b.context);
+   if(multi&&sort!=='panel_rank'&&a.context!==b.context)return data.contexts.findIndex(c=>c.id===a.context)-data.contexts.findIndex(c=>c.id===b.context);
    const sortValue=r=>sort.startsWith('attribute:')?attributeView.sortValue(sort.slice(10),r):sort==='oligoai'?activityFor(r).value:sort==='off_targets'?r.off_targets[0]:r[sort];
    let x=sortValue(a),y=sortValue(b);
    if(x===null||x===undefined)return y===null||y===undefined?a.order-b.order:1;if(y===null||y===undefined)return -1;
@@ -250,6 +252,7 @@ function setup(root){
    const raw=r.predictions.length?`<dt>Deletion / replacement prediction</dt><dd>${r.predictions.map(fmt).join(' / ')}</dd>`:'';
    const checks=r.guard.details.map(g=>`<p>${esc(g.text)}${g.reason?'<br>'+esc(g.reason):''}</p>`).join('');
    const chemistry=esc(r.chemistry.detail||r.chemistry.label);
+   const recommendation=r.recommendation?.why_chosen?`<dt>Panel role</dt><dd>${esc(r.recommendation.panel_role)}</dd><dt>Tradeoff</dt><dd>${esc(r.recommendation.tradeoff)}</dd>`:'';
    const screen=r.off_targets.map(v=>finite(v)?v.toLocaleString():'—').join(' / ');
    return `<tr data-record="${esc(r.id)}" data-panel="${r.panel_rank!==null}" aria-selected="${basket.has(r.molecule)}"><td><input type="checkbox" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${basket.has(r.molecule)?'checked':''}></td><td class="report-number">${r.native_rank??'—'}</td>
    <td><span class="report-attribute-swatch" style="background:${attributeView.color(r)}" title="${esc(attributeView.describe(r))}" aria-hidden="true"></span><span class="report-sequence">${esc(r.aso)}</span>${r.panel_rank!==null?` <span class="report-badge report-badge-panel">Panel ${r.panel_rank}</span>`:''}<div class="report-sub">${esc(r.chemistry.label)}</div></td>
@@ -258,7 +261,7 @@ function setup(root){
    <td><span class="report-badge">${screen}</span><div class="report-sub">${esc(r.off_target_unit)}${r.off_target_complete?'':r.off_target_status==='unavailable'?' · search result missing':r.off_target_status==='failed'?' · search failed':' · search incomplete'}</div></td>
    <td data-activity="${esc(r.id)}">${activityCell(r)}</td>
    ${tableAttributes.map(a=>`<td class="report-attribute-column">${esc(attributeView.cell(a,r))}</td>`).join('')}
-   <td><details><summary>${['passed','review','incomplete'].includes(r.guard.status)?esc(r.guard.summary):'View ASO details'}</summary><div class="report-check-text">${checks||esc(r.guard.summary)}<dl><dt>Selection</dt><dd>${esc(r.selection_note)}</dd><dt>Chemistry</dt><dd>${chemistry}</dd>${raw}<dt>Target and approach</dt><dd>${esc(contexts.get(r.context)?.label)}</dd><dt>Saved rank</dt><dd>${r.native_rank??'Unavailable'}</dd><dt>Ordering notation</dt><dd><code>${esc(r.chemistry.notation||'Unavailable')}</code></dd></dl></div></details></td></tr>`;
+   <td><details><summary>${['passed','review','incomplete'].includes(r.guard.status)?esc(r.guard.summary):'View ASO details'}</summary><div class="report-check-text">${checks||esc(r.guard.summary)}<dl><dt>Selection</dt><dd>${esc(r.selection_note)}</dd>${recommendation}<dt>Chemistry</dt><dd>${chemistry}</dd>${raw}<dt>Target and approach</dt><dd>${esc(contexts.get(r.context)?.label)}</dd><dt>Saved rank</dt><dd>${r.native_rank??'Unavailable'}</dd><dt>Ordering notation</dt><dd><code>${esc(r.chemistry.notation||'Unavailable')}</code></dd></dl></div></details></td></tr>`;
   }).join('')||`<tr><td colspan="${9+tableAttributes.length}" class="report-empty">No ASOs match these filters.</td></tr>`;
   const molecules=new Set(filtered.map(r=>r.molecule)).size;
   q('count').textContent=`${total.toLocaleString()} of ${scoped.length.toLocaleString()} results · ${molecules.toLocaleString()} ASOs.`;
@@ -379,19 +382,22 @@ function setup(root){
  q('map').addEventListener('pointermove',event=>{const hit=mapHit(event),r=hit&&byId.get(hit.id);q('map').style.cursor=r?'pointer':'default';q('map-tip').textContent=r?`${r.name} · ${r.aso} · ${r.location} · ${attributeView.describe(r)}`:'Select an ASO in the map or table to add it to your basket.';});
  root.addEventListener('change',event=>{if(event.target.dataset.pick)toggle(event.target.dataset.pick);});
  root.addEventListener('click',event=>{
+  const recommendation=event.target.closest('[data-recommendation-pick]');
+  if(recommendation){const r=byId.get(recommendation.dataset.recommendationPick);if(r){basket.set(r.molecule,r);save();renderBasket();renderTable();}return;}
   const approach=event.target.closest('[data-approach-select]');
   if(approach){q('context').value=approach.dataset.approachSelect;contextChanged();q('context').focus({preventScroll:true});q('context').scrollIntoView({block:'nearest'});return;}
   const remove=event.target.closest('[data-remove]');if(remove){basket.delete(remove.dataset.remove);save();renderBasket();renderTable();return;}
   const th=event.target.closest('th[data-sort]');if(th){const next=th.dataset.sort;ascending=next===sort?!ascending:['order','native_rank','start','aso','off_targets'].includes(next);sort=next;page=0;renderTable();return;}
   const button=event.target.closest('[data-action]');if(!button||button.disabled)return;
   const what=button.dataset.action;
+  if(what==='show-recommendations'){reset();if(data.contexts.length>1){q('context').value='all';contextChanged();}q('panel-only').checked=true;sort='panel_rank';ascending=true;renderTable();q('candidate-table').scrollIntoView({block:'start'});return;}
   if(what==='previous'||what==='next'){page+=what==='next'?1:-1;renderTable();return;}
   if(what==='map-previous'||what==='map-next'){mapPage+=what==='map-next'?1:-1;scheduleMap();return;}
   if(what==='reset'){reset();return;}
   if(what==='clear')basket.clear();
-  if(what==='add-panel')rows.filter(r=>r.panel_rank!==null).forEach(r=>basket.set(r.molecule,r));
+  if(what==='add-panel'||what==='add-recommendations')rows.filter(r=>r.panel_rank!==null).sort((a,b)=>a.panel_rank-b.panel_rank).forEach(r=>basket.set(r.molecule,r));
   if(what==='add-top')filtered.slice(0,Math.max(1,Number(q('top-count').value)||10)).forEach(r=>basket.set(r.molecule,r));
-  if(['clear','add-panel','add-top'].includes(what)){save();renderBasket();renderTable();return;}
+  if(['clear','add-panel','add-recommendations','add-top'].includes(what)){save();renderBasket();renderTable();return;}
   const selected=[...basket.values()];
   if(what==='order'){
    const values=[['Name','Sequence','Scale','Purification'],...selected.map((r,i)=>['ASO_'+(i+1)+' '+r.name,r.chemistry.notation,q('scale').value,q('purification').value])];
@@ -399,10 +405,11 @@ function setup(root){
   }else if(what==='fasta')download('ASO_selection.fasta',selected.map((r,i)=>`>ASO_${i+1} ${r.name.replaceAll('\n',' ').replaceAll('\r',' ')}\n${r.aso}`).join('\n')+'\n');
   else if(what==='csv'||what==='filtered-csv'){
    const activityFields=['value','transcript_id','species','context_basis','location','dosage_nm','transfection_method','dose_basis','method_basis','unmodeled_conditions','unresolved_conditions','status','reason','model_sha256','source_revision','input_id'];
-   const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_mismatch_budget','off_target_unit','off_target_status','splice_checks','panel_order','selection_note',...activityFields.map(k=>'oligoai_'+(k==='value'?'predicted_rna_reduction_percent':k))];
+   const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_mismatch_budget','off_target_unit','off_target_status','splice_checks','panel_order','selection_note','panel_role','recommendation_tradeoff',...activityFields.map(k=>'oligoai_'+(k==='value'?'predicted_rna_reduction_percent':k))];
    const attributes=attributeView.exportAttributes();columns.push(...attributes.map(a=>'Attribute: '+a.label));
-   const values=(what==='filtered-csv'?filtered:rows.filter(r=>basket.has(r.molecule))).flatMap(r=>{
-    const base=[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_budget,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note];
+   const basketOrder=new Map([...basket.keys()].map((key,index)=>[key,index]));
+   const values=(what==='filtered-csv'?filtered:rows.filter(r=>basket.has(r.molecule)).sort((a,b)=>basketOrder.get(a.molecule)-basketOrder.get(b.molecule))).flatMap(r=>{
+    const base=[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_budget,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note,r.recommendation?.panel_role,r.recommendation?.tradeoff];
     const activity=what==='filtered-csv'?activityFor(r).entries:(r.oligoai||[]);
     return (activity.length?activity:[{}]).map(a=>[...base,...activityFields.map(k=>Array.isArray(a[k])?a[k].join('; '):a[k]??''),...attributes.map(a=>attributeView.exportValue(a,r))]);
    });
