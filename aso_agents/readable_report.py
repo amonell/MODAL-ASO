@@ -767,7 +767,7 @@ def readable_markdown_html(markdown, report_dir=None, *, include_tools=True, hea
         analysis = lead + ''.join(item[3] for item in blocks) + ''.join(item[3] for item in evidence)
         blocks = []
         evidence = [(-1, 'reader-analysis', 'Analysis and selection evidence',
-                     _disclosure('reader-analysis', 'Analysis and selection evidence', analysis))]
+                     _disclosure('reader-analysis', 'Analysis and selection evidence', analysis))] if analysis.strip() else []
     from .report_tables import page_large_tables
     return explorer + page_large_tables(readable_prose(opening + ''.join(item[3] for item in blocks)
             + tools

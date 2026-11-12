@@ -64,8 +64,12 @@ def prediction_note(record):
     return ' '.join(parts)
 
 
-def render_shortlist_markdown(shortlist, pool_molecule_count):
-    """Render the recorded order, missing checks and chemistry-scoped flags."""
+def render_shortlist_markdown(shortlist, pool_molecule_count, *, include_rationale=True):
+    """Render the recorded order, missing checks and chemistry-scoped flags.
+
+    Reports with recommendation cards can render checks alone by setting
+    include_rationale=False. Both views retain the same evidence table.
+    """
     records = shortlist.get('records') or []
     reviews = any(prediction_note(record) for record in records)
     guarded = any(record.get('safeguard_status') != 'not_requested' for record in records)
@@ -77,16 +81,17 @@ def render_shortlist_markdown(shortlist, pool_molecule_count):
     headers += ['Off-target screen', 'Motif flags', 'Reference Tm (°C)', 'Reference ΔG (kcal/mol)']
     review = shortlist.get('review') or {}
     introduction = []
-    if review.get('summary'):
+    if include_rationale and review.get('summary'):
         introduction += [review['summary'], '', review.get('size_reason') or '', '']
     for record in records:
         item = record.get('recommendation_review') or {}
-        if item:
+        if include_rationale and item:
             introduction += [f"## {record['recommendation_order']}. {record['antisense_5to3']}", '',
                 item['why_chosen'], '', '**Tradeoff:** ' + item['tradeoff'], '',
                 '**Panel role:** ' + item['panel_role'], '']
-    lines = ['# Recommended shortlist', '', *introduction,
-        f'{len(records)} distinct molecules selected; {pool_molecule_count} in the assessed eligible pool.', '',
+    lines = ['# Recommended shortlist' if include_rationale else '## Selection checks', '', *introduction,
+        (f'{len(records)} distinct molecules selected; {pool_molecule_count} in the assessed eligible pool.'
+         if include_rationale else f'Checks for {len(records)} recommended ASO{"s" if len(records) != 1 else ""}.'), '',
         'This table gives the selection checks for the ASOs in panel order. Evidence gaps name the checks still missing.', '',
         'Off-targets are other sequences an ASO may also bind.' + (' Splice safeguards check whether predicted changes at protected splice sites stay within the specified limits.' if guarded else ''), '',
         'Motif flags identify short sequence patterns. Each flag names its study context; its relevance depends on the ASO chemistry.', '',
@@ -111,8 +116,9 @@ def render_shortlist_markdown(shortlist, pool_molecule_count):
         values += [screens.get(record.get('off_target_status'), record.get('off_target_status')), motif_notes(record),
                    record.get('reference_tm_c'), record.get('reference_delta_g_kcal_mol')]
         lines.append('| ' + ' | '.join(cell(value) for value in values) + ' |')
-    lines.extend(['', 'Tm (melting temperature) and ΔG (binding free energy) describe a perfectly matched, unmodified RNA/DNA duplex at 1 M sodium. These values provide a common sequence reference. The modified ASO’s affinity requires chemistry-specific measurements.', '',
-                  'Selection applies the requested filters, then the design ranking, comparable off-target checks and relevant sequence motifs. Requested panel roles take priority. Full CSV/JSON records include the exact statuses, reference conditions and any predicted changes at unannotated splice sites.'])
+    lines.extend(['', 'Tm (melting temperature) and ΔG (binding free energy) describe a perfectly matched, unmodified RNA/DNA duplex at 1 M sodium. These values provide a common sequence reference. The modified ASO’s affinity requires chemistry-specific measurements.'])
+    if include_rationale:
+        lines.extend(['', 'Selection applies the requested filters, then the design ranking, comparable off-target checks and relevant sequence motifs. Requested panel roles take priority. Full CSV/JSON records include the exact statuses, reference conditions and any predicted changes at unannotated splice sites.'])
     if shortlist.get('status') == 'awaiting_size_preference':
         lines.extend(['', 'Choose a shortlist size to complete selection. The full assessed pool is available.'])
     elif shortlist.get('minimum_count_shortfall'):

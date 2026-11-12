@@ -117,6 +117,11 @@ measurements, recommendation reasoning and downloads retain their recorded value
 
 ## Reading levels
 
+The **Analysis and selection evidence** disclosure appears when it has source
+content. Candidate-only views omit that empty disclosure. Report previews can
+use the saved shortlist's structured selection checks for its detailed body,
+while keeping recommendation rationale on the existing ASO cards.
+
 The opening view contains the result, checked counts and known limitations.
 Candidate counts describe their source table. Failed predictions, incomplete
 off-target searches and genuinely missing requested files appear before the

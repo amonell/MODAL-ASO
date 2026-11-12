@@ -55,6 +55,7 @@ class RecommendationBrowserTest(unittest.TestCase):
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(source.as_uri())
+            self.assertEqual(page.locator('#reader-analysis').count(), 0)
             first = page.locator('[data-recommendation-pick]').first
             first.click()
             self.assertEqual(first.inner_text(), 'Remove ASO 1 from basket')

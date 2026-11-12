@@ -43,6 +43,25 @@ def test_missing_assessment_is_distinct_from_an_explicit_empty_gap_list():
     assert motif_notes({'motif_flags': []}) == 'None flagged'
 
 
+def test_selection_checks_keep_evidence_without_repeating_recommendation_prose():
+    source = {'review': {'summary': 'The panel samples several locations.'},
+              'records': [{**record(), 'recommendation_review': {
+                  'why_chosen': 'Reason already shown on the recommendation card.',
+                  'tradeoff': 'Saved tradeoff.', 'panel_role': 'Saved role.'}}]}
+    before = deepcopy(source)
+    full = render_shortlist_markdown(source, 103)
+    checks = render_shortlist_markdown(source, 103, include_rationale=False)
+    assert checks.startswith('## Selection checks\n')
+    assert 'Checks for 1 recommended ASO.' in checks
+    assert 'Reason already shown' in full and 'Reason already shown' not in checks
+    assert 'The panel samples' not in checks
+    assert [line for line in checks.splitlines() if line.startswith('|')] == [
+        line for line in full.splitlines() if line.startswith('|')]
+    assert 'prediction of how exposed the target RNA site is' in checks
+    assert '1 M sodium' in checks
+    assert source == before
+
+
 def test_prediction_review_uses_recorded_failure_and_keeps_other_predictions_distinct():
     source = record()
     source['assessment']['native_prediction'] = {'directional_status': 'opposing_predictions'}
