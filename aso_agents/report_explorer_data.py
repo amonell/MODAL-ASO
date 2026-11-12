@@ -629,7 +629,9 @@ def project_analysis(report_dir):
     layout. They are never coerced into an ASO design or ordering contract.
     """
     root = Path(report_dir).resolve()
-    paths = [root/'provided_aso_evaluation.json']
+    # Final responses retain the complete computed records. The model-facing
+    # evidence summary can omit sequence roles, chemistry and binding geometry.
+    paths = [_root_file(root, 'existing_aso_evaluation.json') or root/'provided_aso_evaluation.json']
     if not paths[0].is_file():
         paths = [root/'evaluation_evidence.json']
     if not paths[0].is_file():
@@ -638,7 +640,7 @@ def project_analysis(report_dir):
     if len(present)!=1:
         return None
     source = read_record(present[0])
-    summary = source.get('response_evaluation_summary') or source.get('evaluation_summary') or source
+    summary = source.get('evaluation_summary') or source.get('response_evaluation_summary') or source
     context = summary.get('context_summary') or {}
     gene = context.get('gene_symbol')
     result = project_records(summary.get('provided_asos') or [], title=f'{gene} evaluation' if gene else 'Supplied ASOs',

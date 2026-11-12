@@ -214,8 +214,8 @@ def write_evaluation_evidence(directory, response):
                      "Assessment: " + str(row.get("name") or row.get("input_row_id")), row) for row in record["evaluation_assessments"])
     from .readable_report import READER_CSS, READER_SCRIPT
     html = ['<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Evaluation evidence</title>',
-            '<style>' + VALUE_CSS + READER_CSS + '</style></head><body><div class="reader-page">',
-            '<header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>Evaluation evidence</h1><p class="reader-subtitle">Recorded predictions, sequence matches and reference evidence.</p></header><main class="reader-content report-content">']
+            '<style>' + VALUE_CSS + READER_CSS + '</style></head><body><a class="reader-skip" href="#reader-main">Skip to evidence</a><div class="reader-page">',
+            '<header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>Evaluation evidence</h1><p class="reader-subtitle">Recorded predictions, sequence matches and reference evidence.</p></header><main id="reader-main" tabindex="-1" class="reader-content report-content">']
     for anchor, title, value in sections:
         html.append(f'<section id="{escape(str(anchor), quote=True)}"><h2>{escape(field_label(title))}</h2><details><summary>Show details</summary>{value_html(value, anchor)}</details></section>')
     html.append('</main></div>' + READER_SCRIPT + '</body></html>')

@@ -215,3 +215,16 @@ Final delivery refreshes download links after the requested files exist and
 updates the delivery hashes. Aliases of the same report are omitted from its
 own download list to prevent recursive bundles. Real missing files stay visible.
 Frozen scientific outputs remain intact; use a separate directory for previews.
+
+Question and evaluation reports use the same final delivery refresh. Evaluation
+requests can name an HTML destination alongside their evidence exports. Their
+interactive ASO tables read the complete saved evaluation records, retaining
+declared sequence roles, chemistry and recorded binding coordinates. Records
+without coordinates remain in the table; question reports and empty evaluations
+show their written findings without an empty ASO explorer.
+
+Fresh-run tests exercise task completion, report writing and final delivery with
+fixture model responses and computed observations. They cover questions,
+evaluations with large tables, missing coordinates and no returned rows, design
+reports and combined reports. Relocation checks verify that delivered HTML keeps
+its contents and combined exports keep their child reports.

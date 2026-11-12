@@ -33062,6 +33062,10 @@ def _write_requested_evaluation_exports(
     rows = _provided_aso_export_rows(response_payload)
     for index, path in enumerate(paths, 1):
         suffix = path.suffix.lower()
+        if suffix in {".html", ".htm"}:
+            # The canonical HTML is written after these evidence exports.
+            # Final delivery copies it with its bounded, portable downloads.
+            continue
         if suffix not in {".csv", ".tsv", ".md", ".markdown", ".json", ".xlsx"}:
             raise ValueError(f"unsupported_evaluation_export: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)

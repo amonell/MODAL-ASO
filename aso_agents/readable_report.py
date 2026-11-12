@@ -843,7 +843,19 @@ def concise_title(title, *, fallback='ASO analysis'):
     return HEADING_LABELS.get(value.casefold(), value)
 
 
+def _document_metadata(title, *, entries=None):
+    """Small rendering receipt; the sibling Markdown retains the source text."""
+    import json
+    data = {'version': 1, 'kind': 'basic' if entries is None else 'composite', 'title': str(title)}
+    if entries is not None:
+        data['entries'] = [{key: entry[key] for key in ('tab_label', 'title', 'html_href', 'md_href') if key in entry}
+                           for entry in entries]
+    encoded = json.dumps(data, ensure_ascii=False).replace('<', '\\u003c').replace('&', '\\u0026')
+    return '<script id="reader-document-data" type="application/json">' + encoded + '</script>'
+
+
 def basic_document(title, markdown, report_dir=None, *, candidate_data=None):
+    metadata = _document_metadata(title) if report_dir is not None and candidate_data is None else ''
     display_title = concise_title(title)
     if display_title == 'ASO analysis':
         sections = _sections(markdown)
@@ -867,7 +879,7 @@ def basic_document(title, markdown, report_dir=None, *, candidate_data=None):
             '<a class="reader-skip" href="#reader-main">Skip to results</a><div class="reader-page"><header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>'
             + html.escape(display_title) + '</h1>'
             + ('<details><summary>Full report title</summary><p>' + html.escape(str(title)) + '</p></details>' if display_title != title and len(str(title or '')) > 100 else '')
-            + '</header><main class="reader-content report-content" id="reader-main" tabindex="-1">' + body + '</main></div>' + READER_SCRIPT + '</body></html>')
+            + '</header><main class="reader-content report-content" id="reader-main" tabindex="-1">' + body + '</main></div>' + metadata + READER_SCRIPT + '</body></html>')
 
 
 def design_downloads(payload):
@@ -1016,4 +1028,4 @@ def composite_document(title, markdown, entries, report_dir):
             + html.escape(display_title) + '</h1><p class="reader-subtitle">Read the combined results below, or open a report for an individual target.</p>'
             + ('<details><summary>Your request</summary><p>' + html.escape(str(title)) + '</p></details>' if display_title != title else '')
             + '</header><main id="reader-main" tabindex="-1">' + ''.join(controls) + '<nav class="tab-list" aria-label="Reports by target">' + ''.join(labels)
-            + '</nav>' + ''.join(panels) + '</main></div>' + READER_SCRIPT + '</body></html>')
+            + '</nav>' + ''.join(panels) + '</main></div>' + _document_metadata(title, entries=entries) + READER_SCRIPT + '</body></html>')
