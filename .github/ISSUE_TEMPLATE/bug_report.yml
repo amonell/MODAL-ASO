@@ -1,6 +1,14 @@
 name: Bug report
 description: Report an installation or runtime issue.
+labels: [bug]
 body:
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: Include the smallest request or command that shows the problem and the steps to run it.
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -18,3 +26,7 @@ body:
     id: version
     attributes:
       label: Version or commit
+      description: Run modal-aso --version. For a development checkout, also include git rev-parse --short HEAD.
+      placeholder: MODAL-ASO 1.0.0
+    validations:
+      required: true

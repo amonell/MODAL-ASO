@@ -10,6 +10,31 @@ permissions:
   contents: read
 
 jobs:
+  package:
+    name: Release checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.13.1
+          enable-cache: false
+      - run: uv python install 3.11
+      - run: uv run --no-project --python 3.11 python ci/check_version.py
+      - run: uv lock --check
+      - run: uv build
+      - run: uv run --no-project --python 3.11 python ci/check_release_files.py dist
+      - name: Check version outside checkout
+        shell: bash
+        run: |
+          wheel_env="$RUNNER_TEMP/version-env"
+          uv venv --python 3.11 "$wheel_env"
+          uv pip install --python "$wheel_env/bin/python" --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$wheel_env/bin/modal-aso" --version
+
   native:
     name: ${{ matrix.os }} / Python 3.11
     strategy:
@@ -73,7 +98,9 @@ jobs:
           wheel_env="$RUNNER_TEMP/wheel-env"
           uv venv --python 3.11 --managed-python "$wheel_env"
           uv export --frozen --extra splice --no-dev --no-emit-project --output-file "$RUNNER_TEMP/constraints.txt"
-          uv pip install --python "$wheel_env/bin/python" --constraint "$RUNNER_TEMP/constraints.txt" "./dist/modal_aso-0.1.0-py3-none-any.whl[splice]"
+          wheel_files=(dist/*.whl)
+          test "${#wheel_files[@]}" -eq 1
+          uv pip install --python "$wheel_env/bin/python" --constraint "$RUNNER_TEMP/constraints.txt" "${wheel_files[0]}[splice]"
           cd "$RUNNER_TEMP"
           "$wheel_env/bin/modal-aso" --help
           "$wheel_env/bin/python" "$GITHUB_WORKSPACE/ci/check_installed_package.py" --source-root "$GITHUB_WORKSPACE"
@@ -104,3 +131,22 @@ jobs:
           $linuxSource = (wsl --distribution Ubuntu-24.04 --user root --exec wslpath -a '${{ github.workspace }}').Trim()
           wsl --distribution Ubuntu-24.04 --user root --cd "$linuxSource" --exec bash ci/wsl-install-smoke.sh
           if ($LASTEXITCODE -ne 0) { throw "WSL installation check failed" }
+
+  required:
+    name: Required checks
+    if: always()
+    needs: [package, native, wsl]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all checks to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failures = {name: job['result'] for name, job in results.items() if job['result'] != 'success'}
+          if failures:
+              raise SystemExit(f'Required checks failed: {failures}')
+          print('All release, regression and platform checks passed.')
+          PY
