@@ -37,6 +37,10 @@ assert len(sdists) <= 1, sdists
 if sdists:
     assert sdists[0].name == f"modal_aso-{version}.tar.gz", sdists[0].name
     with tarfile.open(sdists[0]) as archive:
+        prefix = f"modal_aso-{version}/"
+        required_source = ["uv.lock", "CITATION.cff", "CHANGELOG.md", "CONTRIBUTING.md", "ci/check_version.py"]
+        names = set(archive.getnames())
+        assert all(prefix + name in names for name in required_source), required_source
         metadata = BytesParser().parsebytes(archive.extractfile(f"modal_aso-{version}/PKG-INFO").read())
         assert metadata["Name"] == "modal-aso" and metadata["Version"] == version
     print("Source distribution version verified:", sdists[0].name)
