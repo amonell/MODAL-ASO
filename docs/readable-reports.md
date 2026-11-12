@@ -99,6 +99,22 @@ analysis tab. Included downloads and other file locations share one disclosure.
 Missing files are explicitly labelled unavailable.
 
 The view works without external fonts or services. JavaScript adds table-column controls and expand-all; with JavaScript disabled, all table columns are visible and native HTML details controls still work. Printing expands details and restores the screen state afterward. Existing frozen reports should be previewed into a separate directory, never regenerated in place.
+
+## Selection and interaction
+
+Recommendation filters describe the saved recommendation panel. **In my basket**
+shows the reader's chosen molecules, including choices outside that panel.
+Recommendation buttons show whether each ASO is in the basket and allow removal.
+Clearing the basket offers an immediate undo that restores the selection order;
+another selection change ends that undo opportunity. Empty filter results offer
+a clear-filters action. Exploring recommendations moves keyboard focus to the
+table, and changing a checkbox preserves focus when its row remains visible.
+
+The UX review uses the [Vercel Web Interface Guidelines](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines)
+for interaction feedback, keyboard access and recovery. Apply these principles to
+the shared renderer and verify real desktop and mobile reports. Scientific
+measurements, recommendation reasoning and downloads retain their recorded values.
+
 ## Reading levels
 
 The opening view contains the result, checked counts and known limitations.

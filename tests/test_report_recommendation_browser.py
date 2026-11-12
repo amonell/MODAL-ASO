@@ -36,6 +36,95 @@ def recommendation_data(count=12):
 
 @unittest.skipUnless(importlib.util.find_spec('playwright'), 'Optional Playwright browser checks')
 class RecommendationBrowserTest(unittest.TestCase):
+    def test_selection_feedback_basket_filter_undo_and_keyboard(self):
+        from playwright.sync_api import sync_playwright
+        executable = os.environ.get('CHROME_PATH') or shutil.which('google-chrome') or shutil.which('chromium')
+        if not executable:
+            self.skipTest('Local Chrome/Chromium is required')
+        data = recommendation_data(6)
+        for row in data['records'][4:]:
+            row['panel_rank'] = None
+            row['recommendation'] = {}
+        document = basic_document('Selection UX checks', '', candidate_data=data)
+        with tempfile.TemporaryDirectory(prefix='aso-selection-ux-') as temporary, sync_playwright() as p:
+            source = Path(temporary)/'report.html'
+            source.write_text(document)
+            browser = p.chromium.launch(executable_path=executable, headless=True,
+                args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(accept_downloads=True, viewport={'width': 1280, 'height': 900})
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(source.as_uri())
+            first = page.locator('[data-recommendation-pick]').first
+            first.click()
+            self.assertEqual(first.inner_text(), 'Remove ASO 1 from basket')
+            self.assertEqual(first.get_attribute('data-selected'), 'true')
+            first.click()
+            self.assertEqual(first.inner_text(), 'Add ASO 1 to basket')
+            self.assertEqual(page.locator('[data-role=basket-count]').inner_text(), 'No ASOs selected')
+
+            # Rerendering the table must keep keyboard users at their checkbox.
+            checkbox = page.locator('[data-pick]').first
+            checkbox.focus()
+            checkbox.press('Space')
+            self.assertTrue(checkbox.is_checked())
+            self.assertTrue(checkbox.evaluate('(el)=>el===document.activeElement'))
+            checkbox.press('Space')
+            self.assertFalse(checkbox.is_checked())
+            self.assertTrue(checkbox.evaluate('(el)=>el===document.activeElement'))
+
+            page.locator('[data-action=add-recommendations]').click()
+            self.assertTrue(page.locator('[data-action=add-panel]').is_disabled())
+            self.assertEqual(page.locator('[data-action=add-panel]').inner_text(), 'Recommended ASOs added')
+            page.get_by_label('In my basket', exact=True).check()
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 4)
+            checkbox = page.locator('[data-pick]').first
+            checkbox.focus()
+            checkbox.press('Space')
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 3)
+            self.assertTrue(page.get_by_role('region', name='ASO candidate table', exact=True).evaluate('(el)=>el===document.activeElement'))
+            first.click()
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 4)
+
+            page.locator('[data-action=clear]').click()
+            undo = page.locator('[data-action=undo-clear]')
+            self.assertTrue(undo.is_visible())
+            self.assertTrue(undo.evaluate('(el)=>el===document.activeElement'))
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 0)
+            page.locator('[data-action=empty-reset]').click()
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 6)
+            self.assertTrue(page.locator('[data-role=search]').evaluate('(el)=>el===document.activeElement'))
+            undo.click()
+            self.assertEqual(page.locator('[data-role=basket-count]').inner_text(), '4 ASOs selected')
+            self.assertFalse(undo.is_visible())
+
+            # The basket can include ASOs outside the recommended panel.
+            extra = data['records'][4]
+            page.locator('[data-pick="'+extra['id']+'"]').check()
+            self.assertEqual(page.locator('[data-role=basket-count]').inner_text(), '5 ASOs selected')
+            page.get_by_label('Recommended ASOs only', exact=True).check()
+            page.get_by_label('In my basket', exact=True).check()
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 4)
+            first.click()
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 3)
+            page.reload()
+            self.assertEqual(page.locator('[data-role=basket-count]').inner_text(), '4 ASOs selected')
+            self.assertEqual(first.inner_text(), 'Add ASO 1 to basket')
+            with page.expect_download() as downloading:
+                page.locator('[data-action=csv]').click()
+            saved = Path(temporary)/'selected.csv'
+            downloading.value.save_as(saved)
+            exported = list(csv.DictReader(io.StringIO(saved.read_text())))
+            self.assertEqual([row['antisense_5to3'] for row in exported],
+                             [row['aso'] for row in data['records'][1:5]])
+            page.locator('[data-action=show-recommendations]').press('Enter')
+            self.assertTrue(page.get_by_role('region', name='ASO candidate table', exact=True).evaluate('(el)=>el===document.activeElement'))
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 4)
+            page.set_viewport_size({'width': 390, 'height': 844})
+            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+            self.assertEqual(errors, [])
+            browser.close()
+
     def test_shortlist_disclosure_basket_export_and_mobile(self):
         from playwright.sync_api import sync_playwright
         executable = os.environ.get('CHROME_PATH') or shutil.which('google-chrome') or shutil.which('chromium')
