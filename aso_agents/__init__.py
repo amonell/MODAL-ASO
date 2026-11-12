@@ -3,7 +3,7 @@ from importlib import import_module
 import sys
 from types import ModuleType
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 _EXPORTS = {'goal_intake_agent': 'goal_intake_agent', 'extract_transcript_lock': 'goal_intake_agent', 'transcript_chooser_agent': 'transcript_chooser_agent', 'chemistry_agent': 'chemistry_agent', 'markdown_agent': 'markdown_agent', 'report_explainer_agent': 'report_explainer_agent', 'splicing_agent': 'splicing_agent', 'generate_splice_strategy_report': 'splice_strategy_agent', 'resolve_ambiguous_safeguards': 'splice_strategy_agent', 'resolve_mixed_junction_directions': 'splice_strategy_agent', 'splice_strategy_router_agent': 'splice_strategy_router_agent', 'splice_strategy_router_planner_agent': 'splice_strategy_router_agent', 'execute_router_plan': 'splice_strategy_router_agent', 'off_target_expression_agent': 'off_target_expression_agent'}
 __all__ = list(_EXPORTS)

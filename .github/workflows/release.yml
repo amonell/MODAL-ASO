@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Prepare release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.13.1
+          enable-cache: false
+      - run: uv python install 3.11
+      - name: Validate release identity
+        run: |
+          test "$GITHUB_REF_TYPE" = tag
+          git merge-base --is-ancestor HEAD origin/main
+          uv run --no-project --python 3.11 python ci/check_version.py --tag "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
+      - name: Require successful main checks for this commit
+        run: |
+          commit=$(git rev-parse HEAD)
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test.yml --branch main --event push --commit "$commit" --limit 1 --json status,conclusion --jq '.[0] | .status == "completed" and .conclusion == "success"')
+          test "$passed" = true
+      - run: uv lock --check
+      - run: uv build
+      - run: uv run --no-project --python 3.11 python ci/check_release_files.py dist
+      - name: Record download checksums
+        working-directory: dist
+        run: sha256sum *.whl *.tar.gz > SHA256SUMS
+      - name: Create draft release with all assets
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz dist/SHA256SUMS --verify-tag --title "MODAL-ASO ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/release-notes.md" --draft

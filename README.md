@@ -8,6 +8,8 @@ Design and evaluate antisense oligonucleotides from a natural-language request.
 
 [Quick start](#quick-start) · [Installation](docs/installation.md) · [Examples](docs/examples.md) · [Outputs](docs/outputs.md)
 
+[Release 1.0.0](https://github.com/amonell/MODAL-ASO/releases/tag/v1.0.0) · [Changes](CHANGELOG.md) · [Report an issue](https://github.com/amonell/MODAL-ASO/issues/new/choose)
+
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-164A79?style=flat-square)
 ![License GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-0FA3BE?style=flat-square)
 
@@ -35,10 +37,11 @@ MODAL-ASO connects transcript selection, candidate design, chemistry, off-target
 Use **Linux**, **Windows with WSL2**, or **Apple silicon macOS**. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the [platform prerequisites](docs/installation.md#prerequisites).
 
 ```bash
-git clone https://github.com/amonell/MODAL-ASO.git
+git clone --branch v1.0.0 https://github.com/amonell/MODAL-ASO.git
 cd MODAL-ASO
 uv sync --frozen --extra splice
 source .venv/bin/activate
+modal-aso --version
 
 modal-aso setup --species human --features tools references splice
 modal-aso doctor
