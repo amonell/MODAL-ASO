@@ -1,5 +1,6 @@
 """Browser checks for recommendation reading, selection and large panels."""
 import csv
+from copy import deepcopy
 import importlib.util
 import io
 import os
@@ -36,6 +37,93 @@ def recommendation_data(count=12):
 
 @unittest.skipUnless(importlib.util.find_spec('playwright'), 'Optional Playwright browser checks')
 class RecommendationBrowserTest(unittest.TestCase):
+    def test_navigation_distinct_bulk_selection_and_focus_visibility(self):
+        from playwright.sync_api import sync_playwright
+        executable = os.environ.get('CHROME_PATH') or shutil.which('google-chrome') or shutil.which('chromium')
+        if not executable:
+            self.skipTest('Local Chrome/Chromium is required')
+        data = recommendation_data(6)
+        duplicate = deepcopy(data['records'][0])
+        duplicate['id'] += '-another-binding'
+        data['records'].insert(1, duplicate)
+        # A second chemistry remains a separate physical molecule at the same sequence.
+        other_chemistry = deepcopy(data['records'][-1])
+        other_chemistry['id'] += '-other-chemistry'
+        other_chemistry['molecule'] += '-other-chemistry'
+        other_chemistry['chemistry'] = {**other_chemistry['chemistry'], 'notation': '*'.join(other_chemistry['aso']), 'label': 'Other chemistry'}
+        other_chemistry['panel_rank'] = None
+        data['records'].append(other_chemistry)
+        document = basic_document('Navigation and bulk selection', '# Selection checks\nSaved evidence.', candidate_data=data)
+        with tempfile.TemporaryDirectory(prefix='aso-navigation-') as temporary, sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=executable, headless=True,
+                args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(accept_downloads=True, viewport={'width': 1280, 'height': 900})
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.set_content(document)
+            basket = page.get_by_role('region', name='Selected ASO basket')
+            self.assertEqual(basket.evaluate('(el)=>getComputedStyle(el).position'), 'static')
+            page.keyboard.press('Tab')
+            self.assertTrue(page.get_by_role('link', name='Skip to results').evaluate('(el)=>el===document.activeElement'))
+            page.keyboard.press('Enter')
+            page.wait_for_function('document.activeElement.id === "reader-main"')
+            nav = page.get_by_role('navigation', name='Report sections')
+            for label, selector in [('Recommendations', '[data-role=recommendations]'),
+                                    ('Binding map', '[data-role=map-section]'),
+                                    ('ASO table', 'h2[id$="-asos"]'), ('Your basket', '[data-role=basket]'),
+                                    ('Evidence', '#reader-analysis')]:
+                nav.get_by_role('link', name=label, exact=True).click()
+                page.wait_for_function('(selector)=>document.querySelector(selector)===document.activeElement', arg=selector)
+            self.assertTrue(page.locator('#reader-analysis').evaluate('(el)=>el.open'))
+            nav.get_by_role('link', name='Binding map', exact=True).click()
+            page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+            self.assertTrue(page.locator('.report-sidebar-toolbar').evaluate('''el=>
+                el.getBoundingClientRect().top>=document.querySelector('[data-role=section-nav]').getBoundingClientRect().bottom'''))
+
+            page.locator('[data-recommendation-pick]').first.click()
+            self.assertEqual(basket.evaluate('(el)=>getComputedStyle(el).position'), 'sticky')
+            basket.locator('summary').click()
+            count = page.locator('[data-role=top-count]')
+            for invalid in ('', '0', '1.5', '10001'):
+                count.fill(invalid)
+                self.assertTrue(page.locator('[data-action=add-top]').is_disabled())
+                self.assertEqual(count.get_attribute('aria-invalid'), 'true')
+                self.assertIn('whole number', page.locator('[data-role=top-count-error]').inner_text())
+            count.fill('3')
+            add = page.locator('[data-action=add-top]')
+            self.assertEqual(add.inner_text(), 'Add 3 matching ASOs')
+            add.click()
+            self.assertEqual(page.locator('[data-role=basket-count]').inner_text(), '4 ASOs selected')
+            add.click()
+            self.assertEqual(page.locator('[data-role=basket-count]').inner_text(), '7 ASOs selected')
+            self.assertTrue(add.is_disabled())
+            with page.expect_download() as downloading:
+                page.locator('[data-action=csv]').click()
+            saved = Path(temporary)/'selected.csv'
+            downloading.value.save_as(saved)
+            exported = list(csv.DictReader(io.StringIO(saved.read_text())))
+            expected = list(dict.fromkeys((r['aso'], r['chemistry']['notation']) for r in data['records']))
+            self.assertEqual(list(dict.fromkeys((r['antisense_5to3'], r['ordering_notation']) for r in exported)), expected)
+            self.assertEqual(len(exported), 8)  # Includes both recorded bindings for the first molecule.
+            basket.locator('summary').click()
+
+            for viewport in ({'width': 1280, 'height': 900}, {'width': 390, 'height': 844}, {'width': 844, 'height': 390}):
+                page.set_viewport_size(viewport)
+                field = page.locator('[data-role=search]')
+                field.focus()
+                page.evaluate('()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+                self.assertTrue(field.evaluate('''el=>{
+                    const rect=el.getBoundingClientRect(),nav=document.querySelector('[data-role=section-nav]'),basket=document.querySelector('[data-role=basket]');
+                    const top=getComputedStyle(nav).position==='sticky'?Math.max(0,nav.getBoundingClientRect().bottom):0;
+                    const bottom=getComputedStyle(basket).position==='sticky'?Math.min(innerHeight,basket.getBoundingClientRect().top):innerHeight;
+                    return rect.top>=top&&rect.bottom<=bottom;
+                }'''), viewport)
+                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), viewport['width'])
+                if viewport['height'] < 500:
+                    self.assertEqual(basket.evaluate('(el)=>getComputedStyle(el).position'), 'static')
+            self.assertEqual(errors, [])
+            browser.close()
+
     def test_selection_feedback_basket_filter_undo_and_keyboard(self):
         from playwright.sync_api import sync_playwright
         executable = os.environ.get('CHROME_PATH') or shutil.which('google-chrome') or shutil.which('chromium')
@@ -56,6 +144,7 @@ class RecommendationBrowserTest(unittest.TestCase):
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(source.as_uri())
             self.assertEqual(page.locator('#reader-analysis').count(), 0)
+            self.assertEqual(page.get_by_role('navigation', name='Report sections').get_by_role('link', name='Evidence').count(), 0)
             first = page.locator('[data-recommendation-pick]').first
             first.click()
             self.assertEqual(first.inner_text(), 'Remove ASO 1 from basket')

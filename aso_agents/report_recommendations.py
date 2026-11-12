@@ -17,7 +17,8 @@ def recommendations_html(data):
     for row in data['records']:
         if row.get('panel_rank') is not None:
             panel.setdefault(row['panel_rank'], row)
-    parts = ['<section class="report-recommendations" aria-label="ASO recommendations" data-role="recommendations">',
+    parts = ['<section class="report-recommendations" aria-label="ASO recommendations" data-role="recommendations" '
+        'id="report-' + esc(data['id']) + '-recommendations" tabindex="-1">',
         '<h2>' + title + '</h2><p>' + esc(review.get('summary')) + '</p>']
     if completed:
         count = review.get('reviewed_molecule_count', 0)

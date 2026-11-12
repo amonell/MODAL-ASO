@@ -18,6 +18,69 @@ from aso_agents.report_explorer_data import project_records
 
 @unittest.skipUnless(importlib.util.find_spec('playwright'), 'Optional Playwright browser checks')
 class AttributeBrowserTest(unittest.TestCase):
+    def test_range_edit_validation_and_filter_focus(self):
+        from playwright.sync_api import sync_playwright
+        executable = os.environ.get('CHROME_PATH') or shutil.which('google-chrome') or shutil.which('chromium')
+        if not executable:
+            self.skipTest('Local Chrome/Chromium is required')
+        data = project_records([{'name': f'ASO {i}', 'antisense_5to3': sequence,
+            'ordering_notation': sequence, 'novel_measurement': i * 10,
+            'binding_intervals_bed0_half_open': [['chr1', 100 + i * 5, 104 + i * 5]]}
+            for i, sequence in enumerate(['ACGT', 'CGTA', 'GTAC'])])
+        document = basic_document('Range editing checks', '', candidate_data=data)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=executable, headless=True,
+                args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 1280, 'height': 900})
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.set_content(document)
+            self.assertEqual(page.locator('.report-attributes [data-role=basic-filters]').count(), 1)
+            opener = page.locator('[data-attribute-action=add]')
+            opener.click()
+            self.assertEqual(page.get_by_role('dialog').get_attribute('aria-label'), 'Add an attribute filter')
+            page.keyboard.press('Escape')
+            self.assertTrue(opener.evaluate('(el)=>el===document.activeElement'))
+            opener.click()
+            page.locator('[data-role=attribute-search]').fill('Novel measurement')
+            page.locator('[data-role=attribute-search]').press('Enter')
+            card = page.get_by_role('region', name='Novel measurement filter')
+            low, high = card.get_by_label('Minimum Novel measurement'), card.get_by_label('Maximum Novel measurement')
+            download, bulk = page.locator('[data-action=filtered-csv]'), page.locator('[data-action=add-top]')
+
+            # Enter a new interval entirely above the original 0–20 range.
+            low.fill('30')
+            self.assertEqual(low.input_value(), '30')
+            self.assertEqual(low.get_attribute('aria-invalid'), 'true')
+            self.assertIn('The plot still uses 0–20.', card.locator('[data-filter-part=error]').inner_text())
+            self.assertTrue(download.is_disabled())
+            self.assertTrue(bulk.is_disabled())
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 3)
+            high.fill('40')
+            self.assertEqual([low.input_value(), high.input_value()], ['30', '40'])
+            self.assertIsNone(low.get_attribute('aria-invalid'))
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 0)
+            self.assertEqual(page.locator('[data-role=attribute-summary]').inner_text(), '0 of 3 ASOs match.')
+
+            low.fill('10')
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 2)
+            self.assertTrue(download.is_enabled())
+            self.assertEqual(bulk.inner_text(), 'Add 2 matching ASOs')
+            high.fill('')
+            self.assertTrue(download.is_disabled())
+            self.assertIn('Enter a number for both limits.', card.inner_text())
+            high.fill('15')
+            self.assertTrue(download.is_enabled())
+            self.assertEqual(page.locator('tbody tr[data-record]').count(), 1)
+            page.locator('[data-role=search]').fill('ASO 0')
+            self.assertEqual(page.locator('[data-role=attribute-summary]').inner_text(), '0 of 3 ASOs match.')
+            page.locator('[data-role=search]').fill('ASO 1')
+            self.assertEqual(page.locator('[data-role=attribute-summary]').inner_text(), '1 of 3 ASOs match.')
+            card.get_by_role('button', name='Remove Novel measurement filter').click()
+            self.assertTrue(opener.evaluate('(el)=>el===document.activeElement'))
+            self.assertEqual(errors, [])
+            browser.close()
+
     def test_color_sliders_intersection_missing_export_and_mobile(self):
         from playwright.sync_api import sync_playwright
         executable = os.environ.get('CHROME_PATH') or shutil.which('google-chrome') or shutil.which('chromium')

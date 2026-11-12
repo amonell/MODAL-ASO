@@ -795,9 +795,16 @@ addEventListener('hashchange',()=>revealReaderAnchor());revealReaderAnchor();
 // Clicking the same link again must reopen a section the reader has closed.
 document.addEventListener('click',event=>{
   const link=event.target.closest('a[href^="#"]');
-  if(!link)return;
+  if(!link||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||event.button!==0)return;
   const target=revealReaderAnchor(link.hash);
-  if(target)requestAnimationFrame(()=>target.scrollIntoView({block:'start'}));
+  if(target)requestAnimationFrame(()=>{
+    if(link.matches('.report-jump,.reader-skip'))target.focus({preventScroll:true});
+    // Align the whole desktop exploration area when its map is sticky.
+    // A sticky element's current position changes with the previous scroll.
+    const scrollTarget=target.matches('.report-binding-view')&&getComputedStyle(target).position==='sticky'
+      ?target.closest('.report-exploration-layout'):target;
+    scrollTarget.scrollIntoView({block:'start'});
+  });
 });
 document.querySelectorAll('.reader-content table').forEach(table=>{
   const columns=[...table.querySelectorAll('thead th')].map((th,index)=>th.classList.contains('reader-detail-column')?index:-1).filter(index=>index>=0);
@@ -857,10 +864,10 @@ def basic_document(title, markdown, report_dir=None, *, candidate_data=None):
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             '<title>' + html.escape(display_title) + '</title><style>' + READER_CSS + '</style></head><body>'
-            '<div class="reader-page"><header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>'
+            '<a class="reader-skip" href="#reader-main">Skip to results</a><div class="reader-page"><header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>'
             + html.escape(display_title) + '</h1>'
             + ('<details><summary>Full report title</summary><p>' + html.escape(str(title)) + '</p></details>' if display_title != title and len(str(title or '')) > 100 else '')
-            + '</header><main class="reader-content report-content">' + body + '</main></div>' + READER_SCRIPT + '</body></html>')
+            + '</header><main class="reader-content report-content" id="reader-main" tabindex="-1">' + body + '</main></div>' + READER_SCRIPT + '</body></html>')
 
 
 def design_downloads(payload):
@@ -1005,8 +1012,8 @@ def composite_document(title, markdown, entries, report_dir):
     display_title = concise_title(title, fallback='Combined ASO report')
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             + '<title>' + html.escape(display_title) + '</title><style>' + READER_CSS + style + '</style></head><body>'
-            + '<div class="reader-page"><header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>'
+            + '<a class="reader-skip" href="#reader-main">Skip to results</a><div class="reader-page"><header class="reader-header"><p class="reader-brand">MODAL-ASO</p><h1>'
             + html.escape(display_title) + '</h1><p class="reader-subtitle">Read the combined results below, or open a report for an individual target.</p>'
             + ('<details><summary>Your request</summary><p>' + html.escape(str(title)) + '</p></details>' if display_title != title else '')
-            + '</header><main>' + ''.join(controls) + '<nav class="tab-list" aria-label="Reports by target">' + ''.join(labels)
+            + '</header><main id="reader-main" tabindex="-1">' + ''.join(controls) + '<nav class="tab-list" aria-label="Reports by target">' + ''.join(labels)
             + '</nav>' + ''.join(panels) + '</main></div>' + READER_SCRIPT + '</body></html>')

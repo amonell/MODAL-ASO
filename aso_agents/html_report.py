@@ -1569,6 +1569,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
     </style>
   </head>
   <body>
+    <a class="reader-skip" href="#reader-main">Skip to results</a>
     <div class="shell">
       <header class="hero">
         <div>
@@ -1590,7 +1591,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
         </div></details>
       </nav>
 
-      <main class="stack">
+      <main class="stack" id="reader-main" tabindex="-1">
         <section class="tab-panel active panel reader-content report-content" id="results">
           <div id="quick-overview-alerts">__READER_ALERTS__</div>
           __RESULTS_SECTION__

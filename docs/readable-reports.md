@@ -110,6 +110,26 @@ another selection change ends that undo opportunity. Empty filter results offer
 a clear-filters action. Exploring recommendations moves keyboard focus to the
 table, and changing a checkbox preserves focus when its row remains visible.
 
+Section links move to recommendations, the binding map, the ASO table, the basket
+and available evidence. A keyboard skip link goes directly to the results.
+Search, panel and basket filters sit together with attribute filters beside the
+binding map. Matching counts describe distinct molecules; histograms label
+repeated binding records separately.
+
+Typing numeric limits preserves both entries, including when a new range lies
+entirely above or below the old one. An unfinished range shows an inline error
+and keeps the last valid results visible. Filtered downloads and bulk additions
+become available when the range is valid. Bulk additions follow the visible
+table order, skip molecules already selected and show the exact number to add.
+Distinct chemistries remain separate selections, and downloads retain their
+recorded binding contexts.
+
+The empty basket stays in the page flow. A selection or pending undo docks it
+for access while reading. Sticky controls leave room for keyboard focus; short
+landscape screens use normal page flow. Browser checks cover range recovery,
+duplicate binding records, distinct chemistries, downloads, section navigation,
+dialog focus, phone layouts and orientation changes.
+
 The UX review uses the [Vercel Web Interface Guidelines](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines)
 for interaction feedback, keyboard access and recovery. Apply these principles to
 the shared renderer and verify real desktop and mobile reports. Scientific
