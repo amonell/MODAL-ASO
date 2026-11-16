@@ -327,7 +327,7 @@ def _record(row, context, sites, order, panel_rank=None, *, activity=()):
 
 def _objective(program, gene):
     text = program.get('objective')
-    if isinstance(text,str) and 0<len(text.strip())<=150:
+    if isinstance(text,str) and text.strip():
         return text.strip()
     event = (program.get('splice_event') or {}).get('event_type')
     action = {'intron_retention':'Increase retention of the selected intron', 'intron_excision':'Increase removal of the selected intron'}.get(event)
@@ -343,6 +343,19 @@ def _root_file(root, name):
     from .run_layout import resolve_run_path
     path = resolve_run_path(root, name)
     return path if path.is_file() and path.resolve().is_relative_to(root) else None
+
+
+def _requested_objective(goal, root):
+    """Keep the requested scope independent of routes and retained candidates."""
+    programs = [p for p in goal.get('design_programs') or [] if isinstance(p, dict)] or [goal]
+    if not all(isinstance(p.get('objective'), str) and p['objective'].strip() for p in programs):
+        intake = read_record(_root_file(root, 'goal_intake.json'))
+        request = intake.get('request')
+        if isinstance(request, str) and request.strip():
+            from .report_presentation import display_request
+            return display_request(root, intake.get('request_envelope'), request.strip())
+    objectives = dict.fromkeys(_objective(p, goal.get('gene_symbol')) for p in programs)
+    return '\n\n'.join(objectives)
 
 
 def project_run(run_dir, *, goal=None, kind='design'):
@@ -556,7 +569,7 @@ def project_run(run_dir, *, goal=None, kind='design'):
     else:
         facts.append({'label':'Chemistry','value':f'{len(all_chemistries)} specifications','note':'The exact chemistry stays attached to each ASO'})
     result = {'version':1,'kind':report_kind,'contexts':contexts,'records':records,'facts':facts,
-              'objective':contexts[0]['objective'],
+              'objective':_requested_objective(goal, root),
               'panel_label':'Recommended panel' if selected.get('records') else 'Selected panel',
               'scope':'Saved scored and assessed candidates; each binding record retains its design group.'}
     review = selected.get('review') or generated.get('recommendation_review') or {}

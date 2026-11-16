@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep the requested biological goals visible while switching report approaches,
+  preserving complete goal text and all requested programs
+  ([#8](https://github.com/amonell/MODAL-ASO/issues/8)).
 - Print periodic elapsed-time updates during long CLI steps, model waits and
   loading, including resumed runs and redirected logs
   ([#7](https://github.com/amonell/MODAL-ASO/issues/7)).
