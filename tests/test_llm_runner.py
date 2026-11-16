@@ -95,6 +95,19 @@ def _runner_settings() -> ModelSettings:
     )
 
 
+def test_model_wait_events_surround_request_failures(monkeypatch):
+    events = []
+
+    def failed_response(*args, **kwargs):
+        assert [event["type"] for event in events] == ["model_call"]
+        raise RuntimeError("Connection failed")
+
+    monkeypatch.setattr(Runner, "_responses", failed_response)
+    with pytest.raises(RuntimeError, match="Connection failed"):
+        Runner._run_sync(Agent("test", "Answer."), input="Question", event_callback=events.append)
+    assert [event["type"] for event in events] == ["model_call", "model_result"]
+
+
 @pytest.mark.parametrize("provider", ["openai", "openrouter"])
 @pytest.mark.parametrize("terminal", ["message", "tool", "empty", "incomplete"])
 def test_final_paid_response_is_processed_without_an_extra_tool_batch(
@@ -422,10 +435,14 @@ def test_openrouter_parallel_function_calls_keep_order_and_stable_call_ids(
         },
     ]
     assert [event["type"] for event in events] == [
+        "model_call",
+        "model_result",
         "tool_call",
         "tool_result",
         "tool_call",
         "tool_result",
+        "model_call",
+        "model_result",
         "final_output",
     ]
 

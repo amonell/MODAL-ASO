@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-Changes after 1.0.0 will be recorded here through linked pull requests.
+- Print periodic elapsed-time updates during long CLI steps, model waits and
+  loading, including resumed runs and redirected logs
+  ([#7](https://github.com/amonell/MODAL-ASO/issues/7)).
+- Warn before transcript resolution when local reference files are missing,
+  including the expected paths, the effect on mapping and setup instructions
+  ([#5](https://github.com/amonell/MODAL-ASO/issues/5)).
+- Recover versioned Ensembl transcript lookups from missing-ID HTTP 400 responses
+  while requiring the returned reference to establish the requested version.
+- Read compressed local transcript annotations consistently during ID resolution.
 
 ## 1.0.0 — 2026-11-12
 

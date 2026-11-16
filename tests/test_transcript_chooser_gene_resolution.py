@@ -430,9 +430,11 @@ def test_symbol_resolution_uses_local_gtf_after_symbol_service_errors(monkeypatc
     assert calls[-1] == ("/lookup/id/ENSG00000000001", {"expand": "0"})
 
 
+@pytest.mark.parametrize("compressed", [False, True])
 def test_local_gtf_payload_supports_transcript_listing_and_structure(
     monkeypatch: Any,
     tmp_path: Any,
+    compressed: bool,
 ) -> None:
     gtf_path = tmp_path / "annotation.gtf"
     gtf_path.write_text(
@@ -446,6 +448,10 @@ chr1\tsource\tCDS\t500\t560\t.\t+\t2\tgene_id \"ENSG00000000001.1\"; transcript_
 """,
         encoding="utf-8",
     )
+    if compressed:
+        with gzip.open(gtf_path.with_suffix(".gtf.gz"), "wt", encoding="utf-8") as handle:
+            handle.write(gtf_path.read_text())
+        gtf_path.unlink()
     config = SimpleNamespace(
         gtf_path=gtf_path,
         ensembl_species="homo_sapiens",

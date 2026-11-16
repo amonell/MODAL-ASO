@@ -33,6 +33,20 @@ Static references use pinned checksums; verified mirrors support interrupted tra
 
 Other species use Ensembl reference retrieval during the relevant workflow. Splice prediction requires a compatible species model; [model configuration](llm-providers.md) describes language-model settings separately.
 
+Before isoform resolution, design runs check for the local transcript annotation
+and genome sequence for the requested species. Missing files produce a visible
+terminal warning with the expected paths and configuration instructions. The
+check is recorded in `run_state.json` under `reference_setup`.
+
+Without a local annotation, transcript lookup uses Ensembl. For a versioned
+accession, a stable-ID lookup can supply the structure only when Ensembl reports
+the requested version. Exact local annotation records take precedence. The later
+reference preflight checks the additional files needed for design and screening.
+
+If your references already exist, load their configuration in the same terminal
+as your API credentials, or set `ASO_REFERENCE_DATA_ROOT` to the reference folder.
+API credentials and reference locations are separate settings.
+
 ## Missing bases during off-target screening
 
 The human alignment reference masks some chromosome Y sequence. Gene-level off-target screening checks every annotated exon for missing bases, including exon interiors. When needed, MODAL-ASO automatically downloads the matching GENCODE transcript FASTA: v42 for human or vM35 for mouse. These checksum-pinned reference files use about 79 MiB or 54 MiB, respectively, in `MODAL_ASO_CACHE_DIR/reference_transcripts`. They stay outside report bundles. Users do not need previous run outputs or a supplied evidence cache.

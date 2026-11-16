@@ -46526,6 +46526,19 @@ def tool_resolve_isoforms_and_sites(
             details={"run_dir": run_dir},
             fatal=True,
         )
+    from .reference_setup import inspect_resolution_references
+    from .runtime_warnings import emit_warning
+    previous_reference_setup = state.get("reference_setup") or {}
+    reference_setup = {}
+    for species_key in _preflight_species_keys(structured_goal):
+        check = inspect_resolution_references(species_key)
+        reference_setup[species_key] = check
+        if check["message"] and previous_reference_setup.get(species_key) != check:
+            emit_warning(check["message"])
+            _event(state, "reference_setup", check["message"], level="warning")
+    if reference_setup != previous_reference_setup:
+        state["reference_setup"] = reference_setup
+        _save_state(state_path, state, snapshot_reason="reference_setup_checked")
     if _restore_design_objective_preseed_to_payload(
         structured_goal,
         final_payload,

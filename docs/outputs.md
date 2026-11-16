@@ -1,5 +1,12 @@
 # Reading a run
 
+During a run, the terminal announces each main step. After 30 seconds without
+a status message, it prints the active operation and its elapsed time, for example,
+`Still running: Predicting splice effects (2m 00s elapsed).` Updates also cover
+loading, model waits and resumed steps, and remain visible in redirected logs.
+The timer measures time spent waiting for the current operation to return.
+Updates pause while the run asks for your input and stop when execution ends.
+
 Start with **`report.html`**. It summarizes the request, candidate panel, calculations and limitations. Its links lead to the supporting tables and files.
 
 **Targets and approaches** shows each saved approach rank, confidence and reason beside target selection. **Compare all ranked approaches** expands the alternatives and their reasons, including approaches that retained zero candidates. Rankings stay within the design job that produced them. **Analysis rank** in the ASO table records candidate priority within an approach. Runs that evaluate one approach say so; unavailable comparison rankings remain explicit. These views use the saved analysis and make no new ranking calls.

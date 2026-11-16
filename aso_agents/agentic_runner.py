@@ -456,7 +456,10 @@ def _first_deterministic_action(planning: Dict[str, Any]) -> Optional[Dict[str, 
     return None
 
 
-def _run_planned_next_action_once(state_path: Path) -> Optional[Dict[str, Any]]:
+def _run_planned_next_action_once(
+    state_path: Path,
+    event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Optional[Dict[str, Any]]:
     state_path = _live_state_path(state_path)
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
@@ -485,6 +488,11 @@ def _run_planned_next_action_once(state_path: Path) -> Optional[Dict[str, Any]]:
         return None
     arguments.setdefault("state_path", str(state_path))
     _mark_deterministic_tool_started(state_path, tool_name)
+    Runner._emit_event(event_callback, {
+        "type": "tool_call", "agent": "deterministic_planned_action",
+        "tool": tool_name, "arguments": arguments,
+    })
+    tool_result: Any = {"status": "interrupted"}
     try:
         with _termination_signal_guard():
             tool_result = tool(**arguments)
@@ -516,6 +524,7 @@ def _run_planned_next_action_once(state_path: Path) -> Optional[Dict[str, Any]]:
             clarification_kind="goal_intake", restart_stage="intake")
     except Exception as exc:
         live_path = _live_state_path(state_path)
+        tool_result = {"status": "error", "error": str(exc)}
         _mark_deterministic_tool_failed(
             live_path,
             tool_name,
@@ -533,6 +542,11 @@ def _run_planned_next_action_once(state_path: Path) -> Optional[Dict[str, Any]]:
             "deterministic_controller": True,
             "deterministic_tool": tool_name,
         }
+    finally:
+        Runner._emit_event(event_callback, {
+            "type": "tool_result", "agent": "deterministic_planned_action",
+            "tool": tool_name, "arguments": arguments, "result": tool_result,
+        })
     if not isinstance(tool_result, dict):
         tool_result = {"status": "unknown", "raw_result": tool_result}
     tool_status = str(tool_result.get("status") or "").strip().lower()
@@ -694,7 +708,9 @@ def run_agentic_pipeline(
         controller_input["clarification_answer_summary"] = clarification_answer_summary
 
     if existing_state_path_resolved:
-        deterministic = _run_planned_next_action_once(Path(existing_state_path_resolved))
+        deterministic = _run_planned_next_action_once(
+            Path(existing_state_path_resolved), event_callback=event_callback,
+        )
         if isinstance(deterministic, dict):
             deterministic.setdefault("controller_agent", "deterministic_planned_action")
             deterministic.setdefault("controller_steps", 0)

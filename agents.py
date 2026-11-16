@@ -402,8 +402,19 @@ class Runner:
         if getattr(agent, "model_settings", None):
             agent.model_settings.apply(payload)
 
+        def request_response(request_payload: Dict[str, Any]) -> Dict[str, Any]:
+            Runner._emit_event(event_callback, {
+                "type": "model_call", "agent": agent.name, **attribution,
+            })
+            try:
+                return Runner._responses(request_payload, config=config)
+            finally:
+                Runner._emit_event(event_callback, {
+                    "type": "model_result", "agent": agent.name, **attribution,
+                })
+
         response_history: List[Dict[str, Any]] = []
-        data = Runner._responses(payload, config=config)
+        data = request_response(payload)
 
         # Each permitted continuation is already paid for. Inspect its response
         # even at the limit, without executing another tool batch or nudge.
@@ -516,7 +527,7 @@ class Runner:
                     followup_payload["tools"] = tools_spec
                 if getattr(agent, "model_settings", None):
                     agent.model_settings.apply(followup_payload)
-                data = Runner._responses(followup_payload, config=config)
+                data = request_response(followup_payload)
                 continue
 
             status = data.get("status")
@@ -584,7 +595,7 @@ class Runner:
                 followup_payload["tools"] = tools_spec
             if getattr(agent, "model_settings", None):
                 agent.model_settings.apply(followup_payload)
-            data = Runner._responses(followup_payload, config=config)
+            data = request_response(followup_payload)
             continue
 
         return _RunResult(final_output={"error": "Max tool-calling steps exceeded"}, responses=response_history[:])
