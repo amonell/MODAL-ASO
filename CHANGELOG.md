@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Print periodic elapsed-time updates during long CLI steps, model waits and
+  loading, including resumed runs and redirected logs
+  ([#7](https://github.com/amonell/MODAL-ASO/issues/7)).
 - Warn before transcript resolution when local reference files are missing,
   including the expected paths, the effect on mapping and setup instructions
   ([#5](https://github.com/amonell/MODAL-ASO/issues/5)).

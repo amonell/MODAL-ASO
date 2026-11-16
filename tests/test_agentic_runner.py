@@ -64,6 +64,7 @@ def test_unplanned_branch_tool_cannot_advance_steric_tiling_state(tmp_path: Path
 
 
 def test_existing_state_runs_planned_action_without_model_controller(tmp_path: Path, monkeypatch: Any) -> None:
+    events = []
     state_path = tmp_path / "run_state.json"
     state = {
         "version": "2",
@@ -83,6 +84,8 @@ def test_existing_state_runs_planned_action_without_model_controller(tmp_path: P
         }
 
     def fake_resolve(*, state_path: str, **_kwargs: Any) -> dict[str, Any]:
+        assert events[-1]["type"] == "tool_call"
+        assert events[-1]["tool"] == "tool_resolve_isoforms_and_sites"
         payload = json.loads(Path(state_path).read_text(encoding="utf-8"))
         payload["status"] = "resolution_ready"
         payload["phase"] = "resolution_ready"
@@ -101,11 +104,14 @@ def test_existing_state_runs_planned_action_without_model_controller(tmp_path: P
         user_request="resolve test",
         existing_state_path=str(state_path),
         max_steps=1,
+        event_callback=events.append,
     )
 
     assert result["deterministic_controller"] is True
     assert result["deterministic_tool"] == "tool_resolve_isoforms_and_sites"
     assert result["status"] == "in_progress"
+    assert [event["type"] for event in events] == ["tool_call", "tool_result"]
+    assert events[-1]["result"]["status"] == "ok"
 
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["active_runner"] is None
@@ -114,6 +120,7 @@ def test_existing_state_runs_planned_action_without_model_controller(tmp_path: P
 
 
 def test_interrupted_planned_action_marks_recoverable_state(tmp_path: Path, monkeypatch: Any) -> None:
+    events = []
     state_path = tmp_path / "run_state.json"
     state = {
         "version": "2",
@@ -140,7 +147,10 @@ def test_interrupted_planned_action_marks_recoverable_state(tmp_path: Path, monk
     monkeypatch.setattr(pipeline_tools, "tool_run_splice_eval", fake_splice_eval)
 
     with pytest.raises(KeyboardInterrupt):
-        agentic_runner._run_planned_next_action_once(state_path)
+        agentic_runner._run_planned_next_action_once(state_path, event_callback=events.append)
+
+    assert [event["type"] for event in events] == ["tool_call", "tool_result"]
+    assert events[-1]["result"]["status"] == "interrupted"
 
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
