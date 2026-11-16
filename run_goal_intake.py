@@ -557,6 +557,12 @@ class _CliNarrator:
         if not isinstance(event, dict):
             return
         event_type = str(event.get("type") or "").strip().lower()
+        if event_type == "warning":
+            self.stop_spinner(clear=True)
+            message = str(event.get("message") or "").strip()
+            if message:
+                self._write(f"Reference setup: {message}\n")
+            return
         if event_type == "tool_call":
             tool_name = str(event.get("tool") or "").strip()
             if not tool_name:
@@ -32355,6 +32361,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                 raise SystemExit("Existing agentic state is missing request text.")
 
         from aso_agents.agentic_runner import run_agentic_pipeline
+        from aso_agents.runtime_warnings import warning_handler
 
         current_state_path = existing_state_path_resolved
         pending_answers = clarification_answers
@@ -32379,7 +32386,11 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
             if pretty_cli:
                 stdout_buffer = io.StringIO()
                 stderr_buffer = io.StringIO()
-                with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                with (
+                    contextlib.redirect_stdout(stdout_buffer),
+                    contextlib.redirect_stderr(stderr_buffer),
+                    warning_handler(narrator.on_runner_event),
+                ):
                     agentic_result = run_agentic_pipeline(
                         user_request=user_request,
                         skip_router=skip_router,
