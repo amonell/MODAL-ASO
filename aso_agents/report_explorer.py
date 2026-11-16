@@ -112,7 +112,7 @@ def explorer_html(data):
     return '<section class="'+classes+'''" id="candidate-explorer" aria-label="Explore ASO candidates">
 '''+navigation+'''
 <div class="report-facts">'''+facts+'''</div>
-<div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['contexts'][0].get('objective') or data['objective'])+'''</p></div>
+<div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['objective'])+'''</p></div>
 '''+recommendations_html(data)+'''
 '''+('<h2>Targets and approaches</h2>' if data.get('kind') == 'design' else '')+'''
 <div class="report-controls"><label class="report-context">Target and approach<select data-role="context" aria-label="Target and approach">'''+options+'''</select></label>
@@ -344,7 +344,6 @@ function setup(root){
   const context=contexts.get(q('context').value),hasEffects=scopeRows().some(r=>finite(r.effect));
   root.querySelectorAll('[data-approach-context]').forEach(el=>{el.hidden=el.dataset.approachContext!==q('context').value;});
   root.querySelectorAll('[data-exon-context]').forEach(el=>{el.hidden=el.dataset.exonContext!==q('context').value;});
-  q('objective').textContent=context?.objective||data.objective;
   q('metric-note').textContent=context?.metric_note||'Each design group keeps its own target, prediction units and recorded ranking.';
   configureActivity();
   attributeView.refresh();

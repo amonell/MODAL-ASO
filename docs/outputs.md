@@ -9,6 +9,11 @@ Updates pause while the run asks for your input and stop when execution ends.
 
 Start with **`report.html`**. It summarizes the request, candidate panel, calculations and limitations. Its links lead to the supporting tables and files.
 
+**What this run was asked to do** keeps the recorded biological objectives visible
+as you switch targets and approaches. It includes requested programs that retained
+no candidates. The selected approach's splice-site aim and ranking rationale
+appear under **Targets and approaches**.
+
 **Targets and approaches** shows each saved approach rank, confidence and reason beside target selection. **Compare all ranked approaches** expands the alternatives and their reasons, including approaches that retained zero candidates. Rankings stay within the design job that produced them. **Analysis rank** in the ASO table records candidate priority within an approach. Runs that evaluate one approach say so; unavailable comparison rankings remain explicit. These views use the saved analysis and make no new ranking calls.
 
 Design reports open with a short fact strip, the goal, a binding map and a searchable table of the saved scored pool. Choose a target group to view its predictions. Panel badges identify the recommended molecules. Each row expands into its chemistry, selection evidence and splice checks. Evaluation, comparison, sequence-check and combined reports use the same layout with the evidence appropriate to their task.
