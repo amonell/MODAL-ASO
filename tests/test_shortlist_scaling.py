@@ -371,8 +371,10 @@ def test_nomination_model_settings_use_bounded_reasoning_and_minified_input(monk
     monkeypatch.delenv('OPENROUTER_REASONING_EFFORT', raising=False)
     REAL_MODEL_CALL('nominate', {'evidence': {'ids': [0, 1]}, '_generation_token_budget': 8192}, {})
     REAL_MODEL_CALL('audit', {}, {})
+    REAL_MODEL_CALL('audit_summary', {}, {})
     assert seen[0][0].reasoning == {'effort': 'low'}
-    assert seen[1][0].reasoning == {'effort': 'high'}
+    assert seen[1][0].reasoning == {'effort': 'low'}
+    assert seen[2][0].reasoning == {'effort': 'high'}
     assert seen[0][0].max_output_tokens == 8192
     assert seen[0][1] == '{"evidence":{"ids":[0,1]}}'
 
@@ -400,3 +402,4 @@ def test_wire_ids_roundtrip_without_rewriting_evidence_or_user_settings(monkeypa
     assert result['summary'] == keys[1] + ' leads ' + keys[0] + '; m10 is an unrelated label.'
     assert payload == before
     assert review._review_configuration(provider.get_provider_config())['screening_reasoning_effort'] == 'high'
+    assert review._review_configuration(provider.get_provider_config())['reasoning_effort'] == 'high'

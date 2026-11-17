@@ -490,9 +490,11 @@ affects the review in issues, including one involving another displayed candidat
 def _reasoning_effort(kind, config):
     if config.reasoning_effort_override:
         return config.reasoning_effort_override
-    # Flash exposes low/high/max/none (no medium effort). Broad nomination and
-    # ranking use low; the small final panel keeps a thorough explanation/audit.
+    # Flash exposes low/high/max/none (no medium effort). Small, explicitly
+    # scoped audits use its low effort while retaining every evidence check.
     flash = config.name == 'openrouter' and config.resolve_model(MODEL).startswith('deepseek/deepseek-v4.1-flash')
+    if kind == 'audit' and flash:
+        return 'low'
     if kind in {'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair'}:
         return 'low' if flash or kind == 'nominate' else 'medium'
     return 'high'
