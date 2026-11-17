@@ -13,6 +13,7 @@ import shutil
 import sys
 
 from . import __version__
+from .model_defaults import DEFAULT_MODEL
 from .paths import (data_root, reference_root, cache_root, oligoai_root,
                     resource_root, save_settings, splice_root)
 
@@ -101,6 +102,7 @@ def _doctor(args):
     from .llm_provider import get_provider_config
     provider = get_provider_config(require_credentials=False)
     add("LLM credentials", "ok" if provider.api_key else "missing", provider.name + " (key configured)" if provider.api_key else provider.name + " (set API key)")
+    add("Default language model", "ok", provider.resolve_model(DEFAULT_MODEL))
     result = {"version": __version__, "data": str(data_root()), "cache": str(cache_root()), "checks": checks}
     if args.json:
         print(json.dumps(result, indent=2))
@@ -175,9 +177,16 @@ def _run(argv):
         os.environ.setdefault("MODAL_ASO_SKIP_RUNTIME_INSTALL", "1")
         from .llm_provider import get_provider_config
         if not is_help:
-            get_provider_config()
+            provider = get_provider_config()
+            default_model = provider.resolve_model(DEFAULT_MODEL)
+            startup.write(f"Default language model: {default_model} ({provider.name}).\n")
             startup.start("Loading MODAL-ASO")
         from run_goal_intake import main as run
+        if not is_help:
+            from .request_workbench_agent import REQUEST_WORKBENCH_MODEL
+            intake_model = provider.resolve_model(REQUEST_WORKBENCH_MODEL)
+            if intake_model != default_model:
+                startup.write(f"Intake language model: {intake_model}.\n")
     outcome = {}
     run(argv=remainder, result_callback=outcome.update)
     return 0 if not outcome or outcome.get("status") in {"run_complete", "needs_user_input", "completed"} else 1

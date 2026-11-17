@@ -53,16 +53,16 @@ def fake_openai(monkeypatch: pytest.MonkeyPatch) -> type[_FakeOpenAI]:
     return _FakeOpenAI
 
 
-def test_unset_provider_selects_default_openai() -> None:
-    config = llm_provider.get_provider_config({"OPENAI_API_KEY": "openai-test"})
+def test_unset_provider_selects_default_openrouter() -> None:
+    config = llm_provider.get_provider_config({"OPENROUTER_API_KEY": "router-test"})
 
-    assert llm_provider.selected_provider_name({}) == "openai"
-    assert config.name == "openai"
-    assert config.api_key == "openai-test"
-    assert config.base_url == "https://api.openai.com/v1"
-    assert config.default_headers == {}
-    assert config.continuation_mode == "previous_response_id"
-    assert config.provider_preferences == {}
+    assert llm_provider.selected_provider_name({}) == "openrouter"
+    assert config.name == "openrouter"
+    assert config.api_key == "router-test"
+    assert config.base_url == "https://openrouter.ai/api/v1"
+    assert config.default_headers == {"X-OpenRouter-Title": "MODAL-ASO"}
+    assert config.continuation_mode == "stateless"
+    assert config.provider_preferences == {"sort": "throughput"}
     assert config.model_override is None
 
 
@@ -894,7 +894,7 @@ def test_create_response_accepts_and_copies_plain_dictionary_response(
     raw_response = {"id": "resp_dict", "output": [{"type": "message"}]}
     fake_openai.queued_responses = [raw_response]
     config = llm_provider.get_provider_config(
-        {"OPENAI_API_KEY": "openai-test"}
+        {"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": "openai-test"}
     )
 
     result = llm_provider.create_response(
@@ -911,7 +911,7 @@ def test_create_response_preserves_openai_model_dump_defaults(
 ) -> None:
     response = _FakeModelResponse({"id": "resp_openai", "output": []})
     fake_openai.queued_responses = [response]
-    config = llm_provider.get_provider_config({"OPENAI_API_KEY": "openai-test"})
+    config = llm_provider.get_provider_config({"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": "openai-test"})
 
     llm_provider.create_response(
         {"model": "gpt-5-mini-2025-08-07", "input": []},
@@ -926,6 +926,7 @@ def test_sdk_clients_are_created_and_cached_for_both_providers(
 ) -> None:
     openai_config = llm_provider.get_provider_config(
         {
+            "ASO_LLM_PROVIDER": "openai",
             "OPENAI_API_KEY": "openai-test",
             "OPENAI_BASE_URL": "https://openai.example/v1",
         }
@@ -939,6 +940,7 @@ def test_sdk_clients_are_created_and_cached_for_both_providers(
     )
     equivalent_openai_config = llm_provider.get_provider_config(
         {
+            "ASO_LLM_PROVIDER": "openai",
             "OPENAI_API_KEY": "openai-test",
             "OPENAI_BASE_URL": "https://openai.example/v1",
         }
@@ -1025,8 +1027,8 @@ def test_rotated_credential_creates_a_new_client_without_runtime_reset(
 ) -> None:
     first_key = "first-rotating-test-key"
     second_key = "second-rotating-test-key"
-    first_config = llm_provider.get_provider_config({"OPENAI_API_KEY": first_key})
-    second_config = llm_provider.get_provider_config({"OPENAI_API_KEY": second_key})
+    first_config = llm_provider.get_provider_config({"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": first_key})
+    second_config = llm_provider.get_provider_config({"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": second_key})
     payload = {"model": "gpt-5-mini-2025-08-07", "input": []}
 
     llm_provider.create_response(payload, first_config)
@@ -1044,14 +1046,14 @@ def test_runtime_reset_discards_cached_client_without_secret_cache_keys(
     fake_openai: type[_FakeOpenAI],
 ) -> None:
     secret = "secret-cache-value"
-    config = llm_provider.get_provider_config({"OPENAI_API_KEY": secret})
+    config = llm_provider.get_provider_config({"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": secret})
     payload = {"model": "gpt-5-mini-2025-08-07", "input": []}
 
     llm_provider.create_response(payload, config)
     assert secret not in repr(list(llm_provider._CLIENT_CACHE))
 
     llm_provider.reset_provider_runtime_for_tests()
-    new_config = llm_provider.get_provider_config({"OPENAI_API_KEY": "new-test-key"})
+    new_config = llm_provider.get_provider_config({"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": "new-test-key"})
     llm_provider.create_response(payload, new_config)
 
     assert len(fake_openai.instances) == 2

@@ -49,13 +49,10 @@ modal-aso doctor
 
 Setup stores downloads outside the repository. Future sessions reuse the same tools, models, genomes and indexes. [Choose a data drive or import existing references →](docs/references.md)
 
-Configure DeepSeek through OpenRouter:
+MODAL-ASO defaults to DeepSeek v4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through OpenRouter. Set your API key:
 
 ```bash
-export ASO_LLM_PROVIDER=openrouter
 export OPENROUTER_API_KEY="your-api-key"
-export OPENROUTER_MODEL="deepseek/deepseek-v4.1-flash"
-export OPENROUTER_REASONING_EFFORT=max
 ```
 
 Then describe your request:
@@ -84,7 +81,7 @@ export OPENROUTER_MODEL="provider/model"
 export OPENROUTER_REASONING_EFFORT=none
 ```
 
-Choose a model that supports tool calling and your selected reasoning effort. [OpenRouter settings →](docs/llm-providers.md)
+Choose a model that supports tool calling and your selected reasoning effort. Explicit provider and model settings take precedence over the defaults. The CLI prints the selected model at startup. [Provider and model settings →](docs/llm-providers.md)
 
 </details>
 

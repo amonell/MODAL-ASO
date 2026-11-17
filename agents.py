@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
+
 import copy
 import json
 import inspect
@@ -16,7 +18,7 @@ class Agent:
         name: str,
         instructions: str,
         tools: Optional[List[Callable]] = None,
-        model: str = "gpt-5-mini-2025-08-07",
+        model: str = DEFAULT_SMALL_MODEL,
         log_tool_calls: bool = False,
         model_settings: Optional["ModelSettings"] = None,
     ):

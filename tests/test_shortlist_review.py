@@ -573,6 +573,21 @@ def test_completed_review_reopens_offline_and_evidence_change_invalidates_it(tmp
     assert changed['status'] == 'pending'
 
 
+def test_returning_to_default_model_rechecks_an_earlier_provider_review(tmp_path, fake_model, monkeypatch):
+    monkeypatch.delenv('OPENROUTER_MODEL', raising=False)
+    monkeypatch.setenv('ASO_LLM_PROVIDER', 'openai')
+    rows = pool()
+    _, _, previous = run(rows, tmp_path, {'candidate_limit': 2})
+    assert previous['reviewer']['provider'] == 'openai'
+    first_count = len(fake_model)
+    monkeypatch.delenv('ASO_LLM_PROVIDER')
+    _, _, current = run(rows, tmp_path, {'candidate_limit': 2})
+    assert current['status'] == 'completed'
+    assert current['reviewer']['provider'] == 'openrouter'
+    assert current['reviewer']['model'] == 'deepseek/deepseek-v4.1-flash-1017'
+    assert len(fake_model) > first_count
+
+
 def test_all_candidates_enter_bounded_review_and_global_comparison(tmp_path, fake_model, monkeypatch):
     monkeypatch.setattr(review, 'MAX_BATCH_MOLECULES', 12)
     rows = pool(31)

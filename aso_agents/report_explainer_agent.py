@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 from agents import Agent, ModelSettings
 
 
@@ -115,6 +116,6 @@ report_explainer_agent = Agent(
         "- The language is understandable to a new teammate rather than a pipeline author.\n"
     ),
     tools=[],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=ModelSettings(reasoning={"effort": "medium"}),
 )

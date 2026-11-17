@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from agents import Agent
 
 num_mismatch_agent = Agent(
@@ -13,5 +14,5 @@ num_mismatch_agent = Agent(
         "Only infer values the user clearly states; do not make assumptions."
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )

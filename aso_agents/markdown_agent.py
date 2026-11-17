@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from typing import Dict, Any
 from agents import Agent
 
@@ -21,5 +22,5 @@ markdown_agent = Agent(
         "Do NOT add suggestions or next steps. Output only Markdown."
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )

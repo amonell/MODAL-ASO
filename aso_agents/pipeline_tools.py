@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 from aso_agents.paths import runs_root as managed_runs_root
 import csv
 import asyncio
@@ -16547,7 +16548,7 @@ def _run_answer_web_search_once(
     model = (
         str(os.environ.get("ASO_ANSWER_WEB_SEARCH_MODEL") or os.environ.get("ASO_WORKBENCH_RESPONSE_MODEL") or "")
         .strip()
-        or "gpt-5.2-2025-12-11"
+        or DEFAULT_MODEL
     )
     prompt = _answer_web_search_prompt(
         query=query,

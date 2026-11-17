@@ -18,6 +18,9 @@ from typing import Any, Literal
 
 from openai import OpenAI
 
+from aso_agents.model_defaults import (
+    DEFAULT_MODEL, DEFAULT_SMALL_MODEL, DEFAULT_OPENROUTER_MODEL, DEFAULT_PROVIDER,
+)
 from aso_agents.structured_stream import consume_guarded_response, root_array_constraints
 from aso_agents.resource_limits import acquire_resource, defer_resource, scoped_resource_name
 from aso_agents.llm_transport import (
@@ -49,10 +52,14 @@ _OPENROUTER_MODEL_ID = re.compile(
 
 _MODEL_NAMES: dict[str, dict[str, str]] = {
     "openai": {
+        DEFAULT_MODEL: "gpt-5.2-2025-12-11",
+        DEFAULT_SMALL_MODEL: "gpt-5-mini-2025-08-07",
         "gpt-5.2-2025-12-11": "gpt-5.2-2025-12-11",
         "gpt-5-mini-2025-08-07": "gpt-5-mini-2025-08-07",
     },
     "openrouter": {
+        DEFAULT_MODEL: DEFAULT_OPENROUTER_MODEL,
+        DEFAULT_SMALL_MODEL: DEFAULT_OPENROUTER_MODEL,
         "gpt-5.2-2025-12-11": "openai/gpt-5.2",
         "gpt-5-mini-2025-08-07": "openai/gpt-5-mini",
     },
@@ -136,7 +143,7 @@ def selected_provider_name(env: Mapping[str, str] | None = None) -> str:
     source = os.environ if env is None else env
     raw_name = source.get("ASO_LLM_PROVIDER")
     if raw_name is None:
-        return "openai"
+        return DEFAULT_PROVIDER
     normalized_name = raw_name.strip().lower()
     if normalized_name not in {"openai", "openrouter"}:
         raise ValueError(

@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL, DEFAULT_SMALL_MODEL
 from typing import Any, Dict, List, Optional, Set, Tuple
 from copy import deepcopy
 import gzip
@@ -1516,7 +1517,7 @@ _transcript_id_extractor_agent = Agent(
         "- When multiple IDs are present, choose the one that best matches the referenced gene if provided.\n"
         "- If no Ensembl transcript ID is present, set transcript_id to null. Do NOT invent IDs."
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
 )
 
 
@@ -1538,7 +1539,7 @@ _transcript_confirmation_interpreter_agent = Agent(
         "- If the answer is still ambiguous after using the provided candidates and context, return decision='clarify' with transcript_id=null.\n"
         "- Never invent transcript IDs or choose an ID not present in candidate_transcripts unless candidate_transcripts is empty and the user explicitly gave a full Ensembl transcript ID.\n"
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=JSON_OBJECT_SETTINGS,
 )
 
@@ -1665,7 +1666,7 @@ _additional_transcript_selections_agent = Agent(
         "verb when interpreting a coordinated list. Return an empty list when no explicit selection exists. "
         "If repair_errors and previous_response are supplied, repair the extraction against the same answers."
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=JSON_OBJECT_SETTINGS,
     tools=[],
 )
@@ -1861,7 +1862,7 @@ _tissue_selector_agent = Agent(
         "Output: strictly JSON: {\"tissueSiteDetailIds\": [\"<ID FROM LIST>\", ...]}. No extra text."
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 def _gtex_pick_best_tissue(tissue_hint: str, tissues: List[Dict]) -> List[Dict[str, str]]:
@@ -2789,7 +2790,7 @@ def web_search(query: str) -> Dict:
 
     for attempt in range(3):
         payload = {
-            "model": "gpt-5.2-2025-12-11",
+            "model": DEFAULT_MODEL,
             "input": prompt,
             "tools": [hosted_search_tool],
             "max_output_tokens": tokens,
@@ -2991,7 +2992,7 @@ _isoform_mapper_agent = Agent(
         "Never invent IDs or return transcript_id=null unless the transcript list is empty."
     ),
     tools=[web_search],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     log_tool_calls=True,
 )
 
@@ -3509,5 +3510,5 @@ transcript_chooser_agent = Agent(
         "No extra commentary. Do not output BED here."
     ),
     tools=[list_transcripts, gtex_list_tissues, gtex_transcript_expression, search_pubmed, gather_pubmed_for_transcripts, get_transcript_structure, build_bed6, conserved_exons_for_transcript],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )

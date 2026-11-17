@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aso_agents.model_defaults import DEFAULT_MODEL
+
 import re
 import json
 import math
@@ -27,7 +29,7 @@ def _env_optional_positive_int(name: str) -> Optional[int]:
         return None
     return value if value > 0 else None
 
-PLANNER_MODEL = "gpt-5.2-2025-12-11"
+PLANNER_MODEL = DEFAULT_MODEL
 PLANNER_MAX_OUTPUT_TOKENS = _env_optional_positive_int(
     "ASO_SPLICE_STRATEGY_PLANNER_MAX_OUTPUT_TOKENS"
 )
@@ -40,7 +42,7 @@ PLANNER_MODEL_SETTINGS = ModelSettings(
     },
 )
 
-EXECUTOR_MODEL = "gpt-5.2-2025-12-11"
+EXECUTOR_MODEL = DEFAULT_MODEL
 EXECUTOR_MAX_OUTPUT_TOKENS = _env_optional_positive_int(
     "ASO_SPLICE_STRATEGY_EXECUTOR_MAX_OUTPUT_TOKENS"
 )
