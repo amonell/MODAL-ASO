@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 from agents import Agent, function_tool
 import os
 import json
@@ -92,6 +93,6 @@ aso_ranker_agent = Agent(
         "Do NOT write or edit any files yourself. After you provide the ranking, a tool will be called to apply it."
     ),
     tools=[list_candidates, apply_ranking],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     log_tool_calls=False,
 ) 

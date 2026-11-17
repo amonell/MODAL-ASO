@@ -170,7 +170,7 @@ def test_transcript_search_uses_facade_tool_and_normalizes_provider_citations(
     assert payload["max_tool_calls"] == 3
     assert payload["parallel_tool_calls"] is False
     assert payload["max_output_tokens"] == 8192
-    assert payload["model"] == "gpt-5.2-2025-12-11"
+    assert payload["model"] == pipeline_tools.DEFAULT_MODEL
     assert "Resolve the requested isoform" in payload["input"]
 
 
@@ -224,7 +224,7 @@ def test_answer_workbench_search_uses_facade_tool_and_normalizes_provider_citati
     assert payload["max_tool_calls"] == 3
     assert payload["parallel_tool_calls"] is False
     assert payload["max_output_tokens"] == 8192
-    assert payload["model"] == "gpt-5.2-2025-12-11"
+    assert payload["model"] == pipeline_tools.DEFAULT_MODEL
     assert "official vendor" in payload["input"]
 
 

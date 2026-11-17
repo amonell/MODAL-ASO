@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from typing import Dict, Any
 from agents import Agent
 from aso_chemistry import MIN_NATIVE_GAPMER_DNA_GAP_NT
@@ -53,5 +54,5 @@ chemistry_agent = Agent(
         + CHEMISTRY_MECHANISM_SCOPE + "\nReturn the supplied JSON schema only."
     ),
     tools=[],   # no external tools needed for this reasoning step
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )

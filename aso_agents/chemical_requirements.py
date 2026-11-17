@@ -1,4 +1,6 @@
 """Evidence-bound requirements, recorded before seeing chemistry capabilities."""
+
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 import json
 from agents import Agent
 from aso_chemistry import chemistry_label, chemistry_components, require_linkage_specification
@@ -35,7 +37,7 @@ chemical_requirement_agent = Agent(
         "excludes uses an array of forbidden values. A requirement with no available field uses other, "
         "with its full description as value. Leave unstated fields null; do not erase a requirement because it "
         "sounds inconvenient. Return the supplied JSON schema only."
-    ), tools=[], model="gpt-5-mini-2025-08-07")
+    ), tools=[], model=DEFAULT_SMALL_MODEL)
 
 
 def requirement_sources(goal):

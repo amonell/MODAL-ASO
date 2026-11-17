@@ -4,6 +4,8 @@ The model orders candidates and chooses an automatic panel size. The existing
 typed selector enforces the user's physical/count/role/objective contract. A
 separate review checks explanations against the same immutable evidence.
 """
+
+from aso_agents.model_defaults import DEFAULT_MODEL
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from copy import deepcopy
@@ -18,7 +20,7 @@ from .shortlist_evidence import (citation, clean, compact_packet, digest,
     evidence_catalog, fact_value, indexed_packet, molecule_id, nested_packet, panel_binding_geometry, review_context)
 
 VERSION = 'evidence-reviewed-shortlist/1'
-MODEL = 'gpt-5.2-2025-12-11'
+MODEL = DEFAULT_MODEL
 MAX_BATCH_MOLECULES = 64
 MAX_PACKET_CHARACTERS = 180000
 MAX_WORKERS = 4
@@ -1085,7 +1087,7 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
     path = directory / 'recommendation_review.json'
     saved = _read(path)
     configured_reviewer = None
-    if os.environ.get('OPENROUTER_MODEL') or os.environ.get('ASO_LLM_PROVIDER'):
+    if allow_model_calls or os.environ.get('OPENROUTER_MODEL') or os.environ.get('ASO_LLM_PROVIDER'):
         try:
             from .llm_provider import get_provider_config
             config = get_provider_config(require_credentials=False)

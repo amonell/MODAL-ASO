@@ -452,7 +452,7 @@ def test_incomplete_output_preserves_structured_error(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
 ) -> None:
-    response_model = "openai/gpt-5-mini" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
+    response_model = "deepseek/deepseek-v4.1-flash-1017" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
     _install_fake_client(
         monkeypatch,
         provider,
@@ -558,7 +558,7 @@ def test_empty_turn_nudge_uses_provider_continuation_contract(
             ],
         }
     ]
-    expected_model = "openai/gpt-5-mini" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
+    expected_model = "deepseek/deepseek-v4.1-flash-1017" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
     if provider == "openai":
         assert calls[1] == {
             "model": expected_model,

@@ -20,6 +20,7 @@ _PROVIDER_ENV_NAMES = (
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
     "OPENROUTER_BASE_URL",
     "OPENROUTER_HTTP_REFERER",
     "OPENROUTER_APP_TITLE",
@@ -84,7 +85,7 @@ def test_cli_help_works_without_provider_credentials(provider: str) -> None:
 @pytest.mark.parametrize(
     ("provider", "credential_name"),
     [
-        (None, "OPENAI_API_KEY"),
+        (None, "OPENROUTER_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
         ("openrouter", "OPENROUTER_API_KEY"),
     ],
@@ -107,7 +108,7 @@ def test_cli_accepts_the_selected_provider_credential(
 @pytest.mark.parametrize(
     ("provider", "unselected_credential", "required_credential"),
     [
-        (None, "OPENROUTER_API_KEY", "OPENAI_API_KEY"),
+        (None, "OPENAI_API_KEY", "OPENROUTER_API_KEY"),
         ("openai", "OPENROUTER_API_KEY", "OPENAI_API_KEY"),
         ("openrouter", "OPENAI_API_KEY", "OPENROUTER_API_KEY"),
     ],

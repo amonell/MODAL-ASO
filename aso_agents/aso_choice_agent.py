@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from agents import Agent, function_tool
 import os
 import json
@@ -496,6 +497,6 @@ aso_choice_agent = Agent(
         trial_filter,
         apply_filter,
     ],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
     log_tool_calls=False,
 ) 

@@ -1,4 +1,6 @@
 """Same-model consistency check for chemistry explanations, not efficacy scoring."""
+
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 import hashlib
 import json
 
@@ -47,7 +49,7 @@ chemistry_mechanism_audit_agent = Agent(
         "the actual claim; do not rewrite the recommendation or supply replacement biology."
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 
@@ -61,7 +63,7 @@ chemistry_finding_adjudicator = Agent(
         "issues list. Do not change the recommendation, requested chemistry or scientific goal. "
         + CHEMISTRY_REVIEW_EVIDENCE_SCOPE +
         "Return one schema-bound decision per finding with its evidence-based reason."
-    ), tools=[], model="gpt-5-mini-2025-08-07",
+    ), tools=[], model=DEFAULT_SMALL_MODEL,
 )
 
 

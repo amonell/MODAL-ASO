@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 # Importing a submodule initializes aso_agents.__init__, so seed the selected
 # test credential before package imports that may read configuration.
-_PROVIDER_HINT = str(os.environ.get("ASO_LLM_PROVIDER") or "openai").strip().lower()
+_PROVIDER_HINT = str(os.environ.get("ASO_LLM_PROVIDER") or "openrouter").strip().lower()
 _CREDENTIAL_HINT = (
     "OPENROUTER_API_KEY" if _PROVIDER_HINT == "openrouter" else "OPENAI_API_KEY"
 )

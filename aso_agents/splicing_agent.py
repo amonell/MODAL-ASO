@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from typing import Any, Dict, List, Optional, Callable, Mapping, Sequence, Tuple
 import json
 from agents import Agent, function_tool
@@ -2002,5 +2003,5 @@ splicing_agent = Agent(
         "Return compact JSON only."
     ),
     tools=[evaluate_splice_shifts_on_tiles, decide_splice_strategy],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 ) 

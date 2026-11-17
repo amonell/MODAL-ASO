@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Lightweight CLI to run the goal intake agent and persist outputs under runs/."""
 
+from aso_agents.model_defaults import DEFAULT_MODEL, DEFAULT_SMALL_MODEL
+
 import argparse
 import asyncio
 import contextlib
@@ -17530,7 +17532,7 @@ def _generate_splice_strategy_analysis(
     agent_trace.extend(strategy_trace)
 
     strategy_model = _model_attribution_from_trace(
-        "gpt-5.2-2025-12-11",
+        DEFAULT_MODEL,
         strategy_trace,
     )
 
@@ -18866,7 +18868,7 @@ snapgene_isoform_mapper_agent = Agent(
         "- If error_hint is provided, fix the output accordingly.\n"
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 

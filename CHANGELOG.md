@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Default all language-model roles to DeepSeek v4.1 Flash `1017` through
+  OpenRouter, preserve explicit model/provider overrides, and show the resolved
+  model at startup and in `doctor`
+  ([#12](https://github.com/amonell/MODAL-ASO/issues/12)).
 - Share original chemistry proposals, compiled linkages and native support rules
   across chemistry selection and review. Collect missing design inputs together
   and keep installed references separate from user evidence during intake

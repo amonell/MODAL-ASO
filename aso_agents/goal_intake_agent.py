@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 import os
 from typing import Optional, Dict
 from agents import Agent, ModelSettings
@@ -24,7 +25,7 @@ def _env_optional_positive_int(name: str) -> Optional[int]:
     return value if value > 0 else None
 
 
-GOAL_INTAKE_MODEL = str(os.environ.get("ASO_GOAL_INTAKE_MODEL") or "gpt-5.2-2025-12-11").strip() or "gpt-5.2-2025-12-11"
+GOAL_INTAKE_MODEL = str(os.environ.get("ASO_GOAL_INTAKE_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
 GOAL_INTAKE_REASONING_EFFORT = (
     str(os.environ.get("ASO_GOAL_INTAKE_REASONING_EFFORT") or "max").strip().lower() or "max"
 )
