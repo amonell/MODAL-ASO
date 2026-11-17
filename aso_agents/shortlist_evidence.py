@@ -235,6 +235,165 @@ def compact_packet(entries, *, citation_numbers=False, include_overviews=False):
                 'contexts are separate saved binding/analysis records for the same physical molecule.'}
 
 
+def _decision_facts(entry):
+    """Present the normalized analysis once; retain new evidence fields.
+
+    These are known duplicate export/provenance containers, rather than a
+    whitelist of scientific metrics. Individual predictions and new attributes
+    outside those containers survive without a schema update.
+    """
+    duplicate_roots = {'off_target_by_species', 'off_target_search_provenance_by_species',
+        'off_target_expression_by_species', 'Off_target_expression_details',
+        'off_target_expression_details', 'off_target_reference_coverage'}
+    duplicate_assessment = {'reference_coverage': 'off_target_reference_coverage',
+        'references_by_species': 'off_target_search_provenance_by_species',
+        'species_evidence': 'off_target_by_species'}
+    technical = {'source_path', 'physical_molecule_sha256', 'input_id', 'candidate_id',
+        'candidate_number', 'reference_sequence_sha256', 'rna_context', 'nucleobases_5to3',
+        'ordering_notation', 'IDT', 'Synthesis', 'artifact_json',
+        'artifact_csv', 'provenance', 'genome_fasta', 'annotation_gtf', 'bowtie_index_prefix',
+        'reference_annotation', 'parameter_table_sha256', 'biopython_version', 'source_revision', 'model_sha256'}
+    facts = {}
+    for path, value in entry['facts'].items():
+        parts = path.split('/')[3:]
+        context = '/'.join(path.split('/')[:3])
+        if parts and parts[-1] in {'IDT', 'ordering_notation'} and not all(
+                context + '/molecule_specification/' + field in entry['facts']
+                for field in ('nucleotide_sugars_5to3', 'linkages_5to3')):
+            facts[path] = value
+            continue
+        if not parts or technical.intersection(parts):
+            continue
+        if parts[-1] == 'nucleotide_chemistry_5to3':
+            prefix = path.rsplit('/', 1)[0]
+            if all(prefix + '/' + key in entry['facts'] for key in ('nucleotide_sugars_5to3', 'base_modifications_5to3')):
+                continue
+        if parts[0] in duplicate_roots:
+            # Retain scientific scalar values that a future backend adds, and
+            # the declared biological search scope. Export cache bookkeeping
+            # and repeated input/reference trees stay in the full catalog.
+            if parts[0] in {'off_target_by_species', 'off_target_expression_by_species'} and not any(key in parts for key in
+                    ('off_target_count_scope', 'off_target_reference_coverage', 'Off_target_expression_details',
+                     'off_target_expression_details', 'junction_search_summary', 'supplemental_transcript_reference')):
+                facts[path] = value
+            continue
+        if parts[:2] == ['candidate_assessment', 'off_target'] and len(parts) > 2 and parts[2] in duplicate_assessment:
+            counterpart = context + '/' + '/'.join([duplicate_assessment[parts[2]], *parts[3:]])
+            if counterpart in entry['facts'] and entry['facts'][counterpart] == value:
+                continue
+        if parts[0] == 'source_annotations' and len(parts) > 1 and parts[1] in {
+                'id', 'Name', 'source', 'executed_reference', 'repeat_inventory_evidence',
+                'off_target_count_scope', 'off_target_observed_gene_ids_by_mismatch',
+                'off_target_observed_genes_by_mismatch', 'Off_target_gene_ids_by_mismatch',
+                'Off_target_genes_by_mismatch'}:
+            continue
+        facts[path] = value
+    # Search scope has biological meaning even when its provenance is large.
+    for path, value in entry['facts'].items():
+        if '/off_target_count_scope/' in path and path.rsplit('/', 1)[-1] in {
+                'count_unit', 'assembly', 'genomic_search', 'counted_genomic_rna_universe',
+                'genomic_strand_policy', 'junction_search', 'junction_strand_policy',
+                'mismatch_policy', 'mismatch_bin_count_unit', 'weighted_risk_definition',
+                'indel_policy', 'intended_target_exclusion', 'limitations'}:
+            # All duplicated copies carry the same fact; keep one canonical
+            # source container for each context/species and scope attribute.
+            if '/off_target_by_species/' in path and '/candidate_assessment/' not in path:
+                facts[path] = value
+    return facts
+
+
+def screening_packet(entries, *, include_provenance=False, local_ids=True):
+    """Candidate rows for nomination, with shared constants and exact values.
+
+    Source paths and molecular identities remain in the immutable full catalog.
+    First-pass packets omit file locations, duplicated model inputs and technical
+    provenance. All measurements, conditions, constraints, chemistry, match
+    identities, uncertainty and unrecognized future attributes remain available.
+    """
+    projected = entries if include_provenance else [{**entry, 'facts': _decision_facts(entry)} for entry in entries]
+    packet = compact_packet(projected)
+    facts = [{'paths': list(fact['paths'].values()),
+              **{key: value for key, value in fact.items() if key != 'paths'}}
+             for fact in packet['facts']]
+    for fact in facts:
+        available = [i for i, entry in enumerate(projected) if fact['paths'][0] in entry['facts']]
+        if len(available) != len(entries):
+            fact['available_for'] = available
+    frequencies, originals = defaultdict(int), {}
+
+    def cells(fact):
+        if 'shared' in fact:
+            yield fact['shared']
+        yield from fact.get('values_in_id_order', [])
+        yield from fact.get('overrides', {}).values()
+
+    for fact in facts:
+        for value in cells(fact):
+            serialized = json.dumps(value, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+            if len(serialized) >= 32:
+                frequencies[serialized] += 1
+                originals[serialized] = value
+    references = {value: 'v' + str(index) for index, (value, count)
+                  in enumerate(frequencies.items()) if count > 1}
+
+    def share(value):
+        key = json.dumps(value, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+        return {'value_ref': references[key]} if key in references else value
+
+    for fact in facts:
+        if 'shared' in fact:
+            fact['shared'] = share(fact['shared'])
+        if 'values_in_id_order' in fact:
+            fact['values_in_id_order'] = [share(value) for value in fact['values_in_id_order']]
+        if 'overrides' in fact:
+            fact['overrides'] = {key: share(value) for key, value in fact['overrides'].items()}
+    # Reading a whole candidate row keeps its geometry, predictions and limits
+    # together. Constant columns are stated once. Exact source paths identify
+    # fields, including distinct attributes that happen to share values.
+    shared, columns, values, availability = [], [], [], {}
+    for fact in facts:
+        paths = fact.pop('paths')
+        label = paths
+        if 'shared' in fact and not fact.get('overrides') and 'available_for' not in fact:
+            shared.append({'paths': label, 'value': fact['shared']})
+            continue
+        columns.append(label)
+        available = set(fact.get('available_for', range(len(entries))))
+        if len(available) != len(entries):
+            availability[str(len(columns) - 1)] = sorted(available)
+        values.append([(None if i not in available else
+                        fact['values_in_id_order'][i] if 'values_in_id_order' in fact else
+                        fact.get('overrides', {}).get(str(i), fact['shared']))
+                       for i in range(len(entries))])
+    ids = list(range(len(entries))) if local_ids else [entry['id'] for entry in entries]
+    labels = []
+    for paths in columns:
+        parts = min(paths, key=len).split('/')[1:]
+        if parts[:2] == ['contexts', '0']:
+            parts = parts[2:]
+        if parts and parts[0] in {'candidate_assessment', 'source_annotations'}:
+            parts = parts[1:]
+        label = '/'.join(parts)
+        if label in labels:
+            label = min(paths, key=len)
+        labels.append(label)
+    return {'ids': ids, 'shared_facts': shared,
+        'fields': dict(zip(labels, columns)),
+        'rows': [{'id': key, 'values': {labels[j]: column[i] for j, column in enumerate(values)
+                  if str(j) not in availability or i in availability[str(j)]}}
+                 for i, key in enumerate(ids)],
+        'shared_values': {reference: originals[value] for value, reference in references.items()},
+        'reading_guide': 'Each row gives one candidate ID and its named values. fields maps those names '
+            'to equivalent exact source paths. Every candidate also has each shared_facts value '
+            'at its listed paths. '
+            'A value_ref cell uses the exact shared_values entry. Null and absent fields are missing evidence. '
+            + ('Every original fact and source path is included. ' if include_provenance else
+               'Technical provenance and duplicate encodings stay in the full catalog for detailed review. ')
+            +
+            'Read actual binding coordinates and measured effects: a program or transcript label identifies '
+            'the requested objective and reference, and does not establish an exon overlap or isoform selectivity.'}
+
+
 def nested_packet(entries):
     """An equivalent tree encoding for records dominated by long fact paths.
 

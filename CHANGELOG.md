@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Accelerate shortlist review for large libraries with parallel nominations,
+  compact candidate tables, shorter model-facing identifiers and bounded
+  generation. Retain detailed finalist comparisons, full-evidence rationale
+  checks and every candidate's availability for selection constraints. Show
+  candidate and batch progress during the review
+  ([#14](https://github.com/amonell/MODAL-ASO/issues/14)).
 - Default all language-model roles to DeepSeek v4.1 Flash `1017` through
   OpenRouter, preserve explicit model/provider overrides, and show the resolved
   model at startup and in `doctor`

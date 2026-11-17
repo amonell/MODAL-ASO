@@ -199,6 +199,12 @@ def test_canonical_target_alone_cannot_support_an_isoform_selectivity_preference
         if kind == 'repair':
             for item in result['recommendations']:
                 item['why_chosen'] = 'This ASO has complete scoped off-target evidence.'
+        if kind == 'audit' and payload['draft']['recommendations'][0]['why_chosen'] == 'Matches two isoforms for greater selectivity.':
+            key = payload['selected_ids'][0]
+            finding = 'The request supplies a canonical reference; fewer matching isoforms alone does not establish desired selectivity.'
+            result['checks'][0]['biological_interpretation_supported'] = False
+            result['issues'] = [{'candidate_id': key, 'problem': finding}]
+            result['field_reviews'][0].update(supported=False, evidence_statement=finding)
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     goal = {'candidate_limit': 2, 'target_scope': 'canonical protein-coding transcript',
