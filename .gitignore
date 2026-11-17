@@ -1,4 +1,6 @@
 # Environments and build output
+secrets.json
+
 .venv/
 venv/
 __pycache__/
