@@ -192,13 +192,25 @@ request_clarification_review_agent = Agent(
         + "You independently audit an ASO request compiler result for clarification completeness. "
         "Review both ready and need_clarification results.\n"
         "A question is blocking only when a canonical execution requirement needs a user-specific "
-        "fact that is absent from the supplied request evidence, current envelope, and clarification "
+        "fact that is absent from the supplied request evidence and clarification "
         "history, and the platform cannot safely use a declared default or resolve the fact from a "
         "configured public/reference source.\n"
         "Do not retain questions that ask the user to confirm an explicitly requested operation, "
         "mechanism, or constraint. Do not retain requests for optional preferences, pipeline-defaultable "
         "settings, or public facts the platform is expected to resolve. If one proposed question bundles "
         "only such nonblocking items, drop it. The input also includes platform_execution_validation. "
+        "Inspect both issues and repairable_issues for every task. A repairable execution requirement "
+        "can need user input when its value is absent from all evidence; for example, a missing "
+        "organism can require clarification even while biological context is also missing. "
+        "Check these requirements together before returning any questions. Preserve compiler repairs "
+        "as compiler work when the evidence or declared reference sources can supply the value. "
+        "Also verify the source of each proposed species and biological context even when validation "
+        "lists no missing field. The current envelope is generated compiler output, not evidence of "
+        "a user choice. An installed reference genome or a model-authored assumption cannot select "
+        "the user's organism. A gene symbol alone does not establish species. Use the original "
+        "request, scoped clarification answers, an explicitly supplied target reference, or an "
+        "authoritative lookup of a user-supplied accession. Ask for all unsupported required choices "
+        "together, without embedding an unsupported species/context assumption in the questions. "
         "A standard gene, transcript, numeric exon, or annotated splice site is source-resolvable unless "
         "the evidence explicitly requires a nonstandard identity or a user-controlled mapping. A requested "
         "candidate count per site does not require the user to enumerate sites when the requested gene, "
@@ -207,8 +219,8 @@ request_clarification_review_agent = Agent(
         "summary, label, envelope field, or validation interpretation. A generated contradiction, "
         "mutation, or omission is a compiler repair obligation, never a reason to question the user. "
         "Platform execution issues identify required fields but do not prove their values are absent: "
-        "retain a proposed question that resolves one only when neither request_evidence nor the current "
-        "envelope supplies the value. Preserve an adequate proposed question by index. Add any "
+        "retain a proposed question that resolves one only when user evidence or an authorized source "
+        "cannot supply the value. Preserve an adequate proposed question by index. Add any "
         "omitted independent user-specific blocker under additional_blocking_questions using exactly "
         "missing_field, question, and reason. Collect the smallest complete blocker set in one round. "
         "When platform_execution_validation reports the applicable unresolved issue, copy that exact "
@@ -1128,7 +1140,7 @@ def _record_chemical_requirements(
 
 
 def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]) -> Dict[str, Any]:
-    from aso_chemistry import require_native_linkage_identity
+    from aso_chemistry import require_native_linkage_identity, native_chemistry_contract
     require_native_linkage_identity(goal)
     deferred = _unselected_chemistry_payload(goal)
     if deferred:
@@ -1165,9 +1177,11 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
     if isinstance(chemistry_agent_obj, Agent):
         chemistry_agent_obj = _agent_with_strict_output_schema(
             chemistry_agent_obj, schema_name="aso_chemical_architecture", schema=schema)
+    native_contract = native_chemistry_contract()
     prompt: Dict[str, Any] = {"structured_goal": goal,
                               "exact_requested_length_nt": requested_length,
                               "recorded_chemical_requirements": requirements,
+                              "native_chemistry_contract": native_contract,
                               "output_schema": schema}
     history = []
     canonical = None
@@ -1186,6 +1200,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                 chem_payload = json.loads(raw) if isinstance(raw, str) else raw
             except (TypeError, ValueError):
                 chem_payload = {}
+            selection_proposal = deepcopy(chem_payload)
             try:
                 chem_payload = compile_chemistry_proposal(chem_payload)
                 errors = chemistry_contract_errors(chem_payload, requested_length, native_modality=goal.get("modality"), native_design=True)
@@ -1200,6 +1215,8 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
         if not errors:
             if canonical is None:
                 canonical = _canonicalize_chemistry_payload(chem_payload, source_hint="chemistry_agent")
+            review_evidence = {"selection_proposal": selection_proposal,
+                               "native_chemistry_contract": native_contract}
             adjudication = None
             try:
                 audit_schema = mechanism_audit_schema(canonical)
@@ -1209,6 +1226,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                     schema=audit_schema,
                 )
                 audit_input = {"structured_goal": goal, "chemistry": canonical,
+                               **review_evidence,
                                "output_schema": audit_schema}
                 if audit_feedback is not None:
                     audit_input["output_contract_feedback"] = audit_feedback
@@ -1241,6 +1259,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                         schema_name="aso_chemistry_finding_adjudication", schema=adjudication_schema)
                     adjudication = run_async_from_sync(lambda: _run_schema_validated_agent_once(
                         agent=judge, prompt=json.dumps({"structured_goal": goal, "chemistry": canonical,
+                            **review_evidence,
                             "issues": issues, "output_schema": adjudication_schema}, ensure_ascii=False),
                         schema=adjudication_schema, error_prefix="chemistry_finding_adjudication",
                         contract_validator=lambda result: _json_schema_validation_errors(result, adjudication_schema)
@@ -1260,6 +1279,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                     "recommendation_sha256": recommendation_digest(canonical),
                     "check": "same_model_mechanism_consistency",
                     "independent_validation": False,
+                    "review_evidence": deepcopy(review_evidence),
                 }
                 if adjudication is not None:
                     canonical["mechanism_review"]["finding_adjudication"] = adjudication
@@ -1267,6 +1287,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
         history.append({"attempt": attempt + 1, "validation_errors": list(errors)})
         prompt["output_contract_feedback"] = {
             "attempt": attempt + 1, "previous_response": raw,
+            "compiled_recommendation": deepcopy(canonical),
             "validation_errors": errors,
             "instruction": "Repair these exact chemistry/length/scope/mechanism conflicts in place. "
                            "Retain compatible decisions and return the complete recommendation JSON.",
@@ -16988,6 +17009,7 @@ def _compact_request_execution_validation(
                     "task_type",
                     "status",
                     "issues",
+                    "repairable_issues",
                     "questions",
                     "reason",
                 )
@@ -17005,6 +17027,7 @@ def _compact_request_execution_validation(
 async def _review_request_clarifications_if_needed(
     request_evidence: str,
     planned: Dict[str, Any],
+    *, source_artifacts: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if not isinstance(planned, dict):
         return planned
@@ -17028,8 +17051,13 @@ async def _review_request_clarifications_if_needed(
     compact_execution_validation = _compact_request_execution_validation(
         current_envelope
     )
-    artifact_evidence: List[Dict[str, str]] = []
-    _extend_goal_audit_evidence_from_declared_artifacts(artifact_evidence, current_envelope)
+    if source_artifacts is None:
+        # Established intake/audit callers may carry explicit attachments in
+        # the envelope. The unverified planner supplies its source scope below.
+        artifact_evidence: List[Dict[str, Any]] = []
+        _extend_goal_audit_evidence_from_declared_artifacts(artifact_evidence, current_envelope)
+    else:
+        artifact_evidence = deepcopy(source_artifacts)
     review_prompt = json.dumps(
         {
             "request_evidence": str(request_evidence or ""),
@@ -17168,6 +17196,8 @@ async def _finalize_verified_request_plan(
     request_evidence: str,
     planned: Dict[str, Any],
 ) -> Dict[str, Any]:
+    from .request_artifact_evidence import collect_request_artifacts
+    source_artifacts = collect_request_artifacts(sys.modules[__name__], request_evidence)["entries"]
     reviewed = await _review_request_execution_completeness(
         request_evidence,
         planned,
@@ -17180,6 +17210,7 @@ async def _finalize_verified_request_plan(
         reviewed = await _review_request_clarifications_if_needed(
             request_evidence,
             reviewed,
+            source_artifacts=source_artifacts,
         )
         if str(reviewed.get("error") or "").strip():
             return reviewed
@@ -17194,6 +17225,7 @@ async def _finalize_verified_request_plan(
     return await _review_request_clarifications_if_needed(
         request_evidence,
         synthesized,
+        source_artifacts=source_artifacts,
     )
 
 
@@ -18391,7 +18423,10 @@ async def _run_verified_request_workbench_agent_once(
     request_evidence: Optional[str] = None,
 ) -> Dict[str, Any]:
     user_evidence = prompt if request_evidence is None else request_evidence
-    from .request_artifact_evidence import append_request_artifact_evidence
+    from .request_artifact_evidence import append_request_artifact_evidence, collect_request_artifacts
+    source_artifacts = collect_request_artifacts(sys.modules[__name__], user_evidence)["entries"]
+    decision_evidence = append_request_artifact_evidence(
+        sys.modules[__name__], user_evidence, user_evidence, include_runtime_references=False)
     prompt = append_request_artifact_evidence(sys.modules[__name__], prompt, user_evidence)
     planned = await _run_request_workbench_agent_once(prompt)
     if str(planned.get("error") or "").strip():
@@ -18405,7 +18440,8 @@ async def _run_verified_request_workbench_agent_once(
     seen_proposals: Set[str] = set()
     for revision_index in range(max_revisions + 1):
         planned = _bind_request_task_executors(planned)
-        planned = await _review_request_clarifications_if_needed(prompt, planned)
+        planned = await _review_request_clarifications_if_needed(
+            decision_evidence, planned, source_artifacts=source_artifacts)
         if planned.get("error") == "request_graph_required_after_clarification_review":
             proposal_digest = json.dumps(planned["prior_response"], sort_keys=True, default=str)
             if proposal_digest in seen_proposals:
@@ -18456,11 +18492,11 @@ async def _run_verified_request_workbench_agent_once(
             if str(planned.get("error") or "").strip():
                 return planned
             continue
-        review_prompt = _request_graph_review_prompt(prompt, envelope)
+        review_prompt = _request_graph_review_prompt(decision_evidence, envelope)
         review = await _run_request_graph_review_agent_once(review_prompt)
         if str(review.get("error") or "").strip():
             return review
-        evidence_errors = _request_graph_review_evidence_errors(review, prompt)
+        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
         if evidence_errors:
             review = await _run_request_graph_review_agent_once(
                 _request_graph_review_retry_prompt(
@@ -18473,7 +18509,7 @@ async def _run_verified_request_workbench_agent_once(
                 return review
             evidence_errors = _request_graph_review_evidence_errors(
                 review,
-                prompt,
+                decision_evidence,
             )
             if evidence_errors:
                 return {
@@ -18482,13 +18518,13 @@ async def _run_verified_request_workbench_agent_once(
                 }
         if str(review.get("status") or "").strip().lower() == "valid":
             review_prompt = _request_graph_operation_coverage_review_prompt(
-                prompt,
+                decision_evidence,
                 envelope,
             )
             review = await _run_request_graph_review_agent_once(review_prompt)
             if str(review.get("error") or "").strip():
                 return review
-            evidence_errors = _request_graph_review_evidence_errors(review, prompt)
+            evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
             if evidence_errors:
                 return {
                     "error": "request_graph_review_unverified_evidence",
@@ -18498,7 +18534,7 @@ async def _run_verified_request_workbench_agent_once(
                 if planned_status != "ready":
                     return planned
                 return await _finalize_verified_request_plan(
-                    prompt,
+                    decision_evidence,
                     planned,
                 )
         review = await _run_request_graph_review_adjudicator_once(
@@ -18506,7 +18542,7 @@ async def _run_verified_request_workbench_agent_once(
         )
         if str(review.get("error") or "").strip():
             return review
-        evidence_errors = _request_graph_review_evidence_errors(review, prompt)
+        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
         if evidence_errors:
             return {
                 "error": "request_graph_review_unverified_evidence",
@@ -18516,7 +18552,7 @@ async def _run_verified_request_workbench_agent_once(
             if planned_status != "ready":
                 return planned
             return await _finalize_verified_request_plan(
-                prompt,
+                decision_evidence,
                 planned,
             )
         issues = review.get("issues") if isinstance(review.get("issues"), list) else []
@@ -23266,9 +23302,9 @@ def _request_validation_summary(request_envelope: Dict[str, Any]) -> Dict[str, A
                     repairable_issues.extend(
                         _canonical_design_goal_contract_issues(structured_goal)
                     )
-                    repairable_issues.extend(
-                        _design_goal_execution_contract_issues(context_goal)
-                    )
+                repairable_issues.extend(
+                    _design_goal_execution_contract_issues(context_goal)
+                )
         elif task_type == "analyze_artifact":
             if not artifact_refs and not has_generated_design_output:
                 issues.append("artifact_refs_missing")
@@ -43903,7 +43939,8 @@ def tool_parse_goal_request(
         try:
             request_parse_out = run_async_from_sync(
                 lambda: _run_verified_request_workbench_agent_once(
-                    workbench_prompt, request_evidence=request_text,
+                    workbench_prompt, request_evidence=(request_text + "\n\nClarification history:\n"
+                        + _render_request_workbench_history(qa_history) if qa_history else request_text),
                 )
             )
         except Exception as exc:

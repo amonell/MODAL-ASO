@@ -98,7 +98,7 @@ def test_future_input_is_revised_before_semantic_graph_review(monkeypatch, tmp_p
         reviews.append(prompt)
         return {"status": "valid", "issues": []}
 
-    async def unchanged(_prompt, proposal):
+    async def unchanged(_prompt, proposal, *, source_artifacts=None):
         return proposal
 
     monkeypatch.setattr(pipeline, "_run_request_workbench_agent_once", plan)

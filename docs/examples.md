@@ -1,6 +1,8 @@
 # Example requests
 
-Specify the target, species, desired effect and any constraints. MODAL-ASO asks for missing details when needed.
+Specify the target, species, desired effect and any constraints. For designs, include
+the tissue or cell type, or ask MODAL-ASO to use a broad baseline context. Missing
+required inputs are collected before detailed design planning.
 
 **Gapmer design**
 

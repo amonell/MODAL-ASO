@@ -75,7 +75,7 @@ def test_supplied_reference_plan_still_requires_both_independent_reviews(
         proposals.append(prompt)
         return deepcopy(supplied_analysis)
 
-    async def clarification(_prompt, proposed):
+    async def clarification(_prompt, proposed, *, source_artifacts=None):
         return proposed
 
     async def review(prompt):

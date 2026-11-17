@@ -30,7 +30,7 @@ def test_ready_plan_is_synthesized_before_its_final_necessity_review(monkeypatch
         result["request_envelope"]["tasks"] = [{"task_id": "generated_goal"}]
         return result
 
-    async def necessity(evidence, current):
+    async def necessity(evidence, current, *, source_artifacts=None):
         events.append("necessity")
         # A ready input has already been reviewed by the graph compiler. The
         # next review must inspect the newly synthesized contract.
@@ -61,7 +61,7 @@ def test_new_completeness_question_still_blocks_synthesis(monkeypatch):
         result.update(status="need_clarification", questions=[question])
         return result
 
-    async def necessity(evidence, current):
+    async def necessity(evidence, current, *, source_artifacts=None):
         events.append("necessity")
         assert current["questions"] == [question]
         return current
@@ -92,7 +92,7 @@ def test_synthesis_question_is_reviewed_before_leaving_finalization(monkeypatch)
         result.update(status="need_clarification", questions=[question])
         return result
 
-    async def necessity(evidence, current):
+    async def necessity(evidence, current, *, source_artifacts=None):
         seen_questions.append(current["questions"])
         return current
 

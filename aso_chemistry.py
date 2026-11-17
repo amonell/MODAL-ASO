@@ -8,6 +8,24 @@ machine-readable numeric descriptor, never interprets a user's prose.
 from dataclasses import dataclass
 
 
+MIN_NATIVE_GAPMER_DNA_GAP_NT = 6
+
+
+def native_chemistry_contract():
+    """Representation and support rules shared by selection and review."""
+    return {
+        "native_gapmer_minimum_dna_gap_nt": MIN_NATIVE_GAPMER_DNA_GAP_NT,
+        "minimum_scope": "Native design support requirement; activity and selectivity require separate evidence.",
+        "linkage_representation": {
+            "proposal_field": "recommendation.architecture.linkages",
+            "compiled_field": "recommendation.linkage_specification",
+            "PS": "For MOE/OMe full-PS chemistry, null expands to length-1 explicit PS entries. Both representations specify the same backbone.",
+            "PHOSPHORODIAMIDATE": "PMO requires null in both representations; PS/PO linkage arrays are unsupported.",
+            "explicit_arrays": "Native MOE/OMe designs require exactly length-1 PS entries. Mixed PS/PO identity is unsupported.",
+        },
+    }
+
+
 @dataclass(frozen=True)
 class GapmerArchitecture:
     wing_5prime: int
@@ -79,8 +97,8 @@ def require_modality_chemistry(modality, label):
         raise ValueError(f'Design modality {modality} requires {expected} architecture; '
                          f'selected {label} encodes {actual}. Resolve the chemistry/mechanism conflict before design.')
     architecture = gapmer_architecture(label)
-    if modality == 'gapmer' and architecture and architecture.dna_gap < 6:
-        raise ValueError('Native RNase H gapmer design requires a supported DNA gap of at least 6 nt; '
+    if modality == 'gapmer' and architecture and architecture.dna_gap < MIN_NATIVE_GAPMER_DNA_GAP_NT:
+        raise ValueError(f'Native RNase H gapmer design requires a supported DNA gap of at least {MIN_NATIVE_GAPMER_DNA_GAP_NT} nt; '
                          'a shorter physical architecture cannot establish that mechanism. Do not substitute another gap.')
 
 

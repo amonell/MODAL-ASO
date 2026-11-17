@@ -66,7 +66,7 @@ def test_non_graph_responses_stay_unchanged(raw):
 def install_reviews(monkeypatch):
     reviews = []
 
-    async def no_clarification(_prompt, planned):
+    async def no_clarification(_prompt, planned, *, source_artifacts=None):
         return planned
 
     async def review(prompt):
