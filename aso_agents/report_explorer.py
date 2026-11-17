@@ -2,6 +2,7 @@
 import html
 import json
 from .report_attribute_ui import ATTRIBUTE_HTML, ATTRIBUTE_SCRIPT
+from .report_binding_map import BINDING_MAP_SCRIPT
 from .report_approaches import approach_html, context_approaches, ordered_contexts
 from .report_exon_names import exon_naming_html
 from .report_recommendations import recommendations_html
@@ -123,10 +124,13 @@ def explorer_html(data):
 <div class="report-exploration-layout" data-role="exploration-layout">
 '''+ATTRIBUTE_HTML.replace('<!-- BASIC_FILTERS -->', filters)+'''
 <section class="report-binding-view" data-role="map-section" id="'''+anchor+'''-binding" tabindex="-1" hidden><h2>Where the ASOs bind</h2><label class="report-sub" data-role="chromosome-control" hidden>Chromosome <select data-role="map-chromosome" aria-label="Map chromosome"></select></label><p class="report-map-description" data-role="map-description"></p>
+<p class="report-sub" data-role="map-target-note" hidden></p>
+<div class="report-map-controls"><label data-role="map-region-control" hidden>Map region <select data-role="map-region" aria-label="Map region"></select></label><label data-role="map-values-control" hidden><input type="checkbox" data-role="map-values"> Show values by position</label></div>
 <div class="report-map" tabindex="0" role="region" aria-label="Scrollable map of ASO binding sites"><canvas data-role="map" role="img" aria-label="ASO binding map; use the candidate table to select ASOs with a keyboard"></canvas></div>
 <div class="report-legend"><span class="report-gradient"></span><span data-role="legend"></span><div class="report-category-legend" data-role="category-legend"></div></div>
-<div class="report-pagination"><span data-role="map-status"></span><div><button class="report-button" data-action="map-previous">Previous rows</button><button class="report-button" data-action="map-next">Next rows</button></div></div>
-<p class="report-map-tip" data-role="map-tip" aria-live="polite">Select an ASO in the map or table to add it to your basket.</p></section>
+<div class="report-pagination"><span data-role="map-status" aria-live="polite"></span><div data-role="map-paging"><button class="report-button" data-action="map-previous">Previous rows</button><button class="report-button" data-action="map-next">Next rows</button></div></div>
+<p class="report-map-tip" data-role="map-tip" aria-live="polite">Select an ASO in the map or table to add it to your basket.</p>
+<details class="report-map-sites" data-role="map-sites" hidden><summary data-role="map-sites-summary">Splice sites</summary><p class="report-sub">Splice sites are RNA cut-and-join positions. Teal marks the target for this approach.</p><div class="report-map-site-list" tabindex="0" role="region" aria-label="Recorded splice sites"><table data-report-native="true"><thead><tr><th scope="col">Splice site</th><th scope="col">Map region</th></tr></thead><tbody data-role="map-sites-body"></tbody></table></div></details></section>
 </div>
 <h2 id="'''+anchor+'''-asos" tabindex="-1">Explore all ASOs</h2>
 <p class="report-sub" data-role="metric-note"></p>
@@ -161,6 +165,7 @@ const ramp=value=>{if(!finite(value)||value<=0)return '#e9eded';const a=Math.pow
 const csvCell=value=>{let text=String(value??'');if(typeof value==='string'&&!['+','-'].includes(text)&&'=+@-'.includes(text.trimStart().charAt(0))&&text.trim())text="'"+text;return '"'+text.replaceAll('"','""')+'"';};
 const download=(name,text,type)=>{const url=URL.createObjectURL(new Blob([text],{type:type||'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();setTimeout(()=>{link.remove();URL.revokeObjectURL(url);},1000);};
 /* ATTRIBUTE_HELPERS */
+/* BINDING_MAP_HELPERS */
 function setup(root){
  if(root.dataset.initialized)return;root.dataset.initialized='true';
  const packet=root.querySelector('.report-explorer-data');if(!packet)return;
@@ -178,7 +183,7 @@ function setup(root){
  const panelLabel=data.recommendation_review?.status==='completed'?'Recommended ASOs':data.kind==='design'?'Design panel':'Saved panel';
  let clearedBasket=null;
  const activityViews=new Map();let activityScenarios=[];
- let page=0,mapPage=0,pageSize=25,sort='effect',ascending=false,filtered=[],mapHits=[],mapFrame=0,printing=false;
+ let page=0,mapPage=0,pageSize=25,sort='effect',ascending=false,filtered=[],mapHits=[],mapSiteHits=[],mapScope=null,mapSitesHTML='',mapFrame=0,printing=false;
  try{const saved=JSON.parse(localStorage.getItem(storageKey)||'[]');if(Array.isArray(saved))saved.forEach(id=>{const r=byId.get(id);if(r)basket.set(r.molecule,r);});}catch{q('storage-notice').textContent='Selections stay available while this report is open. Browser storage is unavailable.';q('storage-notice').hidden=false;}
  let scopeId=null,scopedRows=[],baseKey=null,baseRows=[];
  const scopeRows=()=>{const id=q('context').value;if(id!==scopeId){scopeId=id;scopedRows=id==='all'?rows:rows.filter(r=>r.context===id);}return scopedRows;};
@@ -364,81 +369,120 @@ function setup(root){
  function scheduleMap(){cancelAnimationFrame(mapFrame);mapFrame=requestAnimationFrame(drawMap);}
  function drawMap(){
   const context=contexts.get(q('context').value),section=q('map-section');
-  let candidates=context?filtered.filter(r=>r.intervals.length):[];
   const scoped=context?scopeRows().filter(r=>r.intervals.length):[];
   const chromKey=value=>String(value).replace(/^chr/,'');
   const chromosomes=[...new Set(scoped.flatMap(r=>r.intervals.map(p=>chromKey(p.chrom))))];
-  section.hidden=!context||!scoped.length;
-  q('map-jump').hidden=section.hidden;
-  if(section.hidden){mapHits=[];return;}
+  section.hidden=!context||!scoped.length;q('map-jump').hidden=section.hidden;
+  mapHits=[];mapSiteHits=[];
+  if(section.hidden)return;
   let chromosome=q('map-chromosome').value;if(!chromosomes.includes(chromosome))chromosome=chromosomes[0];
   q('map-chromosome').innerHTML=chromosomes.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');q('map-chromosome').value=chromosome;
   q('chromosome-control').hidden=chromosomes.length<2;
-  candidates=candidates.filter(r=>r.intervals.every(p=>chromKey(p.chrom)===chromosome));
-  const all=scopeRows().filter(r=>r.intervals.length&&r.intervals.every(p=>chromKey(p.chrom)===chromosome));
-  const sites=(context.sites||[]).filter(s=>chromKey(s.chrom)===chromosome);
-  const intervals=all.flatMap(r=>r.intervals.map(p=>[Math.max(1,p.start-12),p.end+12])).concat(sites.map(s=>[Math.max(1,s.position-12),s.position+12])).sort((a,b)=>a[0]-b[0]);
-  const segments=[];intervals.forEach(p=>{const last=segments.at(-1);if(last&&p[0]<=last[1]+70)last[1]=Math.max(last[1],p[1]);else segments.push(p.slice());});
+  const onChromosome=r=>r.intervals.length&&r.intervals.every(p=>chromKey(p.chrom)===chromosome);
+  const all=scoped.filter(onChromosome),regions=bindingRegions(all),sites=(context.sites||[]).filter(s=>chromKey(s.chrom)===chromosome);
+  if(!regions.length){section.hidden=true;q('map-jump').hidden=true;return;}
+  const regionFor=position=>regions.findIndex(([a,b])=>position>=a&&position<=b);
+  const scopeKey=context.id+':'+chromosome;
+  if(scopeKey!==mapScope){
+   mapScope=scopeKey;mapPage=0;
+   q('map-region').innerHTML='<option value="all">All binding regions</option>'+regions.map(([a,b],i)=>`<option value="${i}">Region ${i+1} · ${a.toLocaleString()}–${b.toLocaleString()}</option>`).join('');
+   // A large region catalog opens on a target-containing region. The selector
+   // keeps every other region, including an overview, one action away.
+   const target=sites.find(s=>s.target&&regionFor(s.position)>=0);
+   q('map-region').value=regions.length>4?String(target?regionFor(target.position):0):'all';
+  }
+  q('map-region-control').hidden=regions.length<2;
+  const region=q('map-region').value,segments=region==='all'?regions:[regions[Number(region)]];
   const metric=attributeView.metric(),value=r=>metric?.value(r),direction=metric?.direction==='lower'?1:-1;
-  const tickWidth=metric?.kind==='number'&&metric.exists?Math.max(...[metric.low,metric.high,(metric.low+metric.high)/2].map(v=>metric.tick(v).length*5+12)):54;
-  const canvas=q('map'),width=Math.max(700,Math.floor(canvas.parentElement.clientWidth-24)),left=Math.min(180,Math.max(54,tickWidth)),right=20,gap=Math.min(28,width/Math.max(3,segments.length*3));
-  let total=segments.reduce((s,p)=>s+p[1]-p[0]+1,0),available=width-left-right-gap*(segments.length-1),offset=left;
-  const axes=segments.map(([a,b])=>{const length=(b-a+1)/total*available;const result={a,b,x:offset,width:length};offset+=length+gap;return result;});
-  const axisFor=p=>axes.find(a=>p>=a.a&&p<=a.b),x=p=>{const a=axisFor(p);return a?a.x+(p-a.a)/(a.b-a.a+1)*a.width:null;};
+  const hasMetric=metric?.kind==='number'&&metric.exists,showValues=hasMetric&&q('map-values').checked;
+  q('map-values-control').hidden=!hasMetric;
+  const tickWidth=showValues?Math.max(...[metric.low,metric.high,(metric.low+metric.high)/2].map(v=>metric.tick(v).length*6+12)):0;
+  const canvas=q('map'),padding=getComputedStyle(canvas.parentElement);
+  const availableWidth=canvas.parentElement.clientWidth-parseFloat(padding.paddingLeft)-parseFloat(padding.paddingRight);
+  const width=Math.max(240,Math.floor(availableWidth),segments.length>4?Math.min(4096,segments.length*180):0),left=Math.min(180,Math.max(16,tickWidth)),right=16;
+  const axes=bindingAxes(segments,width,left,right),axisFor=p=>axes.find(a=>p>=a.a&&p<=a.b+1);
+  const x=p=>{const a=axisFor(p);return a?a.x+(p-a.a)/(a.b-a.a+1)*a.width:null;};
+  const candidates=filtered.filter(onChromosome).filter(r=>r.intervals.some(p=>x(p.start)!==null));
   candidates.sort((a,b)=>{const x=value(a),y=value(b);return x==null?(y==null?a.order-b.order:1):y==null?-1:(x-y)*direction||(a.native_rank??a.order)-(b.native_rank??b.order);});
   const lanes=[],packed=[];
-  // Each lane is ordered by position. Binary search preserves the original
-  // first-free-lane layout without scanning every earlier block on every drag.
   function laneSlot(blocks,lo,hi){
    let left=0,right=blocks.length;
-   while(left<right){const middle=(left+right)>>>1;if(blocks[middle][1]+2<lo)left=middle+1;else right=middle;}
-   return left<blocks.length&&blocks[left][0]<=hi+2?-1:left;
+   while(left<right){const middle=(left+right)>>>1;if(blocks[middle][1]+4<lo)left=middle+1;else right=middle;}
+   return left<blocks.length&&blocks[left][0]<=hi+4?-1:left;
   }
-  candidates.forEach(r=>{const blocks=r.intervals.map(p=>[x(p.start),x(p.end)]).filter(p=>p.every(v=>v!==null));if(!blocks.length)return;
+  candidates.forEach(r=>{const blocks=r.intervals.map(p=>[x(p.start),x(p.end+1)]).filter(p=>p.every(v=>v!==null)).map(([lo,hi])=>[lo,Math.max(hi,lo+2)]);if(!blocks.length)return;
    const lo=Math.min(...blocks.map(b=>b[0])),hi=Math.max(...blocks.map(b=>b[1]));let lane=0,slot=0;
    while(lane<lanes.length&&(slot=laneSlot(lanes[lane],lo,hi))<0)lane++;
    if(!lanes[lane]){lanes[lane]=[];slot=0;}lanes[lane].splice(slot,0,[lo,hi]);packed.push({r,blocks,lane});
   });
-  const laneSize=35;mapPage=Math.max(0,Math.min(mapPage,Math.max(0,Math.ceil(lanes.length/laneSize)-1)));
-  const hasMetric=metric?.kind==='number'&&metric.exists;
-  const visibleLanes=Math.max(1,Math.min(laneSize,lanes.length-mapPage*laneSize)),trackY=hasMetric?220:115,height=trackY+visibleLanes*6+52;
-  const dpr=window.devicePixelRatio||1;canvas.width=width*dpr;canvas.height=height*dpr;canvas.style.width=width+'px';canvas.style.height=height+'px';
-  const c=canvas.getContext('2d');if(!c)return;c.scale(dpr,dpr);c.fillStyle='#fff';c.fillRect(0,0,width,height);
-  const text=(value,xx,yy,size=10,color='#5b6670',align='left')=>{c.font=`${size}px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif`;c.fillStyle=color;c.textAlign=align;c.fillText(String(value),xx,yy);};
-  const line=(x1,y1,x2,y2,color='#dbe4e8')=>{c.strokeStyle=color;c.beginPath();c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke();};
-  text(context.transcript||'Recorded binding region',4,12,11);
-  axes.forEach(a=>line(a.x,33,a.x+a.width,33,'#b5c2c8'));
+  const laneSize=24,pages=Math.max(1,Math.ceil(lanes.length/laneSize));mapPage=Math.max(0,Math.min(mapPage,pages-1));
+  const visible=packed.filter(p=>p.lane>=mapPage*laneSize&&p.lane<(mapPage+1)*laneSize);
+  const visibleSites=sites.filter(s=>x(s.position)!==null).map(s=>({...s,x:x(s.position)}));
+  const outsideTargets=sites.filter(s=>s.target&&x(s.position)===null);
+  q('map-target-note').hidden=!outsideTargets.length;
+  q('map-target-note').textContent=outsideTargets.map(s=>{const i=regionFor(s.position);return 'Target · '+s.label+' · '+(i>=0?'Region '+(i+1):'outside the ASO binding regions');}).join('; ');
+  const c=canvas.getContext('2d');if(!c)return;
+  const font='-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';c.font=`11px ${font}`;
+  const labels=bindingLabels(visibleSites,t=>c.measureText(t).width,left,width-right);
+  const referenceY=24+Math.max(1,...labels.map(s=>s.lane+1))*20;
+  const plotBottom=referenceY+128,plotHeight=74,trackY=showValues?plotBottom+48:referenceY+58;
+  const visibleLanes=Math.max(1,Math.min(laneSize,lanes.length-mapPage*laneSize)),pitch=11,bottom=trackY+visibleLanes*pitch+12,height=bottom+34;
+  const dpr=window.devicePixelRatio||1;canvas.width=width*dpr;canvas.height=height*dpr;canvas.style.width=width+'px';canvas.style.height=height+'px';c.scale(dpr,dpr);
+  c.fillStyle='#fff';c.fillRect(0,0,width,height);
+  const text=(value,xx,yy,size=11,color='#5b6670',align='left')=>{c.font=`${size}px ${font}`;c.fillStyle=color;c.textAlign=align;c.fillText(String(value),xx,yy);};
+  const line=(x1,y1,x2,y2,color='#dbe4e8')=>{c.strokeStyle=color;c.lineWidth=1;c.beginPath();c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke();};
+  axes.forEach(a=>line(a.x,referenceY,a.x+a.width,referenceY,'#b5c2c8'));
   if(context.reference_chrom&&chromKey(context.reference_chrom)===chromosome)
-   (context.exons||[]).forEach(e=>axes.forEach(a=>{const lo=Math.max(e.start,a.a),hi=Math.min(e.end,a.b);if(hi<lo)return;const xx=x(lo),ww=Math.max(2,x(hi)-xx);c.fillStyle='#c9d6dc';c.fillRect(xx,26,ww,14);const name=e.label||'Annotated exon '+e.index;if(ww>name.length*5)text(name,xx+ww/2,23,9,'#48565e','center');}));
-  sites.forEach((s,i)=>{const xx=x(s.position);if(xx===null)return;const yy=59+(i%3)*13;line(xx,40,xx,yy-7,s.target?'#15758c':'#a8b4ba');text(s.label+(s.target?' · target':''),Math.min(width-10,Math.max(10,xx+5)),yy,9,s.target?'#15758c':'#5b6670',xx>width-220?'right':'left');});
-  let min=metric?.low??0,max=metric?.high??1;if(max===min){const pad=Math.max(1,Math.abs(min)*.05);min=Math.min(min,0);max+=pad;}const range=max-min;
-  if(hasMetric){
-  const metricTitle=metric.label+(metric.unit?' ('+metric.unit+')':'');
-  text(metricTitle.length>100?metricTitle.slice(0,97)+'…':metricTitle,4,107,10);
-  const plotBottom=188,plotHeight=65;
-  [0,.5,1].forEach(f=>{line(left,plotBottom-f*plotHeight,width-right,plotBottom-f*plotHeight,'#eef1f3');text(metric.tick(min+range*f),left-7,plotBottom-f*plotHeight+3,9,'#5b6670','right');});
-  if(min<=0&&max>=0)line(left,plotBottom+min/range*plotHeight,width-right,plotBottom+min/range*plotHeight,'#cad4d9');
-  candidates.filter(r=>finite(value(r))).forEach(r=>{const p=r.intervals[0],xx=x((p.start+p.end)/2);if(xx===null)return;c.fillStyle=attributeView.color(r);c.beginPath();c.arc(xx,plotBottom-(value(r)-min)/range*plotHeight,r.panel_rank!==null?3:2,0,2*Math.PI);c.fill();});
+   (context.exons||[]).forEach(e=>axes.forEach(a=>{const lo=Math.max(e.start,a.a),hi=Math.min(e.end,a.b);if(hi<lo)return;const xx=x(lo),ww=x(hi+1)-xx;c.fillStyle='#c9d6dc';c.fillRect(xx,referenceY-7,Math.max(2,ww),14);
+    const name=e.label||'Annotated exon '+e.index;c.font=`10px ${font}`;if(ww>c.measureText(name).width+12)text(name,xx+ww/2,referenceY+23,10,'#48565e','center');}));
+  visibleSites.forEach(s=>{line(s.x,referenceY-6,s.x,referenceY+8,s.target?'#15758c':'#a8b4ba');
+   if(s.target){c.setLineDash([3,4]);line(s.x,referenceY+10,s.x,bottom,'#c9e0e6');c.setLineDash([]);}
+   mapSiteHits.push({x:s.x-5,y:referenceY-8,w:10,h:18,site:s});
+  });
+  labels.forEach(s=>line(s.x,20+s.lane*20,s.x,referenceY-9,s.target?'#90bdc8':'#e1e7ea'));
+  labels.forEach(s=>{const yy=16+s.lane*20;
+   // Draw every label after the leaders to keep its text clear on all rows.
+   c.fillStyle='#fff';c.fillRect(s.left-3,yy-12,s.width+6,16);text(s.text,s.left,yy,11,s.target?'#126477':'#5b6670');});
+  if(showValues){
+   let min=metric.low,max=metric.high;if(max===min){const pad=Math.max(1,Math.abs(min)*.05);min=Math.min(min,0);max+=pad;}const range=max-min;
+   let title=metric.label+(metric.unit?' ('+metric.unit+')':'');c.font=`11px ${font}`;
+   if(c.measureText(title).width>width-8){while(title&&c.measureText(title+'…').width>width-8)title=title.slice(0,-1);title+='…';}
+   text(title,4,plotBottom-plotHeight-12);
+   [0,.5,1].forEach(f=>{line(left,plotBottom-f*plotHeight,width-right,plotBottom-f*plotHeight,'#eef1f3');text(metric.tick(min+range*f),left-8,plotBottom-f*plotHeight+3,10,'#5b6670','right');});
+   if(min<=0&&max>=0)line(left,plotBottom+min/range*plotHeight,width-right,plotBottom+min/range*plotHeight,'#cad4d9');
+   packed.filter(({r})=>finite(value(r))).forEach(({r,blocks})=>{const [lo,hi]=blocks[0];c.fillStyle=attributeView.color(r);c.beginPath();c.arc((lo+hi)/2,plotBottom-(value(r)-min)/range*plotHeight,r.panel_rank!==null?3:2,0,2*Math.PI);c.fill();});
   }
-  text(candidates.length?(hasMetric?'ASOs · '+(direction===1?'lower':'higher')+' values in the top rows':metric?'ASOs · colored by '+metric.label:'ASOs'):'No ASOs match the current filters',4,trackY-10,10);
-  mapHits=[];packed.forEach(({r,blocks,lane})=>{if(lane<mapPage*laneSize||lane>=(mapPage+1)*laneSize)return;const yy=trackY+(lane-mapPage*laneSize)*6;
-   blocks.forEach(([x0,x1])=>{const w=Math.max(2,x1-x0);c.fillStyle=attributeView.color(r);c.fillRect(x0,yy,w,4.8);
-    if(r.panel_rank!==null||basket.has(r.molecule)){c.strokeStyle=basket.has(r.molecule)?'#111':'#15758c';c.lineWidth=1;c.strokeRect(x0,yy,w,4.8);}mapHits.push({x:x0,y:yy,w,h:6,id:r.id});});});
-  const bottom=trackY+visibleLanes*6+12;
-  axes.forEach((a,i)=>{line(a.x,bottom,a.x+a.width,bottom,'#b7c4ca');if(a.width>75||i===0)text(a.a.toLocaleString(),a.x,bottom+14,9);if(a.width>140)text(a.b.toLocaleString(),a.x+a.width,bottom+14,9,'#5b6670','right');
-   if(i<axes.length-1){c.setLineDash([3,3]);line(a.x+a.width+gap/2,25,a.x+a.width+gap/2,bottom,'#b3bfc5');c.setLineDash([]);if(axes.length<5)text((axes[i+1].a-a.b-1).toLocaleString()+' bp omitted',a.x+a.width+gap/2,bottom+31,9,'#5b6670','center');}});
-  q('map-description').textContent=`Chromosome ${chromosome} · 1-based genomic coordinates${context.reference_strand?' · '+context.reference_strand+' strand':''}. ${context.exon_naming?.verified?'Curated exon names; expand “Exon names and reference” for their source. ':context.transcript?'Exons are numbered in RNA order along this transcript. ':''}${axes.length>1?(axes.length-1)+(axes.length===2?' untiled gap is collapsed. ':' untiled gaps are collapsed. '):''}The table retains every binding interval.`;
-  const legend=attributeView.legend(),gradient=root.querySelector('.report-gradient');gradient.hidden=!legend.gradient;gradient.style.background=legend.background||'';
-  q('legend').textContent=legend.text;
+  text(candidates.length?(hasMetric?'ASOs · '+(direction===1?'lower':'higher')+' values first':'ASO binding sites'):'No ASOs match the current filters',4,trackY-15);
+  visible.forEach(({r,blocks,lane})=>{const yy=trackY+(lane-mapPage*laneSize)*pitch;
+   blocks.forEach(([lo,hi])=>{const w=hi-lo;c.fillStyle=attributeView.color(r);c.fillRect(lo,yy,w,7);
+    if(r.panel_rank!==null||basket.has(r.molecule)){c.strokeStyle=basket.has(r.molecule)?'#111':'#15758c';c.lineWidth=1;c.strokeRect(lo,yy,w,7);}mapHits.push({x:lo,y:yy,w,h:9,id:r.id});});});
+  axes.forEach((a,i)=>{line(a.x,bottom,a.x+a.width,bottom,'#b7c4ca');if(i<axes.length-1){const xx=(a.x+a.width+axes[i+1].x)/2;
+   for(const yy of [referenceY,bottom]){line(xx-5,yy+4,xx-1,yy-4,'#9daeb6');line(xx+1,yy+4,xx+5,yy-4,'#9daeb6');}
+  }});
+  c.font=`10px ${font}`;bindingTicks(axes,t=>c.measureText(t).width).forEach(t=>text(t.text,t.x,bottom+19,10,'#5b6670',t.align));
+  q('map-description').textContent=`Chromosome ${chromosome}${context.reference_strand?' · '+context.reference_strand+' strand':''}${context.transcript?' · '+context.transcript:''}. ${region==='all'?regions.length+' binding '+(regions.length===1?'region':'regions'):'Region '+(Number(region)+1)+' of '+regions.length}. Genomic positions are 1-based.${axes.length>1?' Gaps between regions are collapsed.':''}`;
+  const legend=attributeView.legend(),gradient=root.querySelector('.report-gradient');gradient.hidden=!legend.gradient;gradient.style.background=legend.background||'';q('legend').textContent=legend.text;
   q('category-legend').innerHTML=(legend.items||[]).map(item=>`<span><i style="background:${item.color}"></i>${esc(item.label)} (${item.count.toLocaleString()})</span>`).join('');
-  q('map-status').textContent=lanes.length?`ASO lanes ${mapPage*laneSize+1}–${Math.min((mapPage+1)*laneSize,lanes.length)} of ${lanes.length}`:'0 matching ASOs';
-  action('map-previous').disabled=mapPage===0;action('map-next').disabled=(mapPage+1)*laneSize>=lanes.length;
+  q('map-status').textContent=`Showing ${visible.length.toLocaleString()} of ${candidates.length.toLocaleString()} matching ASOs`+(pages>1?` · Page ${mapPage+1} of ${pages}`:'');
+  q('map-paging').hidden=pages===1;action('map-previous').disabled=mapPage===0;action('map-next').disabled=mapPage+1>=pages;
+  canvas.setAttribute('aria-label',`ASO binding map on chromosome ${chromosome}. ${visible.length} ASOs shown. Use the candidate table to select ASOs with a keyboard.`);
+  q('map-tip').textContent='Select an ASO in the map or table to add it to your basket.';
+  q('map-sites').hidden=!sites.length;
+  q('map-sites-summary').textContent=`Splice sites · ${visibleSites.length} in view · ${sites.length} recorded`;
+  const siteList=[...sites].sort((a,b)=>Number(b.target)-Number(a.target)||a.position-b.position).map(s=>{const i=regionFor(s.position);
+   return `<tr><td>${s.target?'<strong>Target · '+esc(s.label)+'</strong>':esc(s.label)}</td><td>${i>=0?`<button type="button" class="report-button" data-map-region="${i}">Region ${i+1}</button>`:'Outside the ASO binding regions'}</td></tr>`;}).join('');
+  if(mapSitesHTML!==siteList){mapSitesHTML=siteList;q('map-sites-body').innerHTML=siteList;}
  }
  function mapHit(event){const rect=q('map').getBoundingClientRect(),xx=event.clientX-rect.left,yy=event.clientY-rect.top;return mapHits.find(b=>xx>=b.x&&xx<=b.x+b.w&&yy>=b.y&&yy<=b.y+b.h);}
  q('map').addEventListener('click',event=>{const hit=mapHit(event);if(hit)toggle(hit.id);});
- q('map').addEventListener('pointermove',event=>{const hit=mapHit(event),r=hit&&byId.get(hit.id);q('map').style.cursor=r?'pointer':'default';q('map-tip').textContent=r?`${r.name} · ${r.aso} · ${r.location} · ${attributeView.describe(r)}`:'Select an ASO in the map or table to add it to your basket.';});
+ q('map').addEventListener('pointermove',event=>{const hit=mapHit(event),r=hit&&byId.get(hit.id),rect=q('map').getBoundingClientRect();
+  const site=mapSiteHits.find(s=>event.clientX-rect.left>=s.x&&event.clientX-rect.left<=s.x+s.w&&event.clientY-rect.top>=s.y&&event.clientY-rect.top<=s.y+s.h)?.site;
+  q('map').style.cursor=r?'pointer':'default';q('map-tip').textContent=r?`${r.name} · ${r.aso} · ${r.location} · ${attributeView.describe(r)}`:site?(site.target?'Target · ':'')+site.label:'Select an ASO in the map or table to add it to your basket.';
+ });
  root.addEventListener('change',event=>{if(event.target.dataset.pick)toggle(event.target.dataset.pick);});
  root.addEventListener('click',event=>{
+  const mapRegion=event.target.closest('[data-map-region]');
+  if(mapRegion){q('map-region').value=mapRegion.dataset.mapRegion;mapPage=0;scheduleMap();return;}
   const recommendation=event.target.closest('[data-recommendation-pick]');
   if(recommendation){toggle(recommendation.dataset.recommendationPick);return;}
   const approach=event.target.closest('[data-approach-select]');
@@ -479,6 +523,8 @@ function setup(root){
  q('activity-context').addEventListener('change',()=>{updateActivity();attributeView.refresh();q('activity-minimum').value='';sort='oligoai';ascending=false;page=0;mapPage=0;renderTable();});
  q('context').addEventListener('change',contextChanged);q('page-size').addEventListener('change',()=>{pageSize=Number(q('page-size').value);page=0;renderTable();});
  q('map-chromosome').addEventListener('change',()=>{mapPage=0;scheduleMap();});
+ q('map-region').addEventListener('change',()=>{mapPage=0;scheduleMap();});
+ q('map-values').addEventListener('change',scheduleMap);
  q('top-count').addEventListener('input',updateBulkAction);
  let oldPage=0;addEventListener('beforeprint',()=>{oldPage=page;printing=true;page=0;renderTable();});addEventListener('afterprint',()=>{printing=false;page=oldPage;renderTable();});
  if(typeof ResizeObserver!=='undefined')new ResizeObserver(scheduleMap).observe(root);
@@ -507,3 +553,4 @@ document.querySelectorAll('.report-explorer').forEach(setup);
 })();
 </script>'''
 EXPLORER_SCRIPT = EXPLORER_SCRIPT.replace('/* ATTRIBUTE_HELPERS */', ATTRIBUTE_SCRIPT)
+EXPLORER_SCRIPT = EXPLORER_SCRIPT.replace('/* BINDING_MAP_HELPERS */', BINDING_MAP_SCRIPT)
