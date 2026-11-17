@@ -178,11 +178,15 @@ def main(argv=None):
     try:
         if sys.platform == "win32" and argv and argv[0] not in {"--help", "-h", "--version"}:
             raise RuntimeError("On Windows, run MODAL-ASO inside WSL2: https://learn.microsoft.com/windows/wsl/install")
+        if argv and argv[0] == "gui":
+            from .gui.launcher import launch
+            return launch(argv[1:])
         if argv and argv[0] not in {"setup", "doctor", "assets", "--help", "-h", "--version"}:
             return _run(argv[1:] if argv[0] == "run" else argv)
         parser = argparse.ArgumentParser(prog="modal-aso", description='Design and evaluate ASOs. Run: modal-aso "your request"')
         parser.add_argument("--version", action="version", version=f"MODAL-ASO {__version__}")
         sub = parser.add_subparsers(dest="command")
+        sub.add_parser("gui", help="Launch the optional local browser interface")
         setup = sub.add_parser("setup", help="Install reusable tools, references and models")
         setup.add_argument("--data-dir", type=Path, help="Persistent data directory (saved for future sessions)")
         setup.add_argument("--species", nargs="+", choices=["human", "mouse"], default=["human"])
