@@ -32,6 +32,7 @@ FINAL_PACKET_CHARACTERS = 840000
 FINAL_BATCH_MOLECULES = 256
 SCREEN_WORKERS = 32
 SCREEN_THRESHOLD = 128
+AUDIT_BATCH_MOLECULES = 3
 ATTEMPTS = 3
 EDITORIAL_ROUNDS = 6
 DEFAULT_OUTPUT_TOKENS = 16384
@@ -474,6 +475,15 @@ sequence-compatible target site. Check the actual claim before raising an issue:
 a value above tenfold supports "more than tenfold", and repeating the same gene
 list or fact supplies no correction. Preserve already-supported, clear prose.
 '''
+    if kind == 'audit':
+        instructions += '''
+The audit_scope assigns candidate IDs and whether to check the panel summary and
+size_reason. Review every claim in those assigned fields against the complete
+supplied evidence, including comparisons with other ASOs. Return reviewed_ids,
+checks and field_reviews for that scope. The full draft and panel remain context
+for cross-candidate consistency. Report any concrete factual inconsistency that
+affects the review in issues, including one involving another displayed candidate.
+'''
     return instructions + '\nUse exactly the fields declared in output_schema; omit extra type or status fields.\n'
 
 
@@ -678,7 +688,14 @@ def _previous_audited_draft(payload, directory, configuration):
         if receipt.get('kind') != 'audit' or receipt.get('status') != 'accepted' or receipt.get('configuration') != configuration:
             continue
         request = receipt.get('input') or {}
-        if {key: value for key, value in request.items() if key not in {'draft', 'numeric_comparisons'}} != payload:
+        original_payload = {key: value for key, value in request.items()
+                            if key not in {'draft', 'numeric_comparisons', 'audit_scope'}}
+        if 'audit_scope' in request:
+            draft_ids = {item.get('candidate_id') for item in (request.get('draft') or {}).get('recommendations', [])}
+            if draft_ids != set(payload.get('selected_ids') or []):
+                continue
+            original_payload['selected_ids'] = payload['selected_ids']
+        if original_payload != payload:
             continue
         if path.stem != receipt.get('key') or receipt.get('response_sha256') != digest(receipt.get('response')):
             continue
@@ -1133,15 +1150,16 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 response = merge(patch)
                 # Expand short citation IDs after merging with preserved evidence.
                 explain_check(response)
-            def audit_check(audit):
+            def audit_check(audit, review_ids=ids, include_panel=True):
                 errors = []
                 # Some reviewers repeat the whole panel in their coverage
                 # metadata. Field reviews below must still cover this batch
                 # exactly; unrelated metadata cannot approve another ASO.
-                audit['reviewed_ids'] = [key for key in audit['reviewed_ids'] if key in ids]
-                audit['checks'] = [item for item in audit['checks'] if item['candidate_id'] in ids]
+                audit['reviewed_ids'] = [key for key in audit['reviewed_ids'] if key in review_ids]
+                audit['checks'] = [item for item in audit['checks'] if item['candidate_id'] in review_ids]
                 other_panel_ids = set(selected_ids) - set(ids)
-                audit['field_reviews'] = [item for item in audit['field_reviews'] if item['candidate_id'] not in other_panel_ids]
+                outside_scope = (set(selected_ids) - set(review_ids)) | (set() if include_panel else {'panel'})
+                audit['field_reviews'] = [item for item in audit['field_reviews'] if item['candidate_id'] not in outside_scope]
                 audit['issues'] = [item for item in audit['issues'] if item['candidate_id'] not in other_panel_ids]
                 audit['quantitative_comparisons'] = [item for item in audit['quantitative_comparisons']
                                                     if item['candidate_id'] not in other_panel_ids]
@@ -1213,20 +1231,21 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                             if item['candidate_id'] == key and item['field'] == field:
                                 item['supported'] = False
                                 item['evidence_statement'] = problem
-                if set(audit['reviewed_ids']) != set(ids) or len(audit['reviewed_ids']) != len(ids):
+                if set(audit['reviewed_ids']) != set(review_ids) or len(audit['reviewed_ids']) != len(review_ids):
                     errors.append('Review each selected ID exactly once.')
                 if any(issue['candidate_id'] not in [*ids, 'panel'] for issue in audit['issues']):
                     errors.append('Issues must name a selected ID or panel.')
                 checks = audit['checks']
-                if len(checks) != len(ids) or {c['candidate_id'] for c in checks} != set(ids):
+                if len(checks) != len(review_ids) or {c['candidate_id'] for c in checks} != set(review_ids):
                     errors.append('Provide every required check for each selected ID exactly once.')
                 for check in checks:
                     if any(check[key] is False for key in AUDIT_CHECKS) and not any(
                             issue['candidate_id'] == check['candidate_id'] for issue in audit['issues']):
                         errors.append('Every failed check needs an actionable issue for its candidate.')
-                expected_fields = {(key, field) for key in ids
+                expected_fields = {(key, field) for key in review_ids
                     for field in ('why_chosen', 'tradeoff', 'panel_role')}
-                expected_fields.update({('panel', 'summary'), ('panel', 'size_reason')})
+                if include_panel:
+                    expected_fields.update({('panel', 'summary'), ('panel', 'size_reason')})
                 fields = audit['field_reviews']
                 if len(fields) != len(expected_fields) or {
                         (item['candidate_id'], item['field']) for item in fields} != expected_fields:
@@ -1256,10 +1275,26 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                         'absolute_descending_rank': {key: 1 + sum(abs(v) > abs(value) for v in values.values()) for key, value in values.items()}})
             _progress(directory, f'Checking the evidence and rationale for {len(ids)} recommendations.',
                       phase='auditing', total=len(selected_ids))
-            audit = _call('audit', {**payload, 'draft': response, 'numeric_comparisons': numeric_comparisons}, AUDIT_SCHEMA,
-                          audit_check, directory, configuration)
+            audit_parts = [ids[start:start + AUDIT_BATCH_MOLECULES]
+                           for start in range(0, len(ids), AUDIT_BATCH_MOLECULES)] or [[]]
+            def audit_part(index, part):
+                return _call('audit', {**payload, 'selected_ids': part, 'draft': response,
+                    'numeric_comparisons': numeric_comparisons,
+                    'audit_scope': {'candidate_ids': part, 'include_panel_fields': index == 0}},
+                    AUDIT_SCHEMA, lambda value: audit_check(value, part, index == 0), directory, configuration)
+            if len(audit_parts) == 1:
+                audits = [audit_part(0, audit_parts[0])]
+            else:
+                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(audit_parts))) as executor:
+                    futures = [executor.submit(copy_context().run, audit_part, index, part)
+                               for index, part in enumerate(audit_parts)]
+                    audits = [future.result() for future in futures]
+            # Every displayed field has an assigned audit; preserve factual
+            # issues raised by any reviewer, including cross-candidate issues.
+            audit = {key: list({digest(item): item for part in audits for item in part[key]}.values())
+                     for key in AUDIT_SCHEMA['properties']}
             write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
-                                        'draft_sha256': digest(response)})
+                                        'draft_sha256': digest(response), 'audit': audit})
             if not audit['issues']:
                 for item in response['recommendations']:
                     entry = catalog[item['candidate_id']]

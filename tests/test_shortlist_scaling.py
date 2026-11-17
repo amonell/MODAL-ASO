@@ -118,6 +118,57 @@ def test_supported_audit_fields_can_omit_duplicate_prose(tmp_path, monkeypatch):
     assert receipt['status'] == 'completed'
 
 
+def test_panel_audits_run_concurrently_with_full_comparison_context(tmp_path, monkeypatch):
+    from threading import Barrier
+    barrier = Barrier(2, timeout=5)
+    audits = []
+    def parallel(kind, payload, schema):
+        if kind == 'audit':
+            audits.append(payload)
+            barrier.wait()
+        return nomination_model(kind, payload, schema)
+    monkeypatch.setattr(review, '_model_call', parallel)
+    selected, _, receipt = run(pool(6), tmp_path, {'candidate_limit': 6})
+    assert receipt['status'] == 'completed' and len(selected) == 6
+    assert len(audits) == 2
+    ids = [key for payload in audits for key in payload['selected_ids']]
+    assert len(ids) == len(set(ids)) == 6
+    assert set(ids) == set(receipt['selected_ids'])
+    assert sum(payload['audit_scope']['include_panel_fields'] for payload in audits) == 1
+    assert all(len(payload['complete_panel']) == 6 and len(payload['draft']['recommendations']) == 6
+               and len(payload['evidence']['ids']) == 6 for payload in audits)
+    checkpoint = json.loads(next((tmp_path/'recommendation_review/editorial').glob('*.json')).read_text())
+    assert set(checkpoint['audit']['reviewed_ids']) == set(ids)
+    assert len(checkpoint['audit']['field_reviews']) == 20
+    assert checkpoint['audit']['issues'] == []
+    for path in (tmp_path/'recommendation_review/editorial').glob('*.json'):
+        path.unlink()
+    saved_path = tmp_path/'recommendation_review.json'
+    saved = json.loads(saved_path.read_text())
+    saved['input_sha256'] = 'earlier-source'
+    saved_path.write_text(json.dumps(saved))
+    def offline(*args):
+        raise AssertionError('Accepted scoped audit components should reopen offline')
+    monkeypatch.setattr(review, '_model_call', offline)
+    _, _, resumed = run(pool(6), tmp_path, {'candidate_limit': 6})
+    assert resumed['status'] == 'completed'
+
+
+def test_missing_field_in_one_parallel_audit_blocks_panel_approval(tmp_path, monkeypatch):
+    def incomplete(kind, payload, schema):
+        response, metadata = nomination_model(kind, payload, schema)
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields']:
+            key = payload['selected_ids'][0]
+            response['field_reviews'] = [item for item in response['field_reviews']
+                if (item['candidate_id'], item['field']) != (key, 'why_chosen')]
+        return response, metadata
+    monkeypatch.setattr(review, '_model_call', incomplete)
+    selected, _, receipt = run(pool(6), tmp_path, {'candidate_limit': 6})
+    assert len(selected) == 6 and receipt['status'] == 'unavailable'
+    assert receipt['failure_code'] == 'audit_review_incomplete'
+    assert receipt['reviewed_molecule_count'] == 0
+
+
 def test_selectivity_uncertainty_is_checked_semantically(tmp_path, monkeypatch):
     calls = []
     def uncertainty(kind, payload, schema):
