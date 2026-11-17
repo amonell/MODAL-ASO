@@ -276,7 +276,8 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
     if not report_payload.get('candidate_explorer'):
         from .report_explorer_data import project_run
         report_payload = {**report_payload, 'candidate_explorer': project_run(
-            report_payload.get('oligoai_report_dir') or (report_payload.get('meta') or {}).get('run_dir'))}
+            report_payload.get('oligoai_report_dir') or (report_payload.get('meta') or {}).get('run_dir'),
+            request=(report_payload.get('meta') or {}).get('user_request'))}
     # The explorer owns its compact packet. Legacy tabs have no dependency on
     # that pool; embedding a second expanded copy makes large reports unwieldy.
     from .report_activity import evaluation_preview
