@@ -4,7 +4,9 @@ ATTRIBUTE_HTML = '''
 <aside class="report-attributes" data-role="attribute-explorer" aria-label="ASO attributes and filters" hidden>
 <div class="report-attribute-toolbar report-sidebar-toolbar"><h2>Filters</h2>
 <button type="button" class="report-button" data-attribute-action="add">Add filter</button>
+<button type="button" class="report-button" data-attribute-action="junction" hidden>Junction filters</button>
 <button type="button" class="report-button" data-action="filtered-csv">Download matching ASOs</button></div>
+<p class="report-sub" data-role="junction-filter-note" hidden>Junction filters use the mean of both simulations. Negative values mean reduced use; positive values mean increased use. All selected ranges apply together. Safeguards check each simulation separately.</p>
 <!-- BASIC_FILTERS -->
 <div class="report-color-controls"><span>Color by</span><div data-role="attribute-quick" class="report-attribute-quick"></div>
 <button type="button" class="report-button" data-attribute-action="color"><span data-role="attribute-color-label">Choose an attribute</span> ▾</button></div>
@@ -12,9 +14,11 @@ ATTRIBUTE_HTML = '''
 <div data-role="attribute-color-histogram" class="report-color-histogram"></div>
 <div class="report-filter-heading"><p data-role="attribute-summary" aria-live="polite">All ASOs are included.</p><button type="button" class="report-button" data-attribute-action="clear" hidden>Clear attribute filters</button></div>
 <div data-role="attribute-filters" class="report-attribute-filters"></div>
+<details><summary>More downloads</summary><button type="button" class="report-button" data-action="filtered-evidence">Full context evidence for matching ASOs (JSON)</button></details>
 <dialog class="report-attribute-picker" aria-label="Choose a stored ASO attribute">
 <div class="report-attribute-toolbar"><h2 data-role="attribute-picker-title">Choose an attribute</h2><button type="button" class="report-button" data-attribute-action="close" aria-label="Close attribute chooser">Close</button></div>
 <label>Find an attribute<input type="search" data-role="attribute-search" placeholder="Activity, conservation, motif, chemistry…" autocomplete="off"></label>
+<label><input type="checkbox" data-role="attribute-advanced"> Show all saved fields</label>
 <p class="report-sub" data-role="attribute-search-count" aria-live="polite"></p>
 <select size="9" data-role="attribute-options" aria-label="Stored ASO attributes"></select>
 <p class="report-sub" data-role="attribute-picker-description"></p>
@@ -122,10 +126,12 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   categoryColors.set(a.id,colors);return colors;
  }
  const blend=(a,b,t)=>`rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(',')})`;
+ const spliceColor=value=>!finite(value)?missingColor:blend([238,243,244],value<0?[18,104,127]:[167,94,42],Math.min(1,Math.abs(value)));
  function color(row){
   const a=catalog.get(colorId);if(!a)return missingColor;
   if(a.kind!=='number')return categoryPalette(a).get(categoryKey(a,row))||missingColor;
   const v=numeric(a,row),d=domain(a);if(v===null)return missingColor;
+  if(a.quantity==='splice_delta')return spliceColor(v);
   if(d.low<0&&d.high>0)return v<0?blend([234,244,246],[167,94,42],v/d.low):blend([234,244,246],[18,104,127],v/d.high);
   let t=d.high===d.low?.7:(v-d.low)/(d.high-d.low);if(a.direction==='lower')t=1-t;
   return blend([219,237,244],[18,104,127],Math.max(0,Math.min(1,t)));
@@ -164,7 +170,8 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  }
  function options(){
   const search=q('attribute-search').value.toLocaleLowerCase(),previous=q('attribute-options').value;
-  const matches=[...catalog.values()].filter(a=>[a.label,a.group,a.description].join(' ').toLocaleLowerCase().includes(search)
+  const matches=[...catalog.values()].filter(a=>(pickerMode==='junction'?a.group==='Splice junction predictions':
+   search||q('attribute-advanced').checked||a.group!=='Saved attributes')&&[a.label,a.group,a.description].join(' ').toLocaleLowerCase().includes(search)
    &&(pickerMode!=='color'||canColor(a)));
   const visible=matches.slice(0,200);q('attribute-options').innerHTML=visible.map(a=>`<option value="${esc(a.id)}">${esc(a.label)}${domain(a).exists?'':' · no values in this target'}</option>`).join('');
   q('attribute-options').value=visible.some(a=>a.id===previous)?previous:visible[0]?.id||'';
@@ -175,12 +182,14 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   selectionDescription();
  }
  function selectionDescription(){const a=catalog.get(q('attribute-options').value);q('attribute-picker-description').textContent=a?a.description:'';root.querySelector('[data-attribute-action=choose]').disabled=!a;}
- function open(mode){pickerMode=mode;const title=mode==='color'?'Color by an attribute':'Add an attribute filter';q('attribute-picker-title').textContent=title;dialog.setAttribute('aria-label',title);root.querySelector('[data-attribute-action=choose]').textContent=mode==='color'?'Color ASOs':'Add filter';q('attribute-search').value='';options();dialog.showModal();q('attribute-search').focus();}
+ function open(mode){pickerMode=mode;const title=mode==='color'?'Color by an attribute':mode==='junction'?'Filter a splice junction':'Add an attribute filter';q('attribute-picker-title').textContent=title;dialog.setAttribute('aria-label',title);root.querySelector('[data-attribute-action=choose]').textContent=mode==='color'?'Color ASOs':'Add filter';q('attribute-search').value='';options();dialog.showModal();q('attribute-search').focus();}
  function filterMarkup(a,f){
   const d=domain(a),step=d.low===d.high||d.integer&&!(a.low===0&&a.high===1)?1:(d.high-d.low)/500;
+  const scope=a.reference_scope;
+  const reference=scope?`<details class="report-sub"><summary>Reference and prediction</summary><p>${esc(a.description)}</p><dl>${[['Transcript',scope.reference],['Assembly',scope.assembly],['Chromosome',scope.chrom],['Position',scope.position],['Strand',scope.strand],['Model',scope.model],['Design job',scope.job]].filter(([,v])=>v!==null&&v!==undefined).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`:`<p class="report-sub">${esc(a.description)}</p>`;
   const numeric=a.kind==='number'?`<div class="report-range-fields"><label>Minimum${a.unit?' ('+esc(a.unit)+')':''}<input type="number" step="any" ${d.exists?'':'disabled'} data-filter-input="low" value="${f.low}" aria-label="Minimum ${esc(a.label)}"></label><label>Maximum${a.unit?' ('+esc(a.unit)+')':''}<input type="number" step="any" ${d.exists?'':'disabled'} data-filter-input="high" value="${f.high}" aria-label="Maximum ${esc(a.label)}"></label></div><div class="report-range-sliders"><label>Lower bound<input type="range" data-filter-input="low-slider" min="${d.low}" max="${d.high===d.low?d.low+1:d.high}" step="${step}" value="${f.low}" ${!d.exists||d.low===d.high?'disabled':''} aria-label="Lower bound for ${esc(a.label)}"></label><label>Upper bound<input type="range" data-filter-input="high-slider" min="${d.low}" max="${d.high===d.low?d.low+1:d.high}" step="${step}" value="${f.high}" ${!d.exists||d.low===d.high?'disabled':''} aria-label="Upper bound for ${esc(a.label)}"></label></div>`:
    `<label>Find values<input type="search" data-filter-input="category-search" placeholder="Search recorded values" aria-label="Find values for ${esc(a.label)}"></label><div class="report-category-options" data-filter-part="categories"></div><label>Text contains<input type="search" data-filter-input="text" placeholder="Any text" aria-label="Text within ${esc(a.label)}"></label>`;
-  return `<div class="report-attribute-toolbar"><h3>${esc(a.label)}</h3><button type="button" class="report-button" data-attribute-action="remove" data-attribute-id="${esc(a.id)}" aria-label="Remove ${esc(a.label)} filter">Remove</button></div><p class="report-sub">${esc(a.description)}</p><div data-filter-part="histogram"></div>${numeric}<p class="report-filter-error" data-filter-part="error" aria-live="polite"></p><div class="report-filter-options"><label><input type="checkbox" data-filter-input="missing"> Include unavailable values</label>${d.multiple?'<label>For several recorded values<select data-filter-input="mode"><option value="all">Every value must match</option><option value="any">Any value can match</option></select></label>':''}</div>`;
+  return `<div class="report-attribute-toolbar"><h3>${esc(a.label)}</h3><button type="button" class="report-button" data-attribute-action="remove" data-attribute-id="${esc(a.id)}" aria-label="Remove ${esc(a.label)} filter">Remove</button></div>${reference}<div data-filter-part="histogram"></div>${numeric}<p class="report-filter-error" data-filter-part="error" aria-live="polite"></p><div class="report-filter-options"><label><input type="checkbox" data-filter-input="missing"> Include unavailable values</label>${d.multiple?'<label>For several recorded values<select data-filter-input="mode"><option value="all">Every value must match</option><option value="any">Any value can match</option></select></label>':''}</div>`;
  }
  function add(id){
   const a=catalog.get(id);if(!a)return;
@@ -191,6 +200,8 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  function clear(){filters.clear();q('attribute-filters').replaceChildren();}
  function render(){
   q('attribute-explorer').hidden=false;
+  const hasJunctions=[...catalog.values()].some(a=>a.group==='Splice junction predictions');
+  root.querySelector('[data-attribute-action=junction]').hidden=!hasJunctions;q('junction-filter-note').hidden=!hasJunctions;
   const a=catalog.get(colorId),base=baseRows(),visible=base.filter(r=>matches(r));
   q('attribute-color-label').textContent=a?a.label:'Choose an attribute';
   q('attribute-color-description').textContent=a?(a.description+(domain(a).multiple?(a.kind==='number'?' Color uses the lowest value recorded for each ASO.':' Each recorded combination has its own color.') :'')):'';
@@ -198,12 +209,13 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   const oldHistogram=q('attribute-color-histogram').querySelector('details');if(oldHistogram)histogramOpen=oldHistogram.open;
   q('attribute-color-histogram').innerHTML=a?`<details ${histogramOpen?'open':''}><summary>Distribution · ${esc(a.label)}</summary>${histogram(a,base.filter(r=>matches(r,a.id)),filters.get(a.id))}${filters.has(a.id)?'':`<button type="button" class="report-button" data-attribute-action="filter-color">Filter this attribute</button>`}</details>`:'';
   q('attribute-color-histogram').hidden=!!a&&filters.has(a.id);
-  q('attribute-quick').innerHTML=[...catalog.values()].filter(a=>(a.id==='oligoai'||a.id==='effect'||a.id.startsWith('uniqueness')||a.id==='phastcons')&&canColor(a)).map(a=>`<button type="button" class="report-button" data-attribute-action="quick-color" data-attribute-id="${a.id}" aria-pressed="${a.id===colorId}" title="${esc(a.label)}">${a.id==='oligoai'?'OligoAI':a.id==='effect'?'Splicing':a.id==='phastcons'?'Conservation':'Uniqueness'}</button>`).join('');
+  q('attribute-quick').innerHTML=[...catalog.values()].filter(a=>(a.id==='oligoai'||a.id==='effect'||a.id.startsWith('uniqueness')||a.id==='phastcons'||a.id==='isoform_selectivity'||a.id==='target_group_coverage')&&canColor(a)).map(a=>`<button type="button" class="report-button" data-attribute-action="quick-color" data-attribute-id="${a.id}" aria-pressed="${a.id===colorId}" title="${esc(a.label)}">${a.id==='oligoai'?'OligoAI':a.id==='effect'?'Splicing':a.id==='phastcons'?'Conservation':a.id==='isoform_selectivity'?'Target selectivity':a.id==='target_group_coverage'?'Target coverage':'Uniqueness'}</button>`).join('');
   if(quickFocus)q('attribute-quick').querySelector(`[data-attribute-id="${quickFocus}"]`)?.focus({preventScroll:true});
   const count=moleculeCount(visible),total=moleculeCount(scopeRows());
   q('attribute-summary').textContent=`${count.toLocaleString()} of ${total.toLocaleString()} ASOs match.`+(valid()?'':' Finish editing the highlighted range.')+(filters.size>1?' Each distribution shows the results that pass the other filters.':'');
   root.querySelector('[data-attribute-action=clear]').hidden=!filters.size;
   root.querySelector('[data-action=filtered-csv]').disabled=!visible.length||!valid();
+  root.querySelector('[data-action=filtered-evidence]').disabled=!visible.length||!valid();
   for(const [id,f] of filters){
    const a=catalog.get(id),card=q('attribute-filters').querySelector(`[data-filter-id="${id}"]`),population=base.filter(r=>matches(r,id));
    card.querySelector('[data-filter-part=histogram]').innerHTML=histogram(a,population,f);
@@ -234,6 +246,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  function legend(){
   const a=catalog.get(colorId);if(!a)return {text:'',gradient:false};
   const d=domain(a),shown=baseRows().filter(r=>matches(r)),missing=shown.filter(r=>!known(a,r).length).length;
+  if(a.quantity==='splice_delta')return {text:`−1 → +1 · Teal: reduced junction use. Ochre: increased junction use. Grey: unavailable (${missing.toLocaleString()}).`,gradient:true,background:'linear-gradient(90deg,#12687f,#eef3f4 50%,#a75e2a)'};
   if(a.kind==='number')return {text:d.exists?`${format(d.low,a.unit)} → ${format(d.high,a.unit)} · ${d.low<0&&d.high>0?'Ochre: negative. Teal: positive.':a.direction==='lower'?'Lower values are darker.':'Higher values are darker.'} Grey: unavailable (${missing.toLocaleString()}).`:`${a.label}: no recorded values for this target.`,gradient:d.exists,
    background:d.low<0&&d.high>0?`linear-gradient(90deg,#a75e2a,#eaf4f6 ${-d.low/(d.high-d.low)*100}%,#12687f)`:a.direction==='lower'?'linear-gradient(90deg,#12687f,#dbedf4)':'linear-gradient(90deg,#dbedf4,#12687f)'};
   const counts=new Map();shown.forEach(r=>{if(known(a,r).length){const k=categoryKey(a,r);counts.set(k,(counts.get(k)||0)+1);}});
@@ -248,7 +261,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  root.addEventListener('click',event=>{
   const button=event.target.closest('[data-attribute-action]');if(!button)return;
   const action=button.dataset.attributeAction,id=button.dataset.attributeId;
-  if(action==='add'||action==='color')open(action);
+  if(action==='add'||action==='color'||action==='junction')open(action);
   if(action==='close')dialog.close();
   if(action==='choose'){const id=q('attribute-options').value;dialog.close();if(pickerMode==='color'){colorId=id;changed();}else add(id);}
   if(action==='quick-color'){colorId=id;changed();}
@@ -288,17 +301,17 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   }
   changed();
  });
- q('attribute-search').addEventListener('input',options);q('attribute-options').addEventListener('change',selectionDescription);
+ q('attribute-search').addEventListener('input',options);q('attribute-advanced').addEventListener('change',options);q('attribute-options').addEventListener('change',selectionDescription);
  q('attribute-options').addEventListener('dblclick',()=>root.querySelector('[data-attribute-action=choose]').click());
  dialog.addEventListener('keydown',event=>{if(event.key==='Enter'&&['INPUT','SELECT'].includes(event.target.tagName)){event.preventDefault();root.querySelector('[data-attribute-action=choose]').click();}});
  const exportAttributes=()=>[...new Set([colorId,...filters.keys()])].map(id=>catalog.get(id)).filter(Boolean);
- return {matches,render,refresh,clear,color,describe,legend,values,known,valid,
+ return {matches,render,refresh,clear,color,describe,legend,values,known,valid,effectColor:row=>spliceColor(row.effect),
   tableAttributes:()=>exportAttributes().filter(a=>!['oligoai','effect','gc','native_rank'].includes(a.id)),
   sortValue:(id,row)=>{const a=catalog.get(id);return !a||!known(a,row).length?null:a.kind==='number'?numeric(a,row):categoryLabel(a,categoryKey(a,row));},
   cell:(a,row)=>{const v=known(a,row),missing=values(a,row).length-v.length;return v.length?(a.kind==='number'?v.slice(0,5).map(x=>format(x,a.unit)).join(' / ')+(v.length>5?' · '+(v.length-5)+' more values':''):categoryLabel(a,categoryKey(a,row)))+(missing?' · '+missing+' unavailable':''):'Unavailable';},
   exportValue:(a,row)=>{const v=values(a,row);return v.length===1&&v[0]==null?'':v.map(x=>x==null?'Unavailable':Object.hasOwn(a.labels||{},String(x))?a.labels[String(x)]:x).join('; ');},
   metric:()=>{const a=catalog.get(colorId);return a?{...a,...domain(a),value:row=>a.kind==='number'?numeric(a,row):null,format:value=>format(value,a.unit),
    tick:value=>finite(value)?value.toLocaleString(undefined,{maximumSignificantDigits:4,notation:Math.abs(value)>=10000?'compact':'standard'}):'Unavailable'}:null;},
-  exportAttributes};
+  allAttributes:()=>[...catalog.values()],exportAttributes};
 }
 '''

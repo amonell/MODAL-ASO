@@ -23,22 +23,23 @@ def recommendations_html(data):
     if completed:
         count = review.get('reviewed_molecule_count', 0)
         parts.append('<p class="report-sub">' + f'{len(panel):,} recommended from {count:,} ASOs reviewed.</p>')
-    if completed:
+    if panel:
         parts.append('<ol class="report-recommendation-list">')
         for rank, row in sorted(panel.items())[:8]:
-            item = row.get('recommendation') or {}
-            if not item:
-                continue
+            item = (row.get('recommendation') or {}) if completed else {}
             parts.extend(['<li><div class="report-recommendation-heading"><strong>' + str(rank)
                 + '. <span class="report-sequence">' + esc(row['aso']) + '</span></strong>',
                 '<span class="report-sub">' + esc(row['chemistry']['label']) + '</span></div>',
-                '<p>' + esc(item.get('why_chosen')) + '</p>',
-                '<details><summary>Why this ASO belongs in the panel</summary>',
-                '<p><strong>Panel role:</strong> ' + esc(item.get('panel_role')) + '</p>',
-                '<p><strong>Tradeoff:</strong> ' + esc(item.get('tradeoff')) + '</p>',
-                '<p class="report-sub">' + esc(row.get('location')) + '</p>',
-                '<details><summary>Evidence behind this choice</summary><dl>'])
-            for evidence in (item.get('evidence') or []) + (item.get('comparison_evidence') or []):
+                '<p>' + esc(item.get('why_chosen') if completed else
+                    'Provisional ASO selected using the saved analysis ranking and panel constraints.') + '</p>',
+                '<details><summary>' + ('Why this ASO belongs in the panel' if completed else 'Recorded evidence') + '</summary>',
+                '<p><strong>Panel role:</strong> ' + esc(item.get('panel_role') if completed else 'Awaiting recommendation review') + '</p>',
+                '<p><strong>Tradeoff:</strong> ' + esc(item.get('tradeoff') if completed else (row.get('guard') or {}).get('summary')) + '</p>',
+                '<p class="report-sub">' + esc(row.get('location')) + '</p>'])
+            citations = (item.get('evidence') or []) + (item.get('comparison_evidence') or [])
+            if citations:
+                parts.append('<details><summary>Evidence behind this choice</summary><dl>')
+            for evidence in citations:
                 path = evidence.get('path') or ''
                 label = ' · '.join(field_label(part.replace('~1','/').replace('~0','~'))
                     for part in path.split('/')[3:] if not part.isdigit())
@@ -46,15 +47,27 @@ def recommendations_html(data):
                     label = 'Comparison with ' + str(evidence.get('antisense_5to3') or 'another assessed ASO') + ' · ' + label
                 parts.append('<dt>' + esc(label) + '</dt><dd>'
                              + value_html(evidence.get('value'), path.split('/')[-1]) + '</dd>')
-            parts.extend(['</dl></details></details>', '<button type="button" class="report-button" '
+            if citations:
+                parts.append('</dl></details>')
+            parts.extend(['</details>', '<button type="button" class="report-button" '
                 'data-recommendation-pick="' + esc(row['id']) + '">Add ASO ' + str(rank) + ' to basket</button></li>'])
         parts.append('</ol>')
         if panel:
-            parts.append('<button type="button" class="report-button" data-action="add-recommendations">Add recommended panel to basket</button>')
-            parts.append(' <button type="button" class="report-button" data-action="show-recommendations">Explore recommended ASOs</button>')
+            parts.append('<button type="button" class="report-button" data-action="add-recommendations">Add '
+                         + ('recommended' if completed else 'provisional') + ' panel to basket</button>')
+            parts.append(' <button type="button" class="report-button" data-action="show-recommendations">Explore '
+                         + ('recommended' if completed else 'provisional') + ' ASOs</button>')
         if len(panel) > 8:
-            parts.append('<p class="report-sub">The first 8 recommendations are shown here. '
+            parts.append('<p class="report-sub">The first 8 panel entries are shown here. '
                 'Explore the panel to read the reasons and tradeoffs for all ' + str(len(panel)) + ' ASOs.</p>')
+    if not completed and panel:
+        parts.append('<p class="report-sub">' + str(len(panel)) + ' provisional ASOs retained. '
+                     'Their sequence, chemistry and saved checks are available in the ASO table.</p>')
+        draft_count = review.get('draft_molecule_count')
+        if type(draft_count) is int and draft_count > 0:
+            parts.append('<p>The ' + str(draft_count) + '-ASO review draft remains unapproved. '
+                         'The provisional panel follows the saved ranking and requested selection constraints.</p>')
+    if completed:
         reviewer = review.get('reviewer') or {}
         parts.append('<details><summary>About the recommendation review</summary><p>'
             + esc(review.get('size_reason')) + '</p><p>'

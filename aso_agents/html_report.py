@@ -273,6 +273,10 @@ def build_goal_intake_html_payload(
 
 
 def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
+    if 'filter_history' not in report_payload:
+        from .report_filter_history import project_filter_history
+        report_payload = {**report_payload, 'filter_history': project_filter_history(
+            report_payload.get('oligoai_report_dir') or (report_payload.get('meta') or {}).get('run_dir'))}
     if not report_payload.get('candidate_explorer'):
         from .report_explorer_data import project_run
         report_payload = {**report_payload, 'candidate_explorer': project_run(
@@ -281,7 +285,7 @@ def render_goal_intake_html(report_payload: Dict[str, Any]) -> str:
     # The explorer owns its compact packet. Legacy tabs have no dependency on
     # that pool; embedding a second expanded copy makes large reports unwieldy.
     from .report_activity import evaluation_preview
-    legacy_payload = {k:v for k,v in report_payload.items() if k!='candidate_explorer'}
+    legacy_payload = {k:v for k,v in report_payload.items() if k not in {'candidate_explorer', 'filter_history'}}
     if legacy_payload.get('oligoai_evaluation'):
         legacy_payload['oligoai_evaluation'] = evaluation_preview(legacy_payload['oligoai_evaluation'])
     if legacy_payload.get('oligoai_evaluations'):

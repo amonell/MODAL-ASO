@@ -32533,7 +32533,6 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
             stream=sys.stdout,
             enable_stream=pretty_cli and not no_stream_ui,
             enable_spinner=pretty_cli,
-            allow_model_install=not raw_cli,
         )
         if pretty_cli:
             narrator.intro(resuming=bool(existing_state_path_resolved))

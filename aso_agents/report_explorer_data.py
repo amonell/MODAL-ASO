@@ -174,6 +174,8 @@ def site_name(label, sites):
     exon = site.get('verified_exon_label')
     if exon is not None:
         return f'Exon {exon} {kind}'
+    if site.get('requested_exon_label') is not None:
+        return f'Requested exon {site["requested_exon_label"]} {kind}'
     from .report_exon_names import ordinal_word
     ordinal = ordinal_word(site.get('annotation_exon_index'))
     if ordinal:
@@ -187,11 +189,23 @@ def safeguard_summary(row, sites):
     details, failures, unknown, passed, observed = [], [], 0, 0, 0
     for guard in reports:
         name = site_name(guard.get('label'), sites)
+        enforcement = ('Required check' if guard.get('required') is True else
+                       'Review-only check' if guard.get('required') is False else 'Enforcement unrecorded')
+        bounds = {key: number(guard.get(key)) for key in ('max_abs_delta', 'max_increase', 'max_decrease')}
+        limits = []
+        if bounds['max_abs_delta'] is not None:
+            limits.append(f"change between {-bounds['max_abs_delta']:+.3g} and {bounds['max_abs_delta']:+.3g}")
+        if bounds['max_increase'] is not None:
+            limits.append(f"maximum increase {bounds['max_increase']:+.3g}")
+        if bounds['max_decrease'] is not None:
+            limits.append(f"maximum decrease {bounds['max_decrease']:.3g}")
         values = [number(guard.get(key)) for key in ('delta_deletion','delta_replacement')]
         if all(v is None for v in values):
             values = [number(v) for v in guard.get('values') or []]
+        simulations = [{'simulation': ('deletion', 'replacement')[i] if len(values) == 2 else f'simulation {i+1}',
+                        'value': value} for i, value in enumerate(values)]
         values = [v for v in values if v is not None]
-        if guard.get('policy') == 'observe':
+        if (guard.get('policy') or (guard.get('review') or {}).get('policy')) == 'observe':
             observed += 1
             text = name + ': changes recorded for context.'
         elif guard.get('passes') is False or guard.get('status') in {'fail','failed'}:
@@ -206,8 +220,8 @@ def safeguard_summary(row, sites):
                 text = f'{name} {"rose" if value > 0 else "fell"} {abs(value):.3g}; limit {limit:.3g}.'
             else:
                 text = name + ': outside its recorded limit.'
-            failures.append(text)
-        elif guard.get('passes') is True or guard.get('status') in {'pass','passed'}:
+            failures.append(text + ' ' + enforcement + '.')
+        elif values and (guard.get('passes') is True or guard.get('status') in {'pass','passed'}):
             passed += 1
             text = name + ': within the specified limits.'
         else:
@@ -215,7 +229,26 @@ def safeguard_summary(row, sites):
             text = name + ': prediction unavailable.'
         review = guard.get('review') or {}
         rationale = review.get('rationale') or (review.get('decision') or {}).get('rationale') or guard.get('note')
+        for label in sorted(sites, key=len, reverse=True):
+            if isinstance(rationale, str) and label:
+                rationale = rationale.replace(label, site_name(label, sites))
+        text += ' ' + enforcement + '. ' + ('; '.join(limits) + '.' if limits else 'Bounds were not recorded.')
+        if simulations:
+            text += ' Simulations: ' + '; '.join(s['simulation'] + ' ' + (
+                f"{s['value']:+.6g}" if s['value'] is not None else 'unavailable') for s in simulations) + '.'
+        point = sites.get(guard.get('label')) or {}
+        reference = {'transcript': point.get('reference_transcript_id'),
+                     'chrom': point.get('chrom') or guard.get('selected_site_chrom'),
+                     'position': point.get('position') or guard.get('selected_site_position') or guard.get('position'),
+                     'strand': point.get('strand') or guard.get('selected_site_strand')}
+        if reference['position'] is not None:
+            text += ' Reference: ' + ':'.join(str(v) for v in (reference['chrom'], reference['position']) if v is not None)
+            text += (' (' + str(reference['strand']) + ')' if reference['strand'] else '')
+            text += (' · ' + reference['transcript'] if reference['transcript'] else '') + '.'
         details.append({'site':name,'text':text,'reason':rationale or '',
+                        'required': guard.get('required'), 'bounds': bounds, 'simulations': simulations,
+                        'reference': reference, 'recorded_status': guard.get('status'),
+                        'recorded_passes': guard.get('passes'),
                         'review_incomplete':review.get('status') == 'unavailable'})
     if failures:
         summary = failures[0] + (f' {len(failures)-1} other checks exceeded a limit.' if len(failures)>1 else '')
@@ -234,6 +267,8 @@ def safeguard_summary(row, sites):
 
 
 def _effects(row, label, direction):
+    if not label:
+        return None, []
     source = source_row(row)
     values = None
     for entry in row.get('selected_effect_evidence') or []:
@@ -262,8 +297,7 @@ def _effects(row, label, direction):
         values = [source.get('selected_delta_deletion'),source.get('selected_delta_replacement')]
     values = [number(v) for v in (values or [])[:2]]
     mean = sum(values)/2 if len(values)==2 and all(v is not None for v in values) else None
-    effect = mean * (1 if direction=='increase' else -1) if mean is not None and direction in {'increase','decrease'} else None
-    return effect, values
+    return mean, values
 
 
 def _record(row, context, sites, order, panel_rank=None, *, activity=()):
@@ -320,6 +354,17 @@ def _record(row, context, sites, order, panel_rank=None, *, activity=()):
             'Assessed in the design pool.' if assessment else 'Scored in the search pool; final selection checks are available for retained candidates.'),
         'motifs':[f.get('rule_id') for f in (assessment.get('motifs') or {}).get('flags') or [] if isinstance(f,dict)]}
     from .report_attributes import flatten_attributes, common_attributes
+    from .report_junctions import junction_measurements
+    record['junction_measurements'] = junction_measurements(row, context, sites, site_name)
+    primary = [m for m in record['junction_measurements'] if m['source_label'] == context.get('site')]
+    if len(primary) == 1:
+        record['effect'] = primary[0]['mean']
+        record['predictions'] = [primary[0]['predictions'][mode] for mode in ('deletion', 'replacement')]
+    elif primary:
+        record['effect'] = None
+    record['effect_quantity'] = 'change_in_junction_use'
+    from .report_target_context import target_context
+    record['target_context'] = target_context(source)
     record['_raw_attributes'] = flatten_attributes(row)
     record['_common_attributes'] = common_attributes(row, record)
     return record
@@ -391,7 +436,10 @@ def project_run(run_dir, *, goal=None, kind='design', request=None):
     programs = {p['program_id']:p for p in goal.get('design_programs') or [] if isinstance(p,dict) and p.get('program_id')}
     jobs = {j['job_id']:j for j in [*(goal.get('steric_design_jobs') or []),*(goal.get('gapmer_design_jobs') or [])]
             if isinstance(j,dict) and j.get('job_id')}
-    catalog = goal.get('isoform_transcripts') or {}
+    from .report_exon_names import report_reference_catalog
+    catalog = report_reference_catalog(goal)
+    region_evidence = read_record(root / 'region_constraint_evidence.json')
+    materialized = goal.get('materialized_region_constraints') or region_evidence.get('materialized_constraints') or {}
     sites = {f"{s.get('site')}@{s.get('position')}":s for s in goal.get('splice_site_plan') or [] if isinstance(s,dict)}
     by_job = defaultdict(list)
     for row in pool:
@@ -445,8 +493,8 @@ def project_run(run_dir, *, goal=None, kind='design', request=None):
             if route:
                 label += ' · ' + site_name(route,sites)
             context = {'id':context_id,'label':label,'program':program_id,'job':job_id,'site':route,'direction':direction,
-                'objective':_objective(program,goal.get('gene_symbol')),'metric':'Mean splice prediction' if route else 'Recorded ranking',
-                'metric_note':'Mean of the deletion and replacement predictions, oriented so a larger value supports the requested direction. Scores use the model’s native units.' if route else
+                'objective':_objective(program,goal.get('gene_symbol')),'metric':'Predicted splice effect' if route else 'Recorded ranking',
+                'metric_note':'Mean of the deletion and replacement simulations. Negative values mean reduced junction use; positive values mean increased use. Individual simulations remain in each ASO’s details. Panel numbers retain the original selection order.' if route else
                     'Candidates follow the saved ordering within this design group. Each ASO’s details retain its selection evidence.',
                 'exons':[],'sites':[],'transcript':''}
             transcript = program.get('transcript_id') or goal.get('transcript_id')
@@ -460,12 +508,19 @@ def project_run(run_dir, *, goal=None, kind='design', request=None):
                 from .report_exon_names import project_exon_names
                 from .curated_exon_nomenclature import reference_context
                 context.update(transcript=(entry.get('metadata') or {}).get('declared_reference') or reference_context(entry)['transcript_id'] or name,reference_label=name,
+                               assembly=reference_context(entry).get('assembly'),
                                reference_chrom=entry.get('chrom') or (entry.get('metadata') or {}).get('seq_region_name'),
                                reference_strand=reference_context(entry)['strand'], **project_exon_names(entry))
+            from .report_binding_annotations import transcript_features, regulatory_sites
+            context['reference_features'] = transcript_features(entry)
+            context.update(regulatory_sites(entry, materialized, program_id))
             # Exon names come from exact reference-bound junction records.
             # Planner prose and proximity alone never establish exon numbering.
-            context_sites = {key: {**value, 'verified_exon_label': None, 'annotation_exon_index': None}
+            context_sites = {key: {**value, 'verified_exon_label': None, 'annotation_exon_index': None, 'requested_exon_label': None}
                              for key, value in sites.items()}
+            from .exon_nomenclature_context import selected_reference
+            from .report_exon_names import project_exon_names
+            reference_names = {}
             for candidate in [*raw_by_job[job_id], *assessed]:
                 for s in collection(source_row(candidate).get('splice_site_deltas')) or []:
                     if not isinstance(s,dict):
@@ -473,8 +528,13 @@ def project_run(run_dir, *, goal=None, kind='design', request=None):
                     key = s.get('canonical_label') or s.get('display_label') or s.get('label')
                     kind = s.get('site_kind'); point = s.get(kind) or {}
                     from .report_exon_names import bind_site_exon_name
+                    reference = s.get('reference_transcript_id')
+                    if reference not in reference_names:
+                        _, site_entry = selected_reference(catalog, reference) if reference else (None, None)
+                        reference_names[reference] = (site_entry, project_exon_names(site_entry)['exons'] if site_entry else [])
+                    site_entry, site_exons = reference_names[reference]
                     context_sites[key] = {**context_sites.get(key,{}), **s, **point,
-                        **bind_site_exon_name(s, entry, context['exons'])}
+                        **bind_site_exon_name(s, site_entry, site_exons)}
             if route:
                 context['label'] = label.rsplit(' · ',1)[0] + ' · ' + site_name(route,context_sites)
                 action = {'increase':'Increase use of', 'decrease':'Decrease use of'}.get(direction)
@@ -582,7 +642,8 @@ def project_run(run_dir, *, goal=None, kind='design', request=None):
     review = selected.get('review') or generated.get('recommendation_review') or {}
     result['recommendation_review'] = {key: review[key] for key in (
         'status', 'summary', 'size_reason', 'reviewer', 'eligible_molecule_count',
-        'reviewed_molecule_count', 'reviewed_binding_record_count') if key in review}
+        'reviewed_molecule_count', 'reviewed_binding_record_count', 'draft_molecule_count',
+        'provisional_molecule_count', 'failure_code', 'failure_details') if key in review}
     from .report_approaches import project_approaches
     result['approach_rankings'] = project_approaches(
         goal, contexts, read_record(_root_file(root, 'strategy_router_summary.json')))
