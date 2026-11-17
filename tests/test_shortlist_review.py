@@ -98,12 +98,12 @@ def test_legacy_metric_labels_are_defined_before_evidence_audit(tmp_path, monkey
         if kind == 'explain':
             result['recommendations'][0]['tradeoff'] = 'Expression-weighted off-target risk is 0.25 in blood; the risk of an unintended RNA effect remains unresolved.'
         if kind == 'audit':
-            assert payload['draft']['recommendations'][0]['tradeoff'] == 'Weighted expression of matching RNAs is 0.25 in blood; the risk of an unintended RNA effect remains unresolved.'
+            assert payload['draft']['recommendations'][0]['tradeoff'] == 'Expression-weighted off-target score is 0.25 in blood; the risk of an unintended RNA effect remains unresolved.'
         return result, metadata
     monkeypatch.setattr(review, '_model_call', legacy_label)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
     assert receipt['status'] == 'completed'
-    assert 'Weighted expression of matching RNAs' in receipt['recommendations'][receipt['selected_ids'][0]]['tradeoff']
+    assert 'Expression-weighted off-target score' in receipt['recommendations'][receipt['selected_ids'][0]]['tradeoff']
 
 
 def test_conservation_metric_uses_plain_label_before_evidence_audit(tmp_path, monkeypatch):
@@ -130,9 +130,9 @@ def test_automatic_size_does_not_alter_request(tmp_path, fake_model):
 
 def test_plural_legacy_metric_names_keep_correct_grammar_and_values():
     assert review._metric_labels('Expression-weighted risks range from 87 to 323 in brain.') == (
-        'Weighted expression sums for matching RNAs range from 87 to 323 in brain.')
+        'Expression-weighted off-target scores range from 87 to 323 in brain.')
     assert review._metric_labels('The weighted expression of matching RNAss range from 87 to 323.') == (
-        'The weighted expression sums for matching RNAs range from 87 to 323.')
+        'The expression-weighted off-target scores range from 87 to 323.')
 
 
 @pytest.mark.parametrize('text', [

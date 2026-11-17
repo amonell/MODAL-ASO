@@ -1,5 +1,17 @@
 # Generated analysis execution and output integrity
 
+Generated programs have a five-minute execution limit. Set
+`ASO_ANALYSIS_TIMEOUT_SECONDS` to a positive number of seconds (up to 86400)
+for larger analyses. The generated program receives the same budget in its
+execution inputs. Configuration is validated before execution begins.
+
+On timeout the host terminates the program and its child processes, preserves
+partial logs and the attempt receipt, restores protected inputs, and reports
+`analysis_timeout`. Automatic code repairs stop at that point. The user can
+inspect the diagnostics and resume with an appropriate budget. The same limit
+applies to task analyses and generated final exports. The limit covers program
+execution; model requests retain their separate request budgets.
+
 Generated analysis programs are checked for statically unbound global names before
 execution and after a proposed code repair. Missing imports or definitions enter
 the existing repair loop with the original inputs and scientific criteria intact.

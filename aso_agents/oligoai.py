@@ -315,10 +315,8 @@ def released_model_predict(inputs, directory, *, use_service=True, gpu_lock_fd=N
             return result
     request = directory / "model-inputs.json"
     write_json(request, {"schema_version": "modal-aso-oligoai-input/1.0", "inputs": inputs})
-    from .oligoai_readiness import inspect_installation, OligoAIUnavailable
-    readiness = inspect_installation(root)
-    if readiness["status"] != "installed":
-        raise OligoAIUnavailable(readiness["detail"])
+    from .oligoai_readiness import ensure_installation_for_prediction
+    ensure_installation_for_prediction(root, directory)
     if file_sha(checkpoint) != MODEL_SHA256:
         raise ValueError("OligoAI released checkpoint checksum mismatch")
     command = [str(python), "-m", "aso_agents.oligoai_runner", "--input", str(request),
@@ -443,6 +441,13 @@ def evaluate_candidates(rows, goal, output_dir, *, references=None, runtime=None
                     entry.update(status="unavailable", reason=str(exc))
         except Exception as exc:
             result["inference_error"] = f"{type(exc).__name__}: {exc}"
+            from .runtime_warnings import emit_warning
+            emit_warning(
+                f"Gapmer efficacy prediction failed: {result['inference_error']}. "
+                f"Prediction details are saved in {directory}. "
+                "Check the runtime with modal-aso doctor --require-model oligoai.",
+                category="OligoAI",
+            )
             for entry in result["candidates"]:
                 if entry["status"] == "pending":
                     entry.update(status="error", reason=result["inference_error"])

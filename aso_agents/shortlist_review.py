@@ -39,7 +39,8 @@ DEFAULT_OUTPUT_TOKENS = 16384
 MAX_OUTPUT_TOKENS = 32768
 NOMINATION_OUTPUT_TOKENS = 8192
 _IMPLEMENTATION_FINGERPRINT = {name: digest((Path(__file__).parent / name).read_text()) for name in (
-    'shortlist_review.py', 'shortlist_evidence.py', 'candidate_presentation.py',
+    'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'candidate_presentation.py',
+    'exon_nomenclature_context.py', 'exon_identity_clarification.py', 'curated_exon_nomenclature.py', 'report_exon_names.py',
     'region_panel_selection.py', 'role_selection.py', 'pipeline_tools.py')}
 
 RUBRIC = """You recommend ASOs for the user's stated research objective using saved
@@ -60,9 +61,11 @@ perturbations; keep transcript-product proportions and protein effects unresolve
 Use chemistry-specific motif applicability. Treat reference duplex Tm as descriptive.
 Conservation serves an explicit species requirement; it has no universal best value.
 High conservation alone gives no information about binding stability or ASO potency.
-Off-target expression sums are screening summaries in a specified tissue; describe
-lower recorded expression, without calling this low risk, clean, safe, or proof of
-specificity. Distinguish exact/near-match counts, expression evidence, and predicted
+Off-target expression sums are screening summaries in a specified tissue.
+Expression-weighted off-target scores combine mismatch weights and expression;
+describe a lower screening score as a lower score. Preserve the recorded count
+unit (genes, transcripts or genomic positions) in every explanation. Distinguish
+exact/near-match counts, expression evidence, and predicted
 binding. Fewer same-gene isoform matches support a requested isoform-selective goal
 only when the intended and preserved transcripts are identified. Broad gene
 knockdown can favor broader intended-isoform coverage. For translation blocking,
@@ -72,6 +75,17 @@ as an unresolved question, never as a negative or positive numeric prediction.
 Distinguish curated biological exon names from annotation-order indices. Match
 sites using transcript identity, coordinates and saved nomenclature evidence;
 an ordinal difference alone cannot establish a different biological target.
+Use goal.exon_identity and each candidate's exon_identity_evidence for exon
+placement. A named biological exon requires biological_label_verified=true and
+recorded overlap with that feature. An unresolved requested label has unknown
+placement; use the supplied annotation-order display name for an observed exon.
+An explicit_feature_coordinates, explicit_transcript_ordinal or verified_structural_event
+identity establishes the requested physical feature. Describe that feature using
+its confirmed coordinates or annotation-order name and the user's stated objective.
+Keep the user's biological objective separate from the observed binding site.
+A reference transcript's index cannot establish its biological exon name or
+membership in an exon-defined isoform group. Preserve those uncertainties when
+comparing candidates and explaining the shortlist.
 Native ranks are local to their analysis context. Weigh metrics jointly, preserve
 explicit user priorities, and prefer useful complementary targets when support is
 similar. Heavily overlapping windows can be useful backups; describe their role.
@@ -177,6 +191,14 @@ rationale. Accept clear, reasonable interpretations grounded in saved evidence.
 Explicitly reject conservation -> stable binding/potency claims, off-target
 expression -> safety/specificity claims, and isoform count -> desired selectivity
 claims without intended/protected transcript evidence. Check named comparisons
+against the exon_identity evidence too: a biological exon name must have a
+verified mapping to the selected reference and overlap evidence for that ASO.
+An explicit user definition or verified structural conversion can establish
+requested-feature overlap through its saved physical coordinates.
+Reject a draft that renames an annotation ordinal as the requested exon, or
+claims requested-exon overlap while its identity remains unresolved. Use
+biological_interpretation_supported=false and correct the affected field.
+Check numerical comparisons
 against ALL panel values and their units. Explain why any selected molecule with
 opposing predictions or failed safeguards remains useful as an exploratory choice.
 For each ID independently record the required checks as true only when supported.
@@ -283,7 +305,9 @@ SUMMARY_AUDIT_SCHEMA = _object({'supported': {'type': 'boolean'},
 
 
 class ReviewUnavailable(RuntimeError):
-    pass
+    def __init__(self, message='', *, details=None):
+        super().__init__(message)
+        self.details = details or {}
 
 
 class InvalidReviewResponse(ReviewUnavailable):
@@ -315,16 +339,17 @@ def _metric_labels(text):
               'off-target expression risk', 'expression-weighted risk')
     for label in labels:
         for old in (label, label[0].upper() + label[1:]):
-            new = 'weighted expression of matching RNAs'
-            plural = 'weighted expression sums for matching RNAs'
+            new = 'expression-weighted off-target score'
+            plural = 'expression-weighted off-target scores'
             if old[0].isupper():
                 new = new[0].upper() + new[1:]
                 plural = plural[0].upper() + plural[1:]
             text = text.replace(old + 's', plural)
             text = text.replace(old, new)
     # Earlier receipts can contain the extra plural suffix from this label.
-    for old in ('weighted expression of matching RNAss', 'Weighted expression of matching RNAss'):
-        new = 'weighted expression sums for matching RNAs'
+    for old in ('weighted expression of matching RNAss', 'Weighted expression of matching RNAss',
+                'weighted expression sums for matching RNAs', 'Weighted expression sums for matching RNAs'):
+        new = 'expression-weighted off-target scores'
         text = text.replace(old, new[0].upper() + new[1:] if old[0].isupper() else new)
     return text
 
@@ -391,6 +416,9 @@ def _prose_issue(text, *, summary=False, context=None):
 
 
 def _instructions(kind):
+    if kind in {'evidence', 'evidence_audit'}:
+        from .shortlist_paging import INSTRUCTIONS, AUDIT_INSTRUCTIONS as SOURCE_AUDIT_INSTRUCTIONS
+        return INSTRUCTIONS if kind == 'evidence' else SOURCE_AUDIT_INSTRUCTIONS
     instructions = {'rank': RANK_INSTRUCTIONS, 'nominate': NOMINATE_INSTRUCTIONS,
                     'select': SELECT_INSTRUCTIONS, 'explain': EXPLAIN_INSTRUCTIONS,
                     'audit': AUDIT_INSTRUCTIONS,
@@ -495,7 +523,7 @@ def _reasoning_effort(kind, config):
     flash = config.name == 'openrouter' and config.resolve_model(MODEL).startswith('deepseek/deepseek-v4.1-flash')
     if kind == 'audit' and flash:
         return 'low'
-    if kind in {'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair'}:
+    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair'}:
         return 'low' if flash or kind == 'nominate' else 'medium'
     return 'high'
 
@@ -621,7 +649,7 @@ def _call(kind, payload, schema, check, directory, configuration):
     errors = previous_errors
     response = previous.get('response') if errors else None
     received_response = bool(errors)
-    budget = NOMINATION_OUTPUT_TOKENS if kind == 'nominate' else DEFAULT_OUTPUT_TOKENS
+    budget = NOMINATION_OUTPUT_TOKENS if kind in {'nominate', 'evidence', 'evidence_audit'} else DEFAULT_OUTPUT_TOKENS
     for _ in range(ATTEMPTS):
         started = time.monotonic()
         split_batch = False
@@ -657,7 +685,12 @@ def _call(kind, payload, schema, check, directory, configuration):
         if not errors:
             return response
     error = InvalidReviewResponse if received_response else ReviewUnavailable
-    raise error(kind + '_review_incomplete')
+    draft = payload.get('previous_draft') or payload.get('draft') or {}
+    draft_ids = {item.get('candidate_id') for item in draft.get('recommendations') or []
+                 if isinstance(item, dict) and item.get('candidate_id')}
+    raise error(kind + '_review_incomplete', details={
+        'stage': kind, 'component_receipt': str(path), 'validation_errors': errors,
+        'draft_molecule_count': len(draft_ids) or None})
 
 
 def _batches(entries, *, include_overviews=False, packet_builder=None, max_molecules=None, max_characters=None):
@@ -677,6 +710,45 @@ def _batches(entries, *, include_overviews=False, packet_builder=None, max_molec
     for start in range(0, len(entries), max_molecules):
         split(entries[start:start + max_molecules])
     return batches
+
+
+def _page_large_evidence(catalog, context, directory, configuration):
+    """Keep ordinary reviews unchanged; page large records before comparison."""
+    from .shortlist_paging import EvidencePagingError, needs_paging, review_large_entry
+    entries = [entry for entry in catalog.values() if entry['eligible']
+               and needs_paging(entry, MAX_PACKET_CHARACTERS // 4)]
+    if not entries:
+        return catalog
+    _progress(directory, f'Reviewing detailed evidence for {len(entries):,} ASOs in bounded pages.',
+              phase='evidence_review', total=len(entries))
+    result = dict(catalog)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        remaining = iter(entries)
+        pending = {}
+
+        def fill_slots():
+            while len(pending) < MAX_WORKERS:
+                entry = next(remaining, None)
+                if entry is None:
+                    break
+                pending[executor.submit(copy_context().run, review_large_entry,
+                    entry, context, directory, configuration, _call)] = entry['id']
+
+        fill_slots()
+        try:
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    key = pending.pop(future)
+                    result[key] = future.result()
+                fill_slots()
+        except Exception as exc:
+            for future in pending:
+                future.cancel()
+            if isinstance(exc, EvidencePagingError):
+                raise ReviewUnavailable(str(exc)) from exc
+            raise
+    return result
 
 
 def _previous_audited_draft(payload, directory, configuration):
@@ -1282,7 +1354,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                         'descending_rank': {key: 1 + sum(v > value for v in values.values()) for key, value in values.items()},
                         'absolute_ascending_rank': {key: 1 + sum(abs(v) < abs(value) for v in values.values()) for key, value in values.items()},
                         'absolute_descending_rank': {key: 1 + sum(abs(v) > abs(value) for v in values.values()) for key, value in values.items()}})
-            _progress(directory, f'Checking the evidence and rationale for {len(ids)} recommendations.',
+            _progress(directory, f'Checking the evidence and rationale for {len(ids)} proposed ASOs.',
                       phase='auditing', total=len(selected_ids))
             audit_parts = [ids[start:start + AUDIT_BATCH_MOLECULES]
                            for start in range(0, len(ids), AUDIT_BATCH_MOLECULES)] or [[]]
@@ -1303,6 +1375,31 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             # issues raised by any reviewer, including cross-candidate issues.
             audit = {key: list({digest(item): item for part in audits for item in part[key]}.values())
                      for key in AUDIT_SCHEMA['properties']}
+            # Evidence selection must not hide counterevidence from the final
+            # explanation audit. Visit every original page for selected large
+            # molecules and feed exact offending source records into repairs.
+            from .shortlist_paging import audit_large_entry
+            source_findings = []
+            for key in ids:
+                if not catalog[key].get('evidence_review'):
+                    continue
+                try:
+                    findings, source_receipt = audit_large_entry(catalog[key], context, response,
+                        directory, configuration, _call)
+                except ReviewUnavailable as exc:
+                    exc.details['draft_molecule_count'] = len(response['recommendations'])
+                    raise
+                source_findings.extend(findings)
+                catalog[key]['evidence_review']['explanation_audit'] = source_receipt
+            if source_findings:
+                audit['issues'].extend({'candidate_id': finding['candidate_id'], 'problem': finding['problem']}
+                                       for finding in source_findings)
+                audit['field_reviews'].extend({'candidate_id': finding['candidate_id'],
+                    'field': finding['field'], 'supported': False, 'evidence_statement': finding['problem']}
+                    for finding in source_findings)
+                if len(json.dumps(source_findings, separators=(',', ':'))) > MAX_PACKET_CHARACTERS:
+                    raise ReviewUnavailable('source_audit_corrections_exceed_review_capacity')
+                payload['source_page_findings'] = source_findings
             write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
                                         'draft_sha256': digest(response), 'audit': audit})
             if not audit['issues']:
@@ -1319,7 +1416,9 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 break
             corrections = audit['issues']
         else:
-            raise ReviewUnavailable('explanation_evidence_review_incomplete')
+            raise ReviewUnavailable('explanation_evidence_review_incomplete', details={
+                'stage': 'explanation_audit', 'component_receipt': str(checkpoint_path),
+                'draft_molecule_count': len(response['recommendations']), 'issues': audit['issues']})
     if len(checked_notes) > 1:
         summary = _summarize_panel(checked_notes, context, len(selected_ids), directory, configuration)
         return result, summary['summary'], summary['size_reason']
@@ -1384,7 +1483,8 @@ def _effective_goal(goal, suggested_size):
     return result
 
 
-def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=False, retry_failed=False):
+def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=False, retry_failed=False,
+                    skip_shortlist=False):
     """Return checked membership, native constraint receipt, and review provenance.
 
     Rendering never starts a model. The report execution stage explicitly enables
@@ -1393,12 +1493,34 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     context = review_context(goal)
-    catalog = evidence_catalog(pool)
     eligible = [deepcopy(row) for row in pool
                 if (row.get('candidate_assessment') or {}).get('selection_eligible') is True]
     identity = digest({'version': VERSION, 'pool': clean(pool), 'goal': context,
         'implementation_basis': 'worker_import_snapshot',
         'implementation': _IMPLEMENTATION_FINGERPRINT})
+    if skip_shortlist:
+        # Skip before reviewer configuration, cached recommendations, evidence
+        # paging, ranking and explanation. Native selection still enforces the
+        # requested counts/regions/spacing, with the usual default panel size.
+        for row in eligible:
+            row.pop('recommendation_review', None)
+            row.pop('_recommendation_order', None)
+        selected, selection = select_panel(eligible, _effective_goal(goal, 4))
+        path = directory / 'recommendation_review_skipped.json'
+        summary = ('Model-based shortlist review was skipped at your request. '
+                   'The saved panel is provisional and has not been reviewed by the recommendation model.'
+                   if eligible else
+                   'Model-based shortlist review was skipped at your request. No ASOs met the selection requirements.')
+        review = {'status': 'skipped', 'reason': 'skip_shortlist', 'summary': summary,
+                  'eligible_molecule_count': len({molecule_key(row) for row in eligible}),
+                  'reviewed_molecule_count': 0, 'receipt_path': str(path)}
+        # Retain any earlier completed/failed review and its component receipts.
+        write_json(path, {'input_sha256': identity, **review})
+        if allow_model_calls:
+            from .runtime_warnings import emit_progress
+            emit_progress('Skipping model-based shortlist review; retaining the provisional panel.')
+        return selected, selection, review
+    catalog = evidence_catalog(pool)
     path = directory / 'recommendation_review.json'
     saved = _read(path)
     configured_reviewer = None
@@ -1443,6 +1565,7 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
         from .llm_provider import get_provider_config
         config = get_provider_config(require_credentials=False)
         configuration = _review_configuration(config)
+        catalog = _page_large_evidence(catalog, context, directory, configuration)
         order, size, levels = _rank(catalog, context, directory, configuration)
         positions = {key: index for index, key in enumerate(order)}
         if set(positions) != {molecule_id(row) for row in eligible}:
@@ -1468,6 +1591,8 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
             'summary': summary, 'size_reason': size_reason,
             'eligible_molecule_count': len(positions), 'reviewed_molecule_count': len(positions),
             'reviewed_binding_record_count': len(eligible), 'review_levels': levels,
+            'source_evidence_reviews': {key: entry['evidence_review'] for key, entry in catalog.items()
+                                       if entry.get('evidence_review')},
             'selection_constraints': clean(selection), 'pool_sha256': digest(clean(pool))}
         write_json(path, {'status': 'completed', 'input_sha256': identity, 'result': result,
                           'result_sha256': digest(result)})
@@ -1480,9 +1605,14 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
         return selected, selection, {**result, 'status': 'completed', 'receipt_path': str(path)}
     except Exception as exc:
         # Reports and complete pools remain available during provider failures.
+        details = getattr(exc, 'details', {})
+        provisional_count = len({molecule_key(row) for row in fallback})
         review = {**pending, 'status': 'unavailable', 'summary':
             'The recommendation review could not finish. The saved analysis provides a provisional panel.',
             'failure_code': str(exc) if isinstance(exc, ReviewUnavailable) else type(exc).__name__,
+            'failure_details': details,
+            'draft_molecule_count': details.get('draft_molecule_count'),
+            'provisional_molecule_count': provisional_count,
             'reviewer': configuration, 'receipt_path': str(path)}
         write_json(path, {'input_sha256': identity, **review})
         return fallback, fallback_selection, review

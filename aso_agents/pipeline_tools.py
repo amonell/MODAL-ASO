@@ -1996,6 +1996,7 @@ def _run_agentic_pipeline_to_terminal(
         agentic_result = run_agentic_pipeline(
             user_request=user_request,
             skip_router=bool(flags.get("skip_router", False)),
+            skip_shortlist=bool(flags.get("skip_shortlist", False)),
             skip_ensembl_check=bool(flags.get("skip_ensembl_check", False)),
             router_max_steps=int(flags.get("router_max_steps") or 25),
             router_log_tool_calls=bool(flags.get("router_log_tool_calls", False)),
@@ -17681,6 +17682,10 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
     from .input_file_roles import (
         declared_candidate_files, with_file_role_schema, apply_file_role_checks,
     )
+    from .task_scope_review import (
+        declared_task_scopes, with_task_scope_schema, apply_task_scope_checks,
+        has_scope_revision, scope_evidence_errors,
+    )
     evidence_sources = _declared_evidence_sources_from_prompt(prompt)
     span_map = _evidence_span_map(evidence_sources)
     schema = _schema_with_allowed_evidence_refs(
@@ -17690,6 +17695,22 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
     )
     files = declared_candidate_files(prompt)
     schema = with_file_role_schema(schema, files)
+    tasks = declared_task_scopes(prompt)
+    schema = with_task_scope_schema(schema, tasks)
+
+    def review_contract_errors(payload):
+        # Scope discrepancies are compiled into ordinary issues after citation
+        # materialization, like input-role discrepancies. They may be the sole
+        # reason for requesting a revision.
+        normalized = deepcopy(payload)
+        if (has_scope_revision(normalized, tasks)
+                and normalized.get("status") == "revise" and not normalized.get("issues")):
+            normalized["status"] = "valid"
+        errors = _request_graph_review_contract_errors(normalized, schema)
+        if not errors:
+            errors.extend(scope_evidence_errors(normalized, evidence_sources, span_map))
+        return errors
+
     agent = _agent_with_strict_output_schema(
         request_graph_review_agent,
         schema_name="aso_request_graph_review_evidence_bound",
@@ -17700,15 +17721,13 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
         prompt=prompt,
         schema=schema,
         error_prefix="request_graph_review_agent",
-        contract_validator=lambda payload: _request_graph_review_contract_errors(
-            payload,
-            schema,
-        ),
+        contract_validator=review_contract_errors,
     )
     if str(reviewed.get("error") or "").strip():
         return reviewed
     materialized = _materialize_evidence_span_ids(reviewed, span_map)
     materialized = apply_file_role_checks(materialized, files)
+    materialized = apply_task_scope_checks(materialized, tasks)
     errors = _request_graph_review_contract_errors(materialized)
     if errors:
         return {
@@ -18493,63 +18512,45 @@ async def _run_verified_request_workbench_agent_once(
             if str(planned.get("error") or "").strip():
                 return planned
             continue
-        review_prompt = _request_graph_review_prompt(decision_evidence, envelope)
-        review = await _run_request_graph_review_agent_once(review_prompt)
-        if str(review.get("error") or "").strip():
-            return review
-        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
-        if evidence_errors:
+        # An adjudicator can reject a no-op issue, but that does not discharge
+        # the independent coverage pass. Both reviews must accept every plan.
+        for review_index, review_prompt in enumerate((
+            _request_graph_review_prompt(decision_evidence, envelope),
+            _request_graph_operation_coverage_review_prompt(decision_evidence, envelope),
+        )):
             review = await _run_request_graph_review_agent_once(
-                _request_graph_review_retry_prompt(
-                    review_prompt,
-                    review,
-                    evidence_errors,
-                )
+                review_prompt,
             )
-            if str(review.get("error") or "").strip():
-                return review
-            evidence_errors = _request_graph_review_evidence_errors(
-                review,
-                decision_evidence,
-            )
-            if evidence_errors:
-                return {
-                    "error": "request_graph_review_unverified_evidence",
-                    "reason": "; ".join(evidence_errors),
-                }
-        if str(review.get("status") or "").strip().lower() == "valid":
-            review_prompt = _request_graph_operation_coverage_review_prompt(
-                decision_evidence,
-                envelope,
-            )
-            review = await _run_request_graph_review_agent_once(review_prompt)
             if str(review.get("error") or "").strip():
                 return review
             evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
+            if evidence_errors and review_index == 0:
+                review = await _run_request_graph_review_agent_once(
+                    _request_graph_review_retry_prompt(review_prompt, review, evidence_errors)
+                )
+                if str(review.get("error") or "").strip():
+                    return review
+                evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
             if evidence_errors:
                 return {
                     "error": "request_graph_review_unverified_evidence",
                     "reason": "; ".join(evidence_errors),
                 }
-            if str(review.get("status") or "").strip().lower() == "valid":
-                if planned_status != "ready":
-                    return planned
-                return await _finalize_verified_request_plan(
-                    decision_evidence,
-                    planned,
+            if str(review.get("status") or "").strip().lower() != "valid":
+                review = await _run_request_graph_review_adjudicator_once(
+                    _request_graph_review_adjudication_prompt(review_prompt, review)
                 )
-        review = await _run_request_graph_review_adjudicator_once(
-            _request_graph_review_adjudication_prompt(review_prompt, review)
-        )
-        if str(review.get("error") or "").strip():
-            return review
-        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
-        if evidence_errors:
-            return {
-                "error": "request_graph_review_unverified_evidence",
-                "reason": "; ".join(evidence_errors),
-            }
-        if str(review.get("status") or "").strip().lower() == "valid":
+                if str(review.get("error") or "").strip():
+                    return review
+                evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
+                if evidence_errors:
+                    return {
+                        "error": "request_graph_review_unverified_evidence",
+                        "reason": "; ".join(evidence_errors),
+                    }
+                if str(review.get("status") or "").strip().lower() != "valid":
+                    break
+        else:
             if planned_status != "ready":
                 return planned
             return await _finalize_verified_request_plan(
@@ -29924,7 +29925,8 @@ def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations
             rows, goal, directory=generated_set_path.parent,
             region_status=global_region_filter["status"],
             persisted=gapmer_results.get("candidate_selection")),
-        allow_model_calls=review_recommendations, retry_failed=retry_recommendations)
+        allow_model_calls=review_recommendations, retry_failed=retry_recommendations,
+        skip_shortlist=(final_payload.get("execution_options") or {}).get("skip_shortlist") is True)
     persisted_total_count = persisted_required_filter.get("total_count")
     unfiltered_row_count = int(
         persisted_total_count
@@ -33552,6 +33554,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
         declared["requested_design_workbooks"] = [{"path": path, "task_id": bindings[Path(path)][0]}
                                                    for path in source_bound_workbooks]
     (directory / "declared_inputs.json").write_text(json.dumps(declared, indent=2))
+    from .analysis_process import analysis_timeout_seconds
+    execution_timeout = analysis_timeout_seconds()
     result = execute_analysis_program(
         directory=directory,
         payload={"operation": "render_requested_outputs", "task_type": "sandbox_analysis",
@@ -33559,7 +33563,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                  "declared_inputs": declared, "execution_root": str(directory),
                  "source_bound_design_workbooks": source_bound_workbooks,
                  "native_export_sources": native_sources,
-                 "resource_limits": {"timeout_seconds": None}, "require_tabular_report_views": True},
+                 "resource_limits": {"timeout_seconds": execution_timeout}, "require_tabular_report_views": True},
+        timeout_seconds=execution_timeout,
         generate=_run_sandbox_analysis_sync, required_outputs=pending,
         review_program=_run_analysis_contract_review_sync,
         first_review_repair=True,
@@ -43080,6 +43085,7 @@ def initialize_run_state(
     request: str,
     skip_router: bool = False,
     skip_ensembl_check: bool = False,
+    skip_shortlist: bool = False,
     router_max_steps: int = 25,
     router_log_tool_calls: bool = False,
     router_debug_dir: str = "",
@@ -43125,6 +43131,7 @@ def initialize_run_state(
         "request": request_text,
         "flags": {
             "skip_router": bool(skip_router),
+            "skip_shortlist": bool(skip_shortlist),
             "skip_ensembl_check": bool(skip_ensembl_check),
             "router_max_steps": int(router_max_steps),
             "router_log_tool_calls": bool(router_log_tool_calls),
@@ -44705,6 +44712,7 @@ def tool_execute_design_task(state_path: str) -> Dict[str, Any]:
         init_result = initialize_run_state(
             request=scoped_request,
             skip_router=bool(flags.get("skip_router", False)),
+            skip_shortlist=bool(flags.get("skip_shortlist", False)),
             skip_ensembl_check=bool(flags.get("skip_ensembl_check", False)),
             router_max_steps=int(flags.get("router_max_steps") or 25),
             router_log_tool_calls=bool(flags.get("router_log_tool_calls", False)),
@@ -46003,8 +46011,11 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
                         f"the generated analysis reports {field}=0. Read the declared "
                         "completed_design_candidates rows or their source_json_path using its actual schema."
                     )
+    from .analysis_process import analysis_timeout_seconds
+    execution_timeout = analysis_timeout_seconds()
     execution = execute_analysis_program(
         directory=sandbox_dir,
+        timeout_seconds=execution_timeout,
         payload={
             "task_type": str(prepared["task"].get("task_type") or "sandbox_analysis"),
             "request_text": analysis_request_text,
@@ -46013,7 +46024,7 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
             "request_envelope": response_request_envelope,
             "declared_inputs": declared_inputs,
             "execution_root": str(sandbox_dir),
-            "resource_limits": {"timeout_seconds": None},
+            "resource_limits": {"timeout_seconds": execution_timeout},
             "require_tabular_report_views": True,
         },
         generate=_run_sandbox_analysis_sync,
@@ -46045,7 +46056,7 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
         "stderr_path": str(stderr_path),
         "sandbox_result_path": str(result_path),
         "sandbox_summary_path": str(summary_path),
-        "resource_limits": {"timeout_seconds": None},
+        "resource_limits": {"timeout_seconds": execution_timeout},
         "exit_code": exit_code,
         "execution_attempts": execution["attempts"],
         "requested_outputs": [str(path) for path in requested_paths],
@@ -56501,6 +56512,9 @@ def tool_write_markdown_report(
     payload = context["payload"]
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
+    if (state.get("flags") or {}).get("skip_shortlist") is True:
+        final_payload.setdefault("execution_options", {})["skip_shortlist"] = True
+        _save_goal_payload(run_dir, payload, structured_goal, final_payload)
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)

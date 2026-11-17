@@ -346,6 +346,10 @@ def _infer_status_from_state(state_path: Path) -> Dict[str, Any]:
                 if bool(exists.get(key))
             }
     planning = payload.get("planning")
+    from .recommendation_status import completion_review
+    recommendation_review = completion_review(run_dir, response.get('artifacts'))
+    if recommendation_review:
+        response['recommendation_review'] = recommendation_review
     derived_planning: Dict[str, Any] = {}
     try:
         derived_planning = _derive_next_actions(payload)
@@ -624,6 +628,7 @@ def run_agentic_pipeline(
     user_request: str,
     skip_router: bool = False,
     skip_ensembl_check: bool = False,
+    skip_shortlist: bool = False,
     router_max_steps: int = 25,
     router_log_tool_calls: bool = False,
     router_debug_dir: Optional[str] = None,
@@ -635,6 +640,31 @@ def run_agentic_pipeline(
     event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     existing_state_path_resolved = _canonical_state_path(existing_state_path)
+
+    # This execution option must be applied before any controller/tool call,
+    # without relying on a model to copy a CLI flag into the new run state.
+    if skip_shortlist and not existing_state_path_resolved:
+        from .pipeline_tools import initialize_run_state
+        initialized = initialize_run_state(
+            request=user_request, skip_router=skip_router,
+            skip_ensembl_check=skip_ensembl_check, skip_shortlist=True,
+            router_max_steps=router_max_steps, router_log_tool_calls=router_log_tool_calls,
+            router_debug_dir=router_debug_dir or "", router_print_summary=router_print_summary,
+        )
+        if initialized.get("status") != "ok":
+            return {"status": "fatal", "error": {"kind": "initialization_failed", "details": initialized}}
+        existing_state_path_resolved = _canonical_state_path(initialized["state_path"])
+    if existing_state_path_resolved:
+        state = _load_state(existing_state_path_resolved)
+        saved_skip = (state.get("flags") or {}).get("skip_shortlist") is True
+        if skip_shortlist and not saved_skip:
+            def mark_skip(state):
+                state.setdefault("flags", {})["skip_shortlist"] = True
+            _mutate_runner_state(Path(existing_state_path_resolved), "skip_shortlist_requested", mark_skip)
+            if (_load_state(existing_state_path_resolved).get("flags") or {}).get("skip_shortlist") is not True:
+                return {"status": "fatal", "state_path": existing_state_path_resolved,
+                        "error": {"kind": "skip_shortlist_not_recorded"}}
+        skip_shortlist = bool(skip_shortlist or saved_skip)
 
     # Deterministically apply externally provided clarification answers before
     # controller execution so user input is not re-serialized by the LLM.
@@ -693,6 +723,7 @@ def run_agentic_pipeline(
         "request": user_request,
         "flags": {
             "skip_router": bool(skip_router),
+            "skip_shortlist": bool(skip_shortlist),
             "skip_ensembl_check": bool(skip_ensembl_check),
             "router_max_steps": int(max(1, router_max_steps)),
             "router_log_tool_calls": bool(router_log_tool_calls),

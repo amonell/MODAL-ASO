@@ -7,6 +7,27 @@ to inspect the saved evidence behind those statements.
 Adding the recommended panel keeps its order in the basket and downloads. PMO
 recommendations retain their physical chemistry even without supplier notation.
 
+To run candidate generation, screening and reporting without the model-based
+shortlist review, add `--skip-shortlist`:
+
+```bash
+modal-aso --skip-shortlist --output-dir /path/to/runs "your ASO design request"
+```
+
+This skips shortlist evidence paging, model ranking, recommendation writing and
+recommendation audits. Other pipeline model calls and scientific screening still
+run. The full assessed candidate pool remains available; the native selector
+retains an **unreviewed provisional panel**, honoring explicit counts, required
+regions and spacing. With no requested count it uses the existing fallback size
+of four, adjusted for required minima and available candidates.
+
+The option is saved in run state, inherited by child design tasks and retained
+when resuming without repeating the flag. It can also be supplied when resuming
+before report generation. It does not automatically rebuild already completed
+reports. Exported review status is `skipped`, with a receipt in
+`artifacts/candidates/recommendation_review_skipped.json`; any earlier review
+receipts remain intact. Normal runs without the flag keep the existing review.
+
 The report stage uses the configured language model, including `OPENROUTER_MODEL`.
 Every eligible physical molecule enters a review batch with all its saved analysis
 contexts and attributes. Larger libraries use bounded batches followed by comparisons
@@ -56,3 +77,21 @@ to their provider quota, or configure `ASO_LLM_CALL_RESOURCE` and its correspond
 Large evidence packets share field paths and repeated values while retaining the
 original measurements. Generation that reaches its token allowance receives a
 bounded retry with a larger allowance.
+
+Large individual molecule records are reviewed in bounded source pages before
+candidate comparison. The paging format preserves exact values, source paths,
+array order and missing values; partial strings and arrays carry explicit ranges.
+Related small facts share their source prefixes. The reviewer selects source
+records for comparison without generating replacement measurements or prose
+summaries. Further reduction is bounded and must make progress. Ordinary-sized
+records keep the existing review path.
+
+Every original page of each selected large molecule is checked again against its
+draft recommendation, including facts omitted from the comparison. Concrete
+counterevidence is supplied to the existing explanation-repair loop with its exact
+source records. An incomplete page review cannot approve a panel. The
+`source_evidence_reviews` section of the review receipt records source hashes,
+coverage, nominations and final source-page audits; component receipts retain the
+inputs and responses. The original assessment pool remains unchanged, and final
+citations resolve to its original values. Paging changes review preparation only;
+native generation, scoring, hard filters and panel constraints are unchanged.
