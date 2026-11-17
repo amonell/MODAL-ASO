@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep dense ASO binding maps readable with region navigation, spaced rows,
+  collision-free labels, expandable splice-site details and optional value plots.
+  Every saved ASO and prediction remains available in the table and downloads.
+
 - Show the saved original request above design approaches, including reports
   regenerated from archived request metadata. Keep compiled objectives as the
   fallback when the original wording is unavailable ([#18](https://github.com/amonell/MODAL-ASO/issues/18)).
