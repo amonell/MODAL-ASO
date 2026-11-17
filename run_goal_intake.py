@@ -516,6 +516,12 @@ class _CliNarrator:
         if not isinstance(event, dict):
             return
         event_type = str(event.get("type") or "").strip().lower()
+        if event_type == "progress":
+            message = str(event.get("message") or "").strip()
+            if message:
+                self._write(message + "\n")
+                self._start_spinner(message)
+            return
         if event_type == "warning":
             message = str(event.get("message") or "").strip()
             if message:

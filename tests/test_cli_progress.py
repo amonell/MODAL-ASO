@@ -159,6 +159,27 @@ def test_slow_internal_check_has_a_readable_activity():
     assert "evaluate_step_output" not in screen.getvalue()
 
 
+def test_nested_shortlist_progress_reaches_terminal_and_elapsed_updates():
+    import run_goal_intake as runtime
+    from aso_agents.runtime_warnings import emit_progress, warning_handler
+
+    now = [0.0]
+    screen = Terminal()
+    narrator = runtime._CliNarrator(stream=screen, enable_stream=False, enable_spinner=False)
+    narrator._progress = TerminalProgress(screen, clock=lambda: now[0])
+    try:
+        with warning_handler(narrator.on_runner_event):
+            emit_progress('Shortlist review: 128 of 256 ASOs reviewed (1 of 2 batches).')
+            now[0] = 30
+            narrator._progress._tick()
+        text = screen.getvalue()
+        assert text.startswith('Shortlist review: 128 of 256 ASOs reviewed (1 of 2 batches).\n')
+        assert 'Still running: Shortlist review: 128 of 256 ASOs reviewed' in text
+        assert 'Reference setup' not in text
+    finally:
+        narrator.stop_spinner()
+
+
 def test_quiet_activity_changes_and_controller_passes_cannot_postpone_updates():
     now = [0.0]
     screen = Terminal()

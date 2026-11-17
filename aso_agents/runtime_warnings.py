@@ -25,3 +25,12 @@ def emit_warning(message: str) -> None:
         print(f"Reference setup: {message}", flush=True)
     else:
         handler({"type": "warning", "message": message})
+
+
+def emit_progress(message: str) -> None:
+    """Use the CLI's existing run-scoped event channel from nested tools."""
+    handler = _handler.get()
+    if handler is None:
+        print(message, flush=True)
+    else:
+        handler({"type": "progress", "message": message})
