@@ -14,7 +14,7 @@ from aso_agents.input_file_roles import (
 def fixture():
     request = ('The records in /input/a.fa are submitted candidate target-site strings. '
                'Use /input/b.tsv only as the reference transcript, not as candidate observations.')
-    envelope = {'tasks': [{'task_id': 'evaluate', 'context': {
+    envelope = {'tasks': [{'task_id': 'evaluate', 'task_type': 'evaluate_existing_aso_set', 'context': {
         'provided_sequence_role': 'target_site_sequence',
         'provided_aso_files': [{'path': '/input/a.fa'}, {'path': '/input/b.tsv'}]}}]}
     prompt = native._request_graph_review_prompt(request, envelope)
@@ -48,6 +48,11 @@ def test_every_file_requires_its_own_bound_role_and_evidence():
 def test_native_review_routes_reference_judgment_into_repair_without_an_extra_call(monkeypatch, raw_status):
     request, prompt, files, _, checks, _ = fixture()
     raw = {'status': raw_status, 'issues': [], 'file_role_checks': checks}
+    raw['task_scope_checks'] = {'/tasks/0': {
+        'requested_task_type': 'evaluate_existing_aso_set', 'scope_status': 'preserved',
+        'evidence_refs': ['request'],
+        'evidence_span_id': next(iter(checks.values()))['evidence_span_id'],
+        'reason': 'The evaluation operation is preserved; only an input role needs repair.'}}
     original = deepcopy(raw)
     calls = []
 

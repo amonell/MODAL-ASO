@@ -469,6 +469,7 @@ class _CliNarrator:
         stream: Any,
         enable_stream: bool = True,
         enable_spinner: bool = True,
+        allow_model_install: bool = True,
     ) -> None:
         self.stream = stream
         self.enable_stream = bool(enable_stream)
@@ -476,6 +477,8 @@ class _CliNarrator:
         self._progress = TerminalProgress(stream, animate=self.enable_spinner)
         self._tool_counts: Dict[str, int] = {}
         self._last_message: str = ""
+        self._allow_model_install = allow_model_install
+        self._model_installations_offered: Set[Tuple[str, str]] = set()
 
     def _write(self, text: str) -> None:
         self._progress.write(text)
@@ -512,10 +515,52 @@ class _CliNarrator:
         else:
             self._stream_line("I'm taking your request and working through it step by step.")
 
-    def on_runner_event(self, event: Dict[str, Any]) -> None:
+    def _offer_model_installation(self, event: Dict[str, Any]) -> bool:
+        model, root = str(event["model"]), str(event["root"])
+        key = (model, root)
+        if key in self._model_installations_offered:
+            return False
+        self._model_installations_offered.add(key)
+        self.stop_spinner()
+        self._write(f"{model} is unavailable at {root}. Gapmer efficacy predictions need it.\n")
+        interactive = (self._allow_model_install
+                       and getattr(self.stream, "isatty", lambda: False)()
+                       and getattr(sys.stdin, "isatty", lambda: False)())
+        try:
+            if interactive:
+                self._write(
+                    "Installation downloads the model and its dependencies. "
+                    "OligoAI requires Linux x86-64 and an NVIDIA Ampere or newer GPU.\n"
+                )
+                while True:
+                    self._write("Install OligoAI now and continue this run? [y/N]: ")
+                    try:
+                        # Tool stdout is captured; the prompt must use the narrator's stream.
+                        answer = input().strip().lower()
+                    except (EOFError, OSError):
+                        self._write("\nNo installation answer was available.\n")
+                        break
+                    if answer in {"y", "yes"}:
+                        return True
+                    if answer in {"", "n", "no"}:
+                        break
+                    self._write("Enter y to install, or n to continue without efficacy predictions.\n")
+            self._write(
+                "Continuing without gapmer efficacy predictions. "
+                "Install with: modal-aso setup --features oligoai\n"
+                "If OligoAI is installed elsewhere, register it with: "
+                "modal-aso assets import-model oligoai PATH\n"
+            )
+            return False
+        finally:
+            self._start_spinner("Preparing gapmer efficacy predictions")
+
+    def on_runner_event(self, event: Dict[str, Any]) -> Optional[bool]:
         if not isinstance(event, dict):
             return
         event_type = str(event.get("type") or "").strip().lower()
+        if event_type == "model_installation":
+            return self._offer_model_installation(event)
         if event_type == "progress":
             message = str(event.get("message") or "").strip()
             if message:
@@ -525,7 +570,8 @@ class _CliNarrator:
         if event_type == "warning":
             message = str(event.get("message") or "").strip()
             if message:
-                self._write(f"Reference setup: {message}\n")
+                category = str(event.get("category") or "Reference setup")
+                self._write(f"{category}: {message}\n")
             return
         if event_type == "model_call":
             self._start_spinner("Waiting for the language model")
@@ -586,7 +632,21 @@ class _CliNarrator:
 
     def show_completion(self, agentic_result: Dict[str, Any]) -> None:
         self.stop_spinner(clear=True)
-        self._stream_line("The run is complete. I saved the outputs and wrapped everything into a clean run folder.")
+        limitation = agentic_result.get("execution_limitation")
+        limitation = limitation.strip() if isinstance(limitation, str) else ""
+        from aso_agents.recommendation_status import completion_review, review_notice
+        review = agentic_result.get('recommendation_review') or completion_review(
+            agentic_result.get('run_dir'), agentic_result.get('artifacts'))
+        review_message = review.get('completion_notice') or review_notice(review, review.get('panel_count'))
+        if limitation:
+            self._stream_line("The run finished with an execution limitation. I saved the available outputs.")
+            self._write(f"Execution limitation: {limitation}\n")
+        elif review_message:
+            self._stream_line("The analysis and exports are saved.")
+        else:
+            self._stream_line("The run is complete. I saved the outputs and wrapped everything into a clean run folder.")
+        if review_message:
+            self._write(review_message + "\n")
         run_dir = str(agentic_result.get("run_dir") or "").strip()
         if run_dir:
             self._write(f"Run folder: {run_dir}\n")
@@ -32302,6 +32362,11 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
         help="Skip running the splice strategy router stage.",
     )
     parser.add_argument(
+        "--skip-shortlist",
+        action="store_true",
+        help="Skip model-based shortlist review; retain candidate analysis, reports and an unreviewed provisional panel.",
+    )
+    parser.add_argument(
         "--router-max-steps",
         dest="router_max_steps",
         type=int,
@@ -32468,6 +32533,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
             stream=sys.stdout,
             enable_stream=pretty_cli and not no_stream_ui,
             enable_spinner=pretty_cli,
+            allow_model_install=not raw_cli,
         )
         if pretty_cli:
             narrator.intro(resuming=bool(existing_state_path_resolved))
@@ -32491,6 +32557,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                     agentic_result = run_agentic_pipeline(
                         user_request=user_request,
                         skip_router=skip_router,
+                        skip_shortlist=args.skip_shortlist,
                         skip_ensembl_check=skip_ensembl_check,
                         router_max_steps=router_max_steps,
                         router_log_tool_calls=router_log_tool_calls,
@@ -32513,6 +32580,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                     agentic_result = run_agentic_pipeline(
                         user_request=user_request,
                         skip_router=skip_router,
+                        skip_shortlist=args.skip_shortlist,
                         skip_ensembl_check=skip_ensembl_check,
                         router_max_steps=router_max_steps,
                         router_log_tool_calls=router_log_tool_calls,

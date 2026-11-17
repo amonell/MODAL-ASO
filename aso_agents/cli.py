@@ -162,7 +162,7 @@ def _run(argv):
             os.environ["ASO_RUNS_DIR"] = str(output_root)
     from .cli_progress import TerminalProgress
     is_help = any(flag in remainder for flag in ("--help", "-h"))
-    startup = TerminalProgress(sys.stdout)
+    startup = TerminalProgress(sys.stdout, animate="--raw-cli" not in remainder)
     if not is_help:
         startup.write("Starting MODAL-ASO...\n")
     with (nullcontext() if is_help else startup.running("Preparing the runtime")):
@@ -200,6 +200,8 @@ def main(argv=None):
         if argv and argv[0] not in {"setup", "doctor", "assets", "--help", "-h", "--version"}:
             return _run(argv[1:] if argv[0] == "run" else argv)
         parser = argparse.ArgumentParser(prog="modal-aso", description='Design and evaluate ASOs. Run: modal-aso "your request"')
+        parser.add_argument("--skip-shortlist", action="store_true",
+                            help="Skip model-based shortlist review; retain analysis, reports and a provisional panel")
         parser.add_argument("--version", action="version", version=f"MODAL-ASO {__version__}")
         sub = parser.add_subparsers(dest="command")
         setup = sub.add_parser("setup", help="Install reusable tools, references and models")

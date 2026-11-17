@@ -69,6 +69,18 @@ Install the corresponding species references before splice models. Splice models
 
 OligoAI uses BF16 arithmetic on supported GPUs to prevent overflow in its RNA encoder. Each prediction receipt records the arithmetic precision and runner identity. If an individual RNA context produces an invalid estimate, its activity remains unavailable and valid estimates for other contexts are retained.
 
+When a run reaches gapmer efficacy prediction and OligoAI is missing or incomplete,
+an interactive terminal offers to install it. Answer `y` to install the pinned
+model and dependencies, check the installed runtime and GPU, and continue
+predictions in the same run. Installation output is saved beside the prediction
+artifacts in `installation.log`. Answer `n` (or press Enter) to finish without
+efficacy predictions; their unavailable status remains explicit in the report.
+The choice is offered once per model location during that CLI invocation.
+Redirected output, unavailable input and `--raw-cli` runs warn and continue without
+installing. For unattended runs, install in advance and use `--require-model oligoai`
+to require a working predictor before starting. Existing saved predictions are
+reused without requiring another installation.
+
 After a CUDA execution fault, splice scoring gets one retry in a fresh model process. The run keeps the original error, retry inputs, model log and outcome beside the input tile table. A failed retry remains an error. Later splice jobs in the same run also use fresh processes because a CUDA execution fault invalidates the original process's GPU context.
 
 OligoAI supports DNA/MOE/cET sugars and PO/PS bonds. Reports identify unsupported chemistries and the conditions attached to each prediction.

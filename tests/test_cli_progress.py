@@ -66,15 +66,22 @@ def test_warning_does_not_stop_elapsed_updates_or_overwrite_terminal_lines():
     screen = Terminal(tty=True)
     progress = TerminalProgress(screen, animate=True, clock=lambda: now[0])
     with progress.running("Mapping transcripts"):
-        now[0] = 10
-        progress._tick()
-        assert "Mapping transcripts (10s)" in screen.getvalue()
+        for second in (1, 2, 30, 60):
+            now[0] = second
+            progress._tick()
+        assert "Mapping transcripts (1s)" in screen.getvalue()
+        assert "Mapping transcripts (2s)" in screen.getvalue()
+        assert "Mapping transcripts (30s)" in screen.getvalue()
+        assert "Mapping transcripts (1m 00s)" in screen.getvalue()
+        assert "\n" not in screen.getvalue()
         progress.write("Reference setup: Local annotation is unavailable.\n")
-        now[0] = 40
+        now[0] = 90
         progress._tick()
     output = screen.getvalue()
-    assert "Local annotation is unavailable.\nStill running:" in output
-    assert "Mapping transcripts (40s elapsed).\n" in output
+    assert "Local annotation is unavailable.\n\r" in output
+    assert "Mapping transcripts (1m 30s)" in output
+    assert output.count("\n") == 1
+    assert "Still running:" not in output
     assert progress._width == 0
 
 
@@ -88,6 +95,7 @@ def test_cli_progress_covers_waits_and_stops_on_every_exit(monkeypatch, tmp_path
     now = [0.0]
     screen = Terminal(tty=tty)
     instances = []
+    elapsed_suffix = "" if tty else " elapsed"
 
     def make_progress(stream, **kwargs):
         progress = TerminalProgress(stream, clock=lambda: now[0], **kwargs)
@@ -105,14 +113,16 @@ def test_cli_progress_covers_waits_and_stops_on_every_exit(monkeypatch, tmp_path
         callback = kwargs["event_callback"]
         callback({"type": "model_call"})
         wait_for_tick()
-        assert "Waiting for the language model (30s elapsed)" in screen.getvalue()
+        assert f"Waiting for the language model (30s{elapsed_suffix})" in screen.getvalue()
         callback({"type": "model_result"})
         callback({"type": "tool_call", "tool": "tool_run_splice_eval"})
         wait_for_tick()
-        assert "Predicting splice effects (30s elapsed)" in screen.getvalue()
+        assert f"Predicting splice effects (30s{elapsed_suffix})" in screen.getvalue()
         emit_warning("Local reference warning")
         wait_for_tick()
-        assert "Predicting splice effects (1m 00s elapsed)" in screen.getvalue()
+        assert f"Predicting splice effects (1m 00s{elapsed_suffix})" in screen.getvalue()
+        if tty:
+            assert "Still running:" not in screen.getvalue()
         if ending == "exception":
             raise RuntimeError("Failed calculation")
         if ending == "interrupt":
@@ -204,26 +214,41 @@ def test_rapid_activity_changes_emit_overdue_updates_without_waiting_for_worker(
     assert screen.getvalue() == "Still running: Checking the next result (0s elapsed).\n"
 
 
-def test_launcher_loading_also_gets_periodic_updates(monkeypatch):
+@pytest.mark.parametrize("tty", [False, True])
+@pytest.mark.parametrize("raw_cli", [False, True])
+def test_launcher_loading_also_gets_elapsed_updates(monkeypatch, tty, raw_cli):
     import builtins
     from types import SimpleNamespace
     from aso_agents import cli, cli_progress
 
     now = [0.0]
-    screen = Terminal()
-    progress = TerminalProgress(screen, clock=lambda: now[0])
+    screen = Terminal(tty=tty)
+    instances = []
+    inline = tty and not raw_cli
     original_import = builtins.__import__
+
+    def make_progress(stream, **kwargs):
+        progress = TerminalProgress(stream, clock=lambda: now[0], **kwargs)
+        instances.append(progress)
+        return progress
 
     def delayed_import(name, *args, **kwargs):
         if name == "run_goal_intake":
             now[0] += 30
-            progress._tick()
-            assert "Loading MODAL-ASO (30s elapsed)" in screen.getvalue()
+            instances[0]._tick()
+            elapsed_suffix = "" if inline else " elapsed"
+            assert f"Loading MODAL-ASO (30s{elapsed_suffix})" in screen.getvalue()
+            if inline:
+                assert "Still running:" not in screen.getvalue()
+            else:
+                assert "\r" not in screen.getvalue()
             return SimpleNamespace(main=lambda **kwargs: kwargs["result_callback"]({"status": "run_complete"}))
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", delayed_import)
-    monkeypatch.setattr(cli_progress, "TerminalProgress", lambda *a, **kw: progress)
+    monkeypatch.setattr(cli_progress, "TerminalProgress", make_progress)
     monkeypatch.setattr(sys, "stdout", screen)
-    assert cli._run(["Evaluate these ASOs"]) == 0
-    assert progress._thread is None
+    argv = ["Evaluate these ASOs"] + (["--raw-cli"] if raw_cli else [])
+    assert cli._run(argv) == 0
+    assert len(instances) == 1
+    assert instances[0]._thread is None

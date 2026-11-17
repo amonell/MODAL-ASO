@@ -62,17 +62,17 @@ class TerminalProgress:
                 return
             now = self.clock()
             elapsed = elapsed_text(now - self._started)
-            if now - self._last_update >= self.interval:
-                self._clear()
-                self._write(f"Still running: {self._message} ({elapsed} elapsed).\n")
-                self._last_update = now
-            elif self.animate:
+            if self.animate:
                 frame = ("|", "/", "-", "\\")[self._frame % 4]
                 label = self._message if len(self._message) <= 72 else self._message[:69] + "..."
                 line = f"  {frame} {label} ({elapsed})"
                 self._write("\r" + line.ljust(self._width))
                 self._width = len(line)
                 self._frame += 1
+            elif now - self._last_update >= self.interval:
+                self._clear()
+                self._write(f"Still running: {self._message} ({elapsed} elapsed).\n")
+                self._last_update = now
 
     def start(self, message: str) -> None:
         self.stop()

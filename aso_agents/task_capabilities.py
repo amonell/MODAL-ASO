@@ -1,5 +1,7 @@
 """Shared executor boundaries for planning and independent plan review."""
 
+from .task_scope_review import TASK_SCOPE_CONTRACT
+
 SUBMITTED_MOLECULE_INPUT_CONTRACT = (
     "Resolve supplied-file roles before choosing molecule inputs. "
     "provided_asos and provided_aso_files declare user-submitted candidate "
@@ -50,7 +52,7 @@ ANNOTATION_SCOPE_CONTRACT = (
     "coordinates or database-reported target predictions.\n"
 )
 
-ANALYSIS_TASK_CAPABILITIES = (SUBMITTED_MOLECULE_INPUT_CONTRACT + ANNOTATION_SCOPE_CONTRACT +
+ANALYSIS_TASK_CAPABILITIES = (TASK_SCOPE_CONTRACT + SUBMITTED_MOLECULE_INPUT_CONTRACT + ANNOTATION_SCOPE_CONTRACT +
     "Executor selection follows the canonical task_type. The native flag is derived "
     "metadata: false for sandbox_analysis and true for all other supported operations, "
     "including analyze_artifact and build_composite_report. Changing that flag does not "
@@ -59,8 +61,10 @@ ANALYSIS_TASK_CAPABILITIES = (SUBMITTED_MOLECULE_INPUT_CONTRACT + ANNOTATION_SCO
     "Analysis executor contract: sandbox_analysis executes a self-contained computation over supplied literals "
     "or declared available reference data, including tables, sequences, scores and arithmetic rules. "
     "Finite sequence enumeration and transformations under explicit user rules belong in that "
-    "calculation when all required sequences, reference identities and coordinate maps are available. "
-    "Generating new oligonucleotide strings does not itself require native design. Preserve every "
+    "calculation when they are the complete requested operation and all required sequences, "
+    "reference identities and coordinate maps are available. "
+    "Generating new oligonucleotide strings does not itself require native design when the "
+    "requested result is explicitly the calculation, rather than design toward a biological effect. Preserve every "
     "requested occurrence, including failed rows, and compute joint selection from the complete "
     "library when requested; a filtered native panel cannot supply omitted occurrences. "
     "Use native design when target discovery, unresolved reference retrieval or native biological "
@@ -95,7 +99,7 @@ ANALYSIS_TASK_CAPABILITIES = (SUBMITTED_MOLECULE_INPUT_CONTRACT + ANNOTATION_SCO
     "evaluate_existing_aso_set assesses ASOs against biological references; it does not "
     "execute arbitrary supplied seed rules or produce custom overlap tables by itself. "
     "Finite-reference sequence matching, orientation checks and coordinate projection can "
-    "remain in sandbox_analysis when the necessary sequences and coordinate maps are "
+    "remain in sandbox_analysis when they cover the complete requested result and the necessary sequences and coordinate maps are "
     "available in supplied artifacts, declared local references or completed dependencies. "
     "Assess actual input coverage against every requested result; target names or supplied "
     "molecules alone do not establish either coverage or a need for native evaluation. "
