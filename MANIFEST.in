@@ -1,2 +1,3 @@
 include uv.lock CITATION.cff CHANGELOG.md CONTRIBUTING.md
 recursive-include ci *.py *.sh
+recursive-include tests/fixtures *.json

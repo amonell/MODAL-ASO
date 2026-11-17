@@ -32339,7 +32339,7 @@ def _resolve_isoform_transcripts(
     return result
 
 
-def main(*, argv=None, clarification_resolver=None, result_callback=None) -> None:
+def main(*, argv=None, clarification_resolver=None, result_callback=None, event_callback=None) -> None:
     """Run the public CLI, optionally using a host's human-input and result sinks.
 
     Embedders use this same controller lifecycle rather than constructing a
@@ -32533,7 +32533,14 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
             stream=sys.stdout,
             enable_stream=pretty_cli and not no_stream_ui,
             enable_spinner=pretty_cli,
+            allow_model_install=not raw_cli,
         )
+        def on_event(event):
+            if event_callback is not None:
+                response = event_callback(event)
+                if event.get('type') == 'model_installation':
+                    return response is True
+            return narrator.on_runner_event(event)
         if pretty_cli:
             narrator.intro(resuming=bool(existing_state_path_resolved))
         controller_pass_limit = max(64, int(agentic_max_steps) * 4)
@@ -32550,7 +32557,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                 with (
                     contextlib.redirect_stdout(stdout_buffer),
                     contextlib.redirect_stderr(stderr_buffer),
-                    warning_handler(narrator.on_runner_event),
+                    warning_handler(on_event),
                     narrator._progress.running("Preparing the next step"),
                 ):
                     agentic_result = run_agentic_pipeline(
@@ -32566,14 +32573,14 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                         clarification_answers=pending_answers,
                         clarification_answer_summary=pending_summary,
                         max_steps=agentic_max_steps,
-                        event_callback=narrator.on_runner_event,
+                        event_callback=on_event,
                     )
                 captured_text = stdout_buffer.getvalue() + stderr_buffer.getvalue()
                 if captured_text.strip():
                     captured_cli_logs.append(captured_text)
             else:
                 with (
-                    warning_handler(narrator.on_runner_event),
+                    warning_handler(on_event),
                     narrator._progress.running("Preparing the next step"),
                 ):
                     agentic_result = run_agentic_pipeline(
@@ -32589,7 +32596,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                         clarification_answers=pending_answers,
                         clarification_answer_summary=pending_summary,
                         max_steps=agentic_max_steps,
-                        event_callback=narrator.on_runner_event,
+                        event_callback=on_event,
                     )
             status = str(agentic_result.get("status") or "").strip().lower()
             if status == "in_progress":

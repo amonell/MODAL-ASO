@@ -67,8 +67,7 @@ def test_timeout_has_retry_guidance_without_blaming_credentials():
     error = api_error(TimeoutError())
     assert error.field == "Timeout"
     assert "40-second" in str(error)
-    assert "No automatic retry" in str(error)
-    assert "does not establish" in str(error)
+    assert "Retry validation" in str(error)
 
 
 def test_successful_http_response_without_tool_call_is_rejected():
@@ -140,7 +139,7 @@ def test_worker_delegates_to_unchanged_controller_and_isolates_settings(monkeypa
     events, answers = Queue(), Queue()
     answers.put([{"question": "How many?", "answer": "10"}])
 
-    def controller(*, argv, clarification_resolver, result_callback):
+    def controller(*, argv, clarification_resolver, result_callback, event_callback):
         assert argv == ["--", "Design ASOs"]
         assert os.environ["OPENROUTER_MODEL"] == "openai/gpt-5.2"
         assert os.environ["OPENAI_BASE_URL"] == "https://stale.invalid"
@@ -223,7 +222,7 @@ def test_failed_controller_exit_does_not_invent_connection_error(monkeypatch):
     from aso_agents.gui.worker import run
     monkeypatch.setattr(os, "environ", dict(os.environ))
     monkeypatch.setattr(llm_provider, "prepare_responses_payload", llm_provider.prepare_responses_payload)
-    def controller(*, argv, clarification_resolver, result_callback):
+    def controller(*, argv, clarification_resolver, result_callback, event_callback):
         result_callback({"status": "fatal", "failed_stage": "intake", "error": {"message": "HTTP 400"}})
         raise SystemExit(1)
     monkeypatch.setitem(sys.modules, "run_goal_intake", NS(main=controller))
@@ -250,7 +249,7 @@ def test_worker_retains_execution_exception_in_redacted_diagnostic(monkeypatch):
     from aso_agents.gui.worker import run
     monkeypatch.setattr(os, "environ", dict(os.environ))
     monkeypatch.setattr(llm_provider, "prepare_responses_payload", llm_provider.prepare_responses_payload)
-    def controller(*, argv, clarification_resolver, result_callback):
+    def controller(*, argv, clarification_resolver, result_callback, event_callback):
         raise TypeError("unexpected field for test-key")
     monkeypatch.setitem(sys.modules, "run_goal_intake", NS(main=controller))
     events = Queue()

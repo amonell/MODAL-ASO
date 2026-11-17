@@ -2,8 +2,18 @@
 import multiprocessing
 import os
 import io
-import re
 from contextlib import redirect_stdout, redirect_stderr
+
+
+def plain_terminal_text(text):
+    """Drop ANSI CSI control sequences while preserving their surrounding text."""
+    parts = text.split("\x1b[")
+    result = [parts[0]]
+    for part in parts[1:]:
+        end = next((i for i, character in enumerate(part) if "@" <= character <= "~"), None)
+        if end is not None:
+            result.append(part[end + 1:])
+    return "".join(result)
 
 
 class ChatStream(io.TextIOBase):
@@ -20,13 +30,14 @@ class ChatStream(io.TextIOBase):
         return len(text)
 
     def emit(self, line):
-        raw = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+        raw = plain_terminal_text(line)
         line = raw.strip()
         if self.api_key:
             line = line.replace(self.api_key, "[redacted]")
         warning_header = "Pydantic serializer warnings" in line
         warning_value = "PydanticSerializationUnexpectedValue" in line
-        serializer_source = bool(re.match(r"return self\.__pydantic_serializer__\.(to_python|to_json)\(", line))
+        serializer_source = line.startswith(("return self.__pydantic_serializer__.to_python(",
+                                             "return self.__pydantic_serializer__.to_json("))
         if warning_header:
             self.flush_warning()
         if warning_header or warning_value or serializer_source or (self.warning_lines and (not line or raw[:1].isspace())):
@@ -73,7 +84,7 @@ def run(settings, request, events, answers):
         main = controller.main
         import inspect
         try:
-            inspect.signature(main).bind(argv=[], clarification_resolver=None, result_callback=None)
+            inspect.signature(main).bind(argv=[], clarification_resolver=None, result_callback=None, event_callback=None)
         except TypeError:
             events.put(("error", "The GUI adapter is incompatible with this controller version. Update aso_agents/gui/worker.py; the analysis engine does not need a GUI-specific change."))
             return
@@ -87,6 +98,16 @@ def run(settings, request, events, answers):
             result_received = True
             events.put(("result", result))
 
+        def event_callback(event):
+            if event.get("type") == "model_installation":
+                model = str(event.get("model") or "the model")
+                responses = clarify(questions=[f"Install {model} now? Answer yes or no."],
+                                    context={"why_this_matters": event.get("message", "")})
+                return bool(responses and str(responses[0].get("answer", "")).strip().lower()
+                            in {"yes", "y", "install"})
+            if event.get("type") == "progress" and event.get("message"):
+                events.put(("message", str(event["message"])))
+
         stream = ChatStream(events, settings.api_key)
         try:
             events.put(("activity", "Starting the analysis controller."))
@@ -94,7 +115,7 @@ def run(settings, request, events, answers):
                 events, commentary_for_tool=getattr(controller, "_cli_message_for_tool", None)
             ):
                 main(argv=["--", request], clarification_resolver=clarify,
-                     result_callback=result_callback)
+                     result_callback=result_callback, event_callback=event_callback)
         finally:
             stream.finish()
     except SystemExit as exc:

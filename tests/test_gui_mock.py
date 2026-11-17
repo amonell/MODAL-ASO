@@ -50,7 +50,10 @@ class MockGuiTests(TestCase):
             self.assertEqual(len(ui.get('download_button')), 6)
             self.assertTrue(ui.get('iframe'))
             self.assertEqual(ui.session_state['result']['preview_source'], 'goal_1794942511_PCSK9')
-            self.assertTrue(any('PCSK9' in item.proto.srcdoc for item in ui.get('iframe')))
+            from urllib.request import urlopen
+            report_frame = next(item for item in ui.get('iframe') if item.proto.src.endswith('/report.html'))
+            with urlopen(report_frame.proto.src, timeout=3) as response:
+                self.assertIn(b'PCSK9', response.read())
             self.assertTrue(any('recommended_shortlist.csv' in item.value for item in ui.markdown))
             ui.chat_input[0].set_value('Second request').run()
             process = ui.session_state['job'][0]

@@ -1,7 +1,7 @@
 """Presentation configuration and live checks, separate from scientific logic."""
 from dataclasses import dataclass, field
 import os
-import re
+from datetime import date
 
 BASES = {"openai": "https://api.openai.com/v1", "openrouter": "https://openrouter.ai/api/v1"}
 ALL_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -64,12 +64,27 @@ def configuration_preview(settings, base=None):
                 if key.startswith("ASO_") and key.endswith(("_MODEL", "_REASONING_EFFORT"))}}
 
 
+def model_family(model):
+    name = model.removeprefix("openai/")
+    for family in ("gpt-5.2", "gpt-5-mini", "gpt-5-nano", "gpt-5"):
+        if name == family:
+            return family
+        if name.startswith(family + "-"):
+            suffix = name[len(family) + 1:]
+            try:
+                if len(suffix) == 10 and date.fromisoformat(suffix).isoformat() == suffix:
+                    return family
+            except ValueError:
+                pass
+    return None
+
+
 def efforts(model):
     """Conservative documented presets; unknown models use provider defaults."""
-    name = model.removeprefix("openai/")
-    if re.fullmatch(r"gpt-5\.2(?:-\d{4}-\d{2}-\d{2})?", name):
+    family = model_family(model)
+    if family == "gpt-5.2":
         return ["default", "none", "low", "medium", "high", "xhigh"]
-    if re.fullmatch(r"gpt-5(?:-mini|-nano)?(?:-\d{4}-\d{2}-\d{2})?", name):
+    if family in {"gpt-5", "gpt-5-mini", "gpt-5-nano"}:
         return ["default", "minimal", "low", "medium", "high"]
     return ["default"]
 
@@ -87,7 +102,7 @@ def catalog_efforts(row):
 def api_error(exc):
     from openai import APITimeoutError
     if isinstance(exc, (APITimeoutError, TimeoutError)):
-        return SetupError("Timeout", "The provider did not respond within the 40-second network timeout. No automatic retry was made. Retry validation; if it repeats, check your connection or choose another model. This does not establish that your API key is wrong.")
+        return SetupError("Timeout", "The provider exceeded the 40-second network timeout. Retry validation; if it repeats, check your connection or choose another model.")
     status = getattr(exc, "status_code", None)
     body = getattr(exc, "body", None) or {}
     error = body.get("error", body) if isinstance(body, dict) else {}
@@ -142,7 +157,7 @@ def list_models(provider, key):
         # The models endpoint has no capability flags: expose only known tool/
         # structured-output families, then verify actual account compatibility.
         return dict(sorted((row.id, efforts(row.id)) for row in client.models.list()
-                           if re.fullmatch(r"gpt-(?:5\.2|5(?:-mini|-nano)?)(?:-\d{4}-\d{2}-\d{2})?", row.id)))
+                           if model_family(row.id)))
     except SetupError:
         raise
     except Exception as exc:

@@ -83,7 +83,7 @@ def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypat
 
     monkeypatch.setattr(llm_provider, "_get_client", Client)
 
-    def controller(*, argv, clarification_resolver=None, result_callback=None):
+    def controller(*, argv, clarification_resolver=None, result_callback=None, event_callback=None):
         assert argv == ["--", "Same ASO request"]
         assert llm_provider.prepare_responses_payload is provider_method
         assert (SDKModel.model_dump, SDKModel.model_dump_json) == sdk_methods

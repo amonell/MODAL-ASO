@@ -376,7 +376,7 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                                 if role == "diagnostic":
                                     with st.expander(f"Technical details · {message['type']}"):
                                         if message.get("type") == "SDK serialization warning":
-                                            st.caption(f"{message.get('count', 1)} warning(s) recorded during this request. The SDK reported unexpected data while serializing; this warning alone does not mean the run failed.")
+                                            st.caption(f"{message.get('count', 1)} warning(s) recorded during this request. The SDK reported unexpected data while serializing.")
                                         st.code(message["traceback"], language="text")
                                 else:
                                     st.write(message)
@@ -427,7 +427,8 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     st.caption(f"Saved run preview: {state.result['preview_source']} · No new analysis was run.")
                 report = root / "report.html" if root else None
                 if report and report.is_file():
-                    st.iframe(report.read_text(encoding="utf-8"), height="stretch")
+                    from aso_agents.gui.artifacts import report_url
+                    st.iframe(report_url(str(root)), height="stretch")
                 else:
                     st.info("The HTML report will appear when available.")
         with files:

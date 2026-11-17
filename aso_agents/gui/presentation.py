@@ -1,5 +1,4 @@
 """Trusted UI markup, kept out of Markdown's indented-code parsing."""
-import re
 from html import escape
 
 def tagline_html():
@@ -44,7 +43,10 @@ margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 def literal_block(value):
     """Display diagnostic syntax literally, including JSON paths and backticks."""
     text = str(value)
-    longest = max((len(match) for match in re.findall(r"`+", text)), default=0)
+    longest = current = 0
+    for character in text:
+        current = current + 1 if character == "`" else 0
+        longest = max(longest, current)
     fence = "`" * max(3, longest + 1)
     return f"{fence}text\n{text}\n{fence}"
 
@@ -62,6 +64,11 @@ def result_message(result):
             explanation = "The model's response did not match the required data format.\n\n"
         return f"Analysis stopped during {stage}.\n\n{explanation}{literal_block(detail)}\n\nThe run did not complete; inspect the saved run files for details before retrying."
     if status in {"run_complete", "completed"}:
+        from aso_agents.recommendation_status import review_notice
+        review = result.get("recommendation_review") or {}
+        notice = review.get("completion_notice") or review_notice(review, review.get("panel_count"))
+        if notice:
+            return "Analysis and outputs saved. " + notice + " Open Results for the report and Files for downloads."
         return "Analysis completed. Open Results to inspect the report or Files to save the outputs."
     return f"Analysis status: {status}."
 
