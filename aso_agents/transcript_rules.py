@@ -1,4 +1,6 @@
 """Resolve a typed transcript selection rule against annotated candidates."""
+
+from aso_agents.model_defaults import DEFAULT_MODEL
 from copy import deepcopy
 import json
 
@@ -34,7 +36,7 @@ _rule_agent = Agent(
         "its own identity. Do not bind a named alternative isoform to the primary rule. "
         "The caller will apply these predicates to all candidates and require a unique match."
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
 )
 
 _BOOL_FIELDS = {"is_canonical", "is_mane_select", "is_mane_plus_clinical"}

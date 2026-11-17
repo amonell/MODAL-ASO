@@ -65,6 +65,7 @@ def _valid_workbench_payload() -> dict[str, Any]:
 async def _passthrough_completeness_review(
     _request_evidence: str,
     planned: dict[str, Any],
+    *, source_artifacts=None,
 ) -> dict[str, Any]:
     return planned
 
@@ -1036,6 +1037,7 @@ def test_execution_completeness_stops_before_goal_synthesis(
     async def retain_question(
         _request_evidence: str,
         current: dict[str, Any],
+        *, source_artifacts=None,
     ) -> dict[str, Any]:
         return current
 
@@ -1087,6 +1089,7 @@ def test_execution_completeness_questions_are_necessity_reviewed(
     async def drops_question(
         _request_evidence: str,
         current: dict[str, Any],
+        *, source_artifacts=None,
     ) -> dict[str, Any]:
         calls.append("necessity")
         revised = deepcopy(current)
@@ -1674,7 +1677,7 @@ def test_request_graph_agents_keep_generated_candidate_ranking_inside_design() -
         assert "pre-existing ASO sequences" in text
 
 
-def test_graph_with_retained_clarification_is_still_topology_reviewed(
+def test_graph_with_retained_clarification_is_topology_reviewed_before_and_after_answers(
     monkeypatch: Any,
 ) -> None:
     planned = _valid_workbench_payload()
@@ -1689,6 +1692,7 @@ def test_graph_with_retained_clarification_is_still_topology_reviewed(
     async def retain(
         _request_evidence: str,
         current: dict[str, Any],
+        *, source_artifacts=None,
     ) -> dict[str, Any]:
         return current
 
@@ -1713,7 +1717,19 @@ def test_graph_with_retained_clarification_is_still_topology_reviewed(
     assert result["status"] == "need_clarification"
     assert result["questions"] == planned["questions"]
     assert len(reviews) == 2
-    assert "operation-coverage" in reviews[1]
+
+    planned.update(status="ready", questions=[], reason=None)
+
+    async def finalize(_request_evidence: str, current: dict[str, Any]) -> dict[str, Any]:
+        return current
+
+    monkeypatch.setattr(pipeline_tools, "_finalize_verified_request_plan", finalize)
+    result = asyncio.run(
+        pipeline_tools._run_verified_request_workbench_agent_once("request with answered user input")
+    )
+    assert result["status"] == "ready"
+    assert len(reviews) == 4
+    assert "operation-coverage" in reviews[-1]
 
 
 def test_open_validation_issue_ledger_disables_valid_audit_status() -> None:

@@ -4,6 +4,7 @@ import json
 from .report_attribute_ui import ATTRIBUTE_HTML, ATTRIBUTE_SCRIPT
 from .report_approaches import approach_html, context_approaches, ordered_contexts
 from .report_exon_names import exon_naming_html
+from .report_recommendations import recommendations_html
 
 
 def pack_data(data):
@@ -42,6 +43,9 @@ def explorer_html(data):
         return ''
     data = {**data, 'contexts': ordered_contexts(data)}
     esc = lambda value: html.escape(str(value if value is not None else ''), quote=True)
+    panel_label = ('Recommended ASOs' if (data.get('recommendation_review') or {}).get('status') == 'completed'
+                   else 'Design panel' if data.get('kind') == 'design' else 'Saved panel')
+    anchor = 'report-' + esc(data['id'])
     facts = ''.join('<div class="report-fact"><span class="report-fact-label">'+esc(f['label'])
         +'</span><span class="report-fact-value">'+esc(f['value'])+'</span><span class="report-fact-note">'
         +esc(f.get('note'))+'</span></div>' for f in data.get('facts') or [])
@@ -90,9 +94,26 @@ def explorer_html(data):
         rows.append('<tr>'+''.join('<td>'+esc(v)+'</td>' for v in values)+'</tr>')
     has_activity = any(r.get('oligoai') or data.get('kind')!='chemistry' and r.get('oligoai_applicable') for r in data['records'])
     classes = 'report-explorer' + ('' if has_activity else ' report-no-oligoai')
+    filters = '''<div class="report-controls report-basic-filters" data-role="basic-filters">
+<label>Sequence, name or position<input type="search" name="aso-search" data-role="search" placeholder="Search ASOs…" autocomplete="off" spellcheck="false"></label>
+<label data-role="effect-control">Minimum prediction<input type="number" name="minimum-prediction" step="any" data-role="minimum" placeholder="Any"></label>
+<label data-role="activity-minimum-control" hidden>Minimum RNA reduction (%)<input type="number" name="minimum-rna-reduction" step="any" data-role="activity-minimum" placeholder="Any"></label>
+<label class="report-check"><input type="checkbox" data-role="panel-only">'''+panel_label+''' only</label>
+<label class="report-check"><input type="checkbox" data-role="basket-only">In my basket</label>
+<label class="report-check"><input type="checkbox" data-role="clean-only">Zero exact or 1-mismatch off-targets</label>
+<button type="button" class="report-button" data-action="reset">Reset all filters</button></div>'''
+    navigation = ('<nav class="report-section-nav" data-role="section-nav" aria-label="Report sections">'
+        + ('<a class="report-jump" href="#'+anchor+'-recommendations">'
+           + ('Recommendations' if (data.get('recommendation_review') or {}).get('status') == 'completed' else 'Panel review')
+           + '</a>' if data.get('recommendation_review') else '')
+        + '<a class="report-jump" data-role="map-jump" href="#'+anchor+'-binding" hidden>Binding map</a>'
+        + '<a class="report-jump" href="#'+anchor+'-asos">ASO table</a>'
+        + '<a class="report-jump" href="#'+anchor+'-basket">Your basket</a></nav>')
     return '<section class="'+classes+'''" id="candidate-explorer" aria-label="Explore ASO candidates">
+'''+navigation+'''
 <div class="report-facts">'''+facts+'''</div>
-<div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['contexts'][0].get('objective') or data['objective'])+'''</p></div>
+<div class="report-goal"><span class="report-goal-label">What this run was asked to do</span><p data-role="objective">'''+esc(data['objective'])+'''</p></div>
+'''+recommendations_html(data)+'''
 '''+('<h2>Targets and approaches</h2>' if data.get('kind') == 'design' else '')+'''
 <div class="report-controls"><label class="report-context">Target and approach<select data-role="context" aria-label="Target and approach">'''+options+'''</select></label>
 <p class="report-sub">Choose a target to explore its predictions and ASOs.</p></div>
@@ -100,21 +121,15 @@ def explorer_html(data):
 <div class="report-controls" data-role="activity-controls" hidden><label class="report-context">OligoAI RNA context and conditions<select data-role="activity-context" aria-label="OligoAI RNA context and conditions"></select></label></div>
 <p class="report-sub" data-role="activity-note"'''+('' if activity_note else ' hidden')+'''>'''+esc(activity_note)+'''</p>
 <div class="report-exploration-layout" data-role="exploration-layout">
-'''+ATTRIBUTE_HTML+'''
-<section class="report-binding-view" data-role="map-section" hidden><h2>Where the ASOs bind</h2><label class="report-sub" data-role="chromosome-control" hidden>Chromosome <select data-role="map-chromosome" aria-label="Map chromosome"></select></label><p class="report-map-description" data-role="map-description"></p>
+'''+ATTRIBUTE_HTML.replace('<!-- BASIC_FILTERS -->', filters)+'''
+<section class="report-binding-view" data-role="map-section" id="'''+anchor+'''-binding" tabindex="-1" hidden><h2>Where the ASOs bind</h2><label class="report-sub" data-role="chromosome-control" hidden>Chromosome <select data-role="map-chromosome" aria-label="Map chromosome"></select></label><p class="report-map-description" data-role="map-description"></p>
 <div class="report-map" tabindex="0" role="region" aria-label="Scrollable map of ASO binding sites"><canvas data-role="map" role="img" aria-label="ASO binding map; use the candidate table to select ASOs with a keyboard"></canvas></div>
 <div class="report-legend"><span class="report-gradient"></span><span data-role="legend"></span><div class="report-category-legend" data-role="category-legend"></div></div>
 <div class="report-pagination"><span data-role="map-status"></span><div><button class="report-button" data-action="map-previous">Previous rows</button><button class="report-button" data-action="map-next">Next rows</button></div></div>
 <p class="report-map-tip" data-role="map-tip" aria-live="polite">Select an ASO in the map or table to add it to your basket.</p></section>
 </div>
-<h2>Explore all ASOs</h2>
+<h2 id="'''+anchor+'''-asos" tabindex="-1">Explore all ASOs</h2>
 <p class="report-sub" data-role="metric-note"></p>
-<div class="report-controls"><label>Sequence, name or position<input type="search" data-role="search" placeholder="Search candidates" autocomplete="off"></label>
-<label data-role="effect-control">Minimum prediction<input type="number" step="any" data-role="minimum" placeholder="Any"></label>
-<label data-role="activity-minimum-control" hidden>Minimum RNA reduction (%)<input type="number" step="any" data-role="activity-minimum" placeholder="Any"></label>
-<label class="report-check"><input type="checkbox" data-role="panel-only">Selected panel only</label>
-<label class="report-check"><input type="checkbox" data-role="clean-only">Zero exact or 1-mismatch off-targets</label>
-<button type="button" class="report-button" data-action="reset">Reset filters</button></div>
 <p class="report-sub"><span data-role="count" aria-live="polite">'''+str(len(data['records']))+''' results available.</span> <span data-role="screen-description">Off-targets are other sequences an ASO may also bind. Counts below show exact / 1-mismatch / 2-mismatch matches.</span></p>
 <div class="report-table-wrap" tabindex="0" role="region" aria-label="ASO candidate table"><table class="report-table" data-role="candidate-table" data-report-native="true"><thead><tr>
 <th scope="col">Select</th><th scope="col" data-sort="native_rank"><button type="button" title="Rank from the saved analysis within this target and approach">Analysis rank</button></th><th scope="col" data-sort="aso"><button type="button">ASO · 5′→3′</button></th>
@@ -123,11 +138,12 @@ def explorer_html(data):
 <tbody>'''+''.join(rows)+'''</tbody></table></div>
 <div class="report-pagination"><label>Rows per page <select data-role="page-size" aria-label="Rows per page"><option>25</option><option>50</option><option>100</option></select></label>
 <span data-role="page-status" aria-live="polite"></span><div><button class="report-button" data-action="previous">Previous</button><button class="report-button" data-action="next">Next</button></div></div>
-<div class="report-basket" aria-label="Selected ASO basket"><div class="report-basket-main"><span class="report-basket-count" data-role="basket-count" aria-live="polite">No ASOs selected</span>
-<div class="report-basket-actions"><button class="report-button" data-action="add-panel">Add panel</button><button class="report-button" data-action="add-top">Add first 10 shown</button>
-<button class="report-button report-button-primary" data-action="csv" disabled>Download CSV</button><button class="report-button" data-action="fasta" disabled>FASTA</button><button class="report-button" data-action="clear" disabled>Clear</button></div></div>
+<div class="report-basket" role="region" aria-label="Selected ASO basket" data-role="basket" data-docked="false" id="'''+anchor+'''-basket" tabindex="-1"><div class="report-basket-main"><span class="report-basket-count" data-role="basket-count" aria-live="polite">No ASOs selected</span>
+<div class="report-basket-actions"><button class="report-button" data-action="add-panel">Add '''+panel_label[0].lower()+panel_label[1:]+'''</button><button class="report-button" data-action="add-top" disabled>Add matching ASOs</button>
+<button class="report-button report-button-primary" data-action="csv" disabled>Download CSV</button><button class="report-button" data-action="fasta" disabled>FASTA</button><button class="report-button" data-action="clear" disabled>Clear basket</button><button class="report-button" data-action="undo-clear" hidden>Undo clear</button></div></div>
 <details><summary>Selected ASOs and ordering options</summary><ul class="report-basket-items" data-role="basket-items"></ul>
-<div class="report-order-fields"><label>Number to add<input type="number" data-role="top-count" min="1" max="10000" value="10"></label><label>Scale<input data-role="scale" placeholder="Specify with supplier"></label><label>Purification<input data-role="purification" placeholder="Specify with supplier"></label></div>
+<div class="report-order-fields"><label>Number to add<input type="number" data-role="top-count" min="1" max="10000" value="10" aria-describedby="'''+anchor+'''-count-error"></label><label>Scale<input data-role="scale" placeholder="Specify with supplier"></label><label>Purification<input data-role="purification" placeholder="Specify with supplier"></label></div>
+<p class="report-filter-error" data-role="top-count-error" id="'''+anchor+'''-count-error" aria-live="polite"></p>
 <p class="report-sub">The order sheet uses each ASO’s saved ordering notation exactly. CSV includes every recorded design context for your selected molecules.</p>
 <p class="report-notice" data-role="order-notice" hidden></p><p class="report-sub" data-role="storage-notice" hidden></p>
 <button class="report-button" data-action="order" disabled>Download order sheet</button></details></div>
@@ -154,8 +170,13 @@ function setup(root){
   row.chemistry={...row.chemistry,notation:row.notation};delete row.notation;return row;
  });
  const q=role=>root.querySelector(`[data-role="${role}"]`),action=name=>root.querySelector(`[data-action="${name}"]`);
+ const evidence=document.getElementById('reader-analysis');
+ if(evidence){evidence.tabIndex=-1;const link=document.createElement('a');link.className='report-jump';link.href='#reader-analysis';link.textContent='Evidence';q('section-nav').append(link);}
  const rows=data.records,byId=new Map(rows.map(r=>[r.id,r])),contexts=new Map(data.contexts.map(c=>[c.id,c]));
  const basket=new Map(),storageKey='modal-aso-selection:'+data.id;
+ const panelRows=rows.filter(r=>r.panel_rank!==null).sort((a,b)=>a.panel_rank-b.panel_rank);
+ const panelLabel=data.recommendation_review?.status==='completed'?'Recommended ASOs':data.kind==='design'?'Design panel':'Saved panel';
+ let clearedBasket=null;
  const activityViews=new Map();let activityScenarios=[];
  let page=0,mapPage=0,pageSize=25,sort='effect',ascending=false,filtered=[],mapHits=[],mapFrame=0,printing=false;
  try{const saved=JSON.parse(localStorage.getItem(storageKey)||'[]');if(Array.isArray(saved))saved.forEach(id=>{const r=byId.get(id);if(r)basket.set(r.molecule,r);});}catch{q('storage-notice').textContent='Selections stay available while this report is open. Browser storage is unavailable.';q('storage-notice').hidden=false;}
@@ -210,10 +231,10 @@ function setup(root){
  }
  function baseVisible(){
   const query=q('search').value.trim().toUpperCase(),minimum=q('minimum').value.trim(),activityMinimum=q('activity-minimum').value.trim();
-  const panel=q('panel-only').checked,clean=q('clean-only').checked;
-  const key=JSON.stringify([q('context').value,q('activity-context').value,query,minimum,activityMinimum,panel,clean]);
+  const panel=q('panel-only').checked,selected=q('basket-only').checked,clean=q('clean-only').checked;
+  const key=JSON.stringify([q('context').value,q('activity-context').value,query,minimum,activityMinimum,panel,selected,clean]);
   if(key===baseKey)return baseRows;
-  baseKey=key;baseRows=scopeRows().filter(r=>(!panel||r.panel_rank!==null)&&
+  baseKey=key;baseRows=scopeRows().filter(r=>(!panel||r.panel_rank!==null)&&(!selected||basket.has(r.molecule))&&
    (!clean||(r.off_target_complete&&r.off_targets[0]===0&&r.off_targets[1]===0))&&
    (!minimum||(finite(r.effect)&&r.effect>=Number(minimum)))&&
    (!activityMinimum||(finite(activityFor(r).value)&&!activityFor(r).missing&&activityFor(r).value>=Number(activityMinimum)))&&
@@ -224,7 +245,7 @@ function setup(root){
   let result=baseVisible().filter(r=>attributeView.matches(r));
   const multi=q('context').value==='all';
   return result.sort((a,b)=>{
-   if(multi&&a.context!==b.context)return data.contexts.findIndex(c=>c.id===a.context)-data.contexts.findIndex(c=>c.id===b.context);
+   if(multi&&sort!=='panel_rank'&&a.context!==b.context)return data.contexts.findIndex(c=>c.id===a.context)-data.contexts.findIndex(c=>c.id===b.context);
    const sortValue=r=>sort.startsWith('attribute:')?attributeView.sortValue(sort.slice(10),r):sort==='oligoai'?activityFor(r).value:sort==='off_targets'?r.off_targets[0]:r[sort];
    let x=sortValue(a),y=sortValue(b);
    if(x===null||x===undefined)return y===null||y===undefined?a.order-b.order:1;if(y===null||y===undefined)return -1;
@@ -250,41 +271,79 @@ function setup(root){
    const raw=r.predictions.length?`<dt>Deletion / replacement prediction</dt><dd>${r.predictions.map(fmt).join(' / ')}</dd>`:'';
    const checks=r.guard.details.map(g=>`<p>${esc(g.text)}${g.reason?'<br>'+esc(g.reason):''}</p>`).join('');
    const chemistry=esc(r.chemistry.detail||r.chemistry.label);
+   const recommendation=r.recommendation?.why_chosen?`<dt>Panel role</dt><dd>${esc(r.recommendation.panel_role)}</dd><dt>Tradeoff</dt><dd>${esc(r.recommendation.tradeoff)}</dd>`:'';
    const screen=r.off_targets.map(v=>finite(v)?v.toLocaleString():'—').join(' / ');
    return `<tr data-record="${esc(r.id)}" data-panel="${r.panel_rank!==null}" aria-selected="${basket.has(r.molecule)}"><td><input type="checkbox" data-pick="${esc(r.id)}" aria-label="Select ${esc(r.name)}" ${basket.has(r.molecule)?'checked':''}></td><td class="report-number">${r.native_rank??'—'}</td>
-   <td><span class="report-attribute-swatch" style="background:${attributeView.color(r)}" title="${esc(attributeView.describe(r))}" aria-hidden="true"></span><span class="report-sequence">${esc(r.aso)}</span>${r.panel_rank!==null?` <span class="report-badge report-badge-panel">Panel ${r.panel_rank}</span>`:''}<div class="report-sub">${esc(r.chemistry.label)}</div></td>
+   <td><span class="report-attribute-swatch" style="background:${attributeView.color(r)}" title="${esc(attributeView.describe(r))}" aria-hidden="true"></span><span class="report-sequence">${esc(r.aso)}</span>${r.panel_rank!==null?` <span class="report-badge report-badge-panel">${data.recommendation_review?.status==='completed'?'Recommendation':'Panel'} ${r.panel_rank}</span>`:''}<div class="report-sub">${esc(r.chemistry.label)}</div></td>
    <td><span class="report-sub">${esc(r.location)}</span>${q('context').value==='all'?'<div class="report-sub">'+esc(contexts.get(r.context)?.label)+'</div>':''}</td>
    <td class="report-number"><span class="report-effect" style="background:${color};color:${white?'#fff':'#1b1f23'}">${fmt(r.effect)}</span></td><td class="report-number">${finite(r.gc)?(r.gc*100).toFixed(0)+'%':'—'}</td>
    <td><span class="report-badge">${screen}</span><div class="report-sub">${esc(r.off_target_unit)}${r.off_target_complete?'':r.off_target_status==='unavailable'?' · search result missing':r.off_target_status==='failed'?' · search failed':' · search incomplete'}</div></td>
    <td data-activity="${esc(r.id)}">${activityCell(r)}</td>
    ${tableAttributes.map(a=>`<td class="report-attribute-column">${esc(attributeView.cell(a,r))}</td>`).join('')}
-   <td><details><summary>${['passed','review','incomplete'].includes(r.guard.status)?esc(r.guard.summary):'View ASO details'}</summary><div class="report-check-text">${checks||esc(r.guard.summary)}<dl><dt>Selection</dt><dd>${esc(r.selection_note)}</dd><dt>Chemistry</dt><dd>${chemistry}</dd>${raw}<dt>Target and approach</dt><dd>${esc(contexts.get(r.context)?.label)}</dd><dt>Saved rank</dt><dd>${r.native_rank??'Unavailable'}</dd><dt>Ordering notation</dt><dd><code>${esc(r.chemistry.notation||'Unavailable')}</code></dd></dl></div></details></td></tr>`;
-  }).join('')||`<tr><td colspan="${9+tableAttributes.length}" class="report-empty">No ASOs match these filters.</td></tr>`;
+   <td><details><summary>${['passed','review','incomplete'].includes(r.guard.status)?esc(r.guard.summary):'View ASO details'}</summary><div class="report-check-text">${checks||esc(r.guard.summary)}<dl><dt>Selection</dt><dd>${esc(r.selection_note)}</dd>${recommendation}<dt>Chemistry</dt><dd>${chemistry}</dd>${raw}<dt>Target and approach</dt><dd>${esc(contexts.get(r.context)?.label)}</dd><dt>Saved rank</dt><dd>${r.native_rank??'Unavailable'}</dd><dt>Ordering notation</dt><dd><code>${esc(r.chemistry.notation||'Unavailable')}</code></dd></dl></div></details></td></tr>`;
+  }).join('')||`<tr><td colspan="${9+tableAttributes.length}" class="report-empty"><p>No ASOs match these filters.</p><button type="button" class="report-button" data-action="empty-reset">Clear filters</button></td></tr>`;
   const molecules=new Set(filtered.map(r=>r.molecule)).size;
   q('count').textContent=`${total.toLocaleString()} of ${scoped.length.toLocaleString()} results · ${molecules.toLocaleString()} ASOs.`;
   q('page-status').textContent=total?`${(page*size+1).toLocaleString()}–${Math.min((page+1)*size,total).toLocaleString()} of ${total.toLocaleString()}`:'No matching records';
   action('previous').disabled=page===0;action('next').disabled=(page+1)*size>=total;
   root.querySelectorAll('th[data-sort]').forEach(th=>th.setAttribute('aria-sort',th.dataset.sort===sort?(ascending?'ascending':'descending'):'none'));
   attributeView.render();
+  updateBulkAction();
   scheduleMap();
+ }
+ function nextMatchingRows(){
+  const amount=Number(q('top-count').value);
+  if(!Number.isInteger(amount)||amount<1||amount>10000||!attributeView.valid())return [];
+  const seen=new Set(basket.keys()),chosen=[];
+  for(const row of filtered){if(seen.has(row.molecule))continue;seen.add(row.molecule);chosen.push(row);if(chosen.length===amount)break;}
+  return chosen;
+ }
+ function updateBulkAction(){
+  const amount=Number(q('top-count').value),validAmount=Number.isInteger(amount)&&amount>=1&&amount<=10000;
+  q('top-count').setAttribute('aria-invalid',String(!validAmount));
+  q('top-count-error').textContent=validAmount?'':'Choose a whole number from 1 to 10,000.';
+  const count=nextMatchingRows().length;
+  action('add-top').disabled=!count;
+  action('add-top').textContent=count?`Add ${count.toLocaleString()} matching ASO${count===1?'':'s'}`:'Add matching ASOs';
  }
  function save(){try{localStorage.setItem(storageKey,JSON.stringify([...basket.values()].map(r=>r.id)));}catch{q('storage-notice').hidden=false;q('storage-notice').textContent='Selections stay available while this report is open. Browser storage is unavailable.';}}
  function renderBasket(){
+  baseKey=null;
   const n=basket.size;q('basket-count').textContent=n?`${n.toLocaleString()} ASO${n===1?'':'s'} selected`:'No ASOs selected';
+  q('basket').dataset.docked=String(!!n||!!clearedBasket);
+  updateLayoutSpace();
   ['csv','fasta','clear'].forEach(a=>action(a).disabled=!n);
+  action('undo-clear').hidden=!clearedBasket;
+  root.querySelectorAll('[data-recommendation-pick]').forEach(button=>{
+   const row=byId.get(button.dataset.recommendationPick);if(!row)return;
+   const selected=basket.has(row.molecule);button.dataset.selected=String(selected);
+   button.textContent=selected?`Remove ASO ${row.panel_rank} from basket`:`Add ASO ${row.panel_rank} to basket`;
+  });
+  const panelAdded=panelRows.length>0&&panelRows.every(r=>basket.has(r.molecule));
+  root.querySelectorAll('[data-action="add-panel"],[data-action="add-recommendations"]').forEach(button=>{
+   button.hidden=!panelRows.length;button.disabled=panelAdded;
+   button.textContent=panelAdded?panelLabel+' added':'Add '+panelLabel[0].toLowerCase()+panelLabel.slice(1);
+  });
   const selected=[...basket.values()],missing=selected.filter(r=>!r.chemistry.notation).length;
   action('order').disabled=!n||missing>0;
   q('basket-items').innerHTML=selected.slice(0,100).map(r=>`<li><span><b>${esc(r.name)}</b> · ${esc(r.aso)} · ${esc(r.chemistry.label)}</span><button class="report-button" data-remove="${esc(r.molecule)}" aria-label="Remove ${esc(r.name)}">Remove</button></li>`).join('')+(n>100?`<li>${n-100} more selections are included in exports.</li>`:'');
   const issues=[...new Set(selected.flatMap(r=>r.chemistry.issues||[]))];
   q('order-notice').hidden=!issues.length;q('order-notice').textContent=(missing?`${missing} selections need ordering notation. `:'')+issues.join(' ');
  }
- function toggle(id){const row=byId.get(id);if(!row)return;if(basket.has(row.molecule))basket.delete(row.molecule);else basket.set(row.molecule,row);save();renderBasket();renderTable();}
- function reset(){q('search').value='';q('minimum').value='';q('activity-minimum').value='';q('panel-only').checked=false;q('clean-only').checked=false;attributeView.clear();page=0;mapPage=0;renderTable();}
+ function toggle(id){
+  const row=byId.get(id);if(!row)return;
+  const focused=document.activeElement?.dataset.pick;
+  clearedBasket=null;
+  if(basket.has(row.molecule))basket.delete(row.molecule);else basket.set(row.molecule,row);
+  save();renderBasket();renderTable();
+  if(focused){const next=[...root.querySelectorAll('[data-pick]')].find(el=>el.dataset.pick===focused);
+   (next||q('candidate-table').closest('.report-table-wrap')).focus({preventScroll:true});}
+ }
+ function reset(){q('search').value='';q('minimum').value='';q('activity-minimum').value='';q('panel-only').checked=false;q('basket-only').checked=false;q('clean-only').checked=false;attributeView.clear();page=0;mapPage=0;renderTable();}
  function contextChanged(){
   const context=contexts.get(q('context').value),hasEffects=scopeRows().some(r=>finite(r.effect));
   root.querySelectorAll('[data-approach-context]').forEach(el=>{el.hidden=el.dataset.approachContext!==q('context').value;});
   root.querySelectorAll('[data-exon-context]').forEach(el=>{el.hidden=el.dataset.exonContext!==q('context').value;});
-  q('objective').textContent=context?.objective||data.objective;
   q('metric-note').textContent=context?.metric_note||'Each design group keeps its own target, prediction units and recorded ranking.';
   configureActivity();
   attributeView.refresh();
@@ -310,6 +369,7 @@ function setup(root){
   const chromKey=value=>String(value).replace(/^chr/,'');
   const chromosomes=[...new Set(scoped.flatMap(r=>r.intervals.map(p=>chromKey(p.chrom))))];
   section.hidden=!context||!scoped.length;
+  q('map-jump').hidden=section.hidden;
   if(section.hidden){mapHits=[];return;}
   let chromosome=q('map-chromosome').value;if(!chromosomes.includes(chromosome))chromosome=chromosomes[0];
   q('map-chromosome').innerHTML=chromosomes.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');q('map-chromosome').value=chromosome;
@@ -379,19 +439,24 @@ function setup(root){
  q('map').addEventListener('pointermove',event=>{const hit=mapHit(event),r=hit&&byId.get(hit.id);q('map').style.cursor=r?'pointer':'default';q('map-tip').textContent=r?`${r.name} · ${r.aso} · ${r.location} · ${attributeView.describe(r)}`:'Select an ASO in the map or table to add it to your basket.';});
  root.addEventListener('change',event=>{if(event.target.dataset.pick)toggle(event.target.dataset.pick);});
  root.addEventListener('click',event=>{
+  const recommendation=event.target.closest('[data-recommendation-pick]');
+  if(recommendation){toggle(recommendation.dataset.recommendationPick);return;}
   const approach=event.target.closest('[data-approach-select]');
   if(approach){q('context').value=approach.dataset.approachSelect;contextChanged();q('context').focus({preventScroll:true});q('context').scrollIntoView({block:'nearest'});return;}
-  const remove=event.target.closest('[data-remove]');if(remove){basket.delete(remove.dataset.remove);save();renderBasket();renderTable();return;}
+  const remove=event.target.closest('[data-remove]');if(remove){clearedBasket=null;basket.delete(remove.dataset.remove);save();renderBasket();renderTable();(q('basket-items').querySelector('[data-remove]')||action('add-top')).focus({preventScroll:true});return;}
   const th=event.target.closest('th[data-sort]');if(th){const next=th.dataset.sort;ascending=next===sort?!ascending:['order','native_rank','start','aso','off_targets'].includes(next);sort=next;page=0;renderTable();return;}
   const button=event.target.closest('[data-action]');if(!button||button.disabled)return;
   const what=button.dataset.action;
+  if(what==='show-recommendations'){reset();if(data.contexts.length>1){q('context').value='all';contextChanged();}q('panel-only').checked=true;sort='panel_rank';ascending=true;renderTable();const table=q('candidate-table').closest('.report-table-wrap');table.focus({preventScroll:true});table.scrollIntoView({block:'start'});return;}
   if(what==='previous'||what==='next'){page+=what==='next'?1:-1;renderTable();return;}
   if(what==='map-previous'||what==='map-next'){mapPage+=what==='map-next'?1:-1;scheduleMap();return;}
   if(what==='reset'){reset();return;}
-  if(what==='clear')basket.clear();
-  if(what==='add-panel')rows.filter(r=>r.panel_rank!==null).forEach(r=>basket.set(r.molecule,r));
-  if(what==='add-top')filtered.slice(0,Math.max(1,Number(q('top-count').value)||10)).forEach(r=>basket.set(r.molecule,r));
-  if(['clear','add-panel','add-top'].includes(what)){save();renderBasket();renderTable();return;}
+  if(what==='empty-reset'){reset();q('search').focus({preventScroll:true});return;}
+  if(what==='clear'){clearedBasket=new Map(basket);basket.clear();}
+  if(what==='undo-clear'&&clearedBasket){clearedBasket.forEach((r,key)=>basket.set(key,r));clearedBasket=null;}
+  if(what==='add-panel'||what==='add-recommendations'){clearedBasket=null;panelRows.forEach(r=>basket.set(r.molecule,r));}
+  if(what==='add-top'){clearedBasket=null;nextMatchingRows().forEach(r=>basket.set(r.molecule,r));}
+  if(['clear','undo-clear','add-panel','add-recommendations','add-top'].includes(what)){save();renderBasket();renderTable();if(what==='clear')action('undo-clear').focus({preventScroll:true});if(what==='undo-clear')action('clear').focus({preventScroll:true});return;}
   const selected=[...basket.values()];
   if(what==='order'){
    const values=[['Name','Sequence','Scale','Purification'],...selected.map((r,i)=>['ASO_'+(i+1)+' '+r.name,r.chemistry.notation,q('scale').value,q('purification').value])];
@@ -399,23 +464,43 @@ function setup(root){
   }else if(what==='fasta')download('ASO_selection.fasta',selected.map((r,i)=>`>ASO_${i+1} ${r.name.replaceAll('\n',' ').replaceAll('\r',' ')}\n${r.aso}`).join('\n')+'\n');
   else if(what==='csv'||what==='filtered-csv'){
    const activityFields=['value','transcript_id','species','context_basis','location','dosage_nm','transfection_method','dose_basis','method_basis','unmodeled_conditions','unresolved_conditions','status','reason','model_sha256','source_revision','input_id'];
-   const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_mismatch_budget','off_target_unit','off_target_status','splice_checks','panel_order','selection_note',...activityFields.map(k=>'oligoai_'+(k==='value'?'predicted_rna_reduction_percent':k))];
+   const columns=['name','antisense_5to3','ordering_notation','chemistry','binding_intervals_1based','strand','design_group','program_id','job_id','response_site','native_rank','display_order','prediction_toward_goal','deletion_prediction','replacement_prediction','gc_fraction','off_target_exact','off_target_1mm','off_target_2mm','off_target_mismatch_budget','off_target_unit','off_target_status','splice_checks','panel_order','selection_note','panel_role','recommendation_tradeoff',...activityFields.map(k=>'oligoai_'+(k==='value'?'predicted_rna_reduction_percent':k))];
    const attributes=attributeView.exportAttributes();columns.push(...attributes.map(a=>'Attribute: '+a.label));
-   const values=(what==='filtered-csv'?filtered:rows.filter(r=>basket.has(r.molecule))).flatMap(r=>{
-    const base=[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_budget,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note];
+   const basketOrder=new Map([...basket.keys()].map((key,index)=>[key,index]));
+   const values=(what==='filtered-csv'?filtered:rows.filter(r=>basket.has(r.molecule)).sort((a,b)=>basketOrder.get(a.molecule)-basketOrder.get(b.molecule))).flatMap(r=>{
+    const base=[r.name,r.aso,r.chemistry.notation,r.chemistry.label+'; '+r.chemistry.detail,r.location,r.strand,contexts.get(r.context)?.label,r.origin.program,r.origin.job,r.origin.route,r.native_rank,r.order,r.effect,...[0,1].map(i=>r.predictions[i]??''),r.gc,...r.off_targets,r.off_target_budget,r.off_target_unit,r.off_target_status,r.guard.summary,r.panel_rank,r.selection_note,r.recommendation?.panel_role,r.recommendation?.tradeoff];
     const activity=what==='filtered-csv'?activityFor(r).entries:(r.oligoai||[]);
     return (activity.length?activity:[{}]).map(a=>[...base,...activityFields.map(k=>Array.isArray(a[k])?a[k].join('; '):a[k]??''),...attributes.map(a=>attributeView.exportValue(a,r))]);
    });
    download(what==='filtered-csv'?'ASO_matching_filters.csv':'ASO_selection.csv',[columns,...values].map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
   }
  });
- ['search','minimum','activity-minimum','panel-only','clean-only'].forEach(role=>q(role).addEventListener('input',()=>{page=0;mapPage=0;renderTable();}));
+ ['search','minimum','activity-minimum','panel-only','basket-only','clean-only'].forEach(role=>q(role).addEventListener('input',()=>{page=0;mapPage=0;renderTable();}));
  q('activity-context').addEventListener('change',()=>{updateActivity();attributeView.refresh();q('activity-minimum').value='';sort='oligoai';ascending=false;page=0;mapPage=0;renderTable();});
  q('context').addEventListener('change',contextChanged);q('page-size').addEventListener('change',()=>{pageSize=Number(q('page-size').value);page=0;renderTable();});
  q('map-chromosome').addEventListener('change',()=>{mapPage=0;scheduleMap();});
- q('top-count').addEventListener('input',()=>{action('add-top').textContent='Add first '+(Number(q('top-count').value)||10)+' shown';});
+ q('top-count').addEventListener('input',updateBulkAction);
  let oldPage=0;addEventListener('beforeprint',()=>{oldPage=page;printing=true;page=0;renderTable();});addEventListener('afterprint',()=>{printing=false;page=oldPage;renderTable();});
  if(typeof ResizeObserver!=='undefined')new ResizeObserver(scheduleMap).observe(root);
+ let basketHeight=0,focusFrame=0;
+ function updateLayoutSpace(){root.style.setProperty('--report-basket-space',(q('basket').dataset.docked==='true'?basketHeight:0)+'px');}
+ if(typeof ResizeObserver!=='undefined'){
+  const observer=new ResizeObserver(entries=>{for(const entry of entries){const height=entry.borderBoxSize?.[0]?.blockSize??entry.contentRect.height;
+   if(entry.target===q('basket'))basketHeight=height;else root.style.setProperty('--report-nav-space',height+'px');}updateLayoutSpace();});
+  observer.observe(q('basket'));observer.observe(q('section-nav'));
+ }
+ function keepFocusVisible(target){
+  if(!root.contains(target)||target.closest('.report-basket,.report-section-nav,.report-attribute-picker'))return;
+  cancelAnimationFrame(focusFrame);focusFrame=requestAnimationFrame(()=>{
+   if(document.activeElement!==target||!target.isConnected)return;
+   const nav=q('section-nav'),basket=q('basket'),rect=target.getBoundingClientRect();
+   const top=getComputedStyle(nav).position==='sticky'?Math.max(0,nav.getBoundingClientRect().bottom):0;
+   const bottom=getComputedStyle(basket).position==='sticky'?Math.min(innerHeight,basket.getBoundingClientRect().top):innerHeight;
+   if(rect.height<bottom-top-16&&(rect.top<top+8||rect.bottom>bottom-8))target.scrollIntoView({block:'center',inline:'nearest'});
+  });
+ }
+ root.addEventListener('focusin',event=>keepFocusVisible(event.target));
+ addEventListener('resize',()=>keepFocusVisible(document.activeElement));
  renderBasket();contextChanged();
 }
 document.querySelectorAll('.report-explorer').forEach(setup);

@@ -272,12 +272,44 @@ def test_multi_program_export_uses_the_producing_chemistry(tmp_path):
     with pytest.raises(ValueError, match="contradicts"): attest_candidate_rows(bad, goal)
 
 
+def test_native_inventory_counts_physical_molecules_across_binding_contexts(tmp_path):
+    sequence = 'ACTG'
+    molecules = [molecule_record(sequence, chemistry, encode_idt_oligo(sequence, chemistry))
+                 for chemistry in ('steric-hindrance', 'steric-2ome-ps')]
+    rows = [{'molecule_specification': molecules[0], 'selection_rank': 2, 'job_id': 'first'},
+            {'molecule_specification': molecules[0], 'selection_rank': 9, 'job_id': 'another-context'},
+            {'molecule_specification': molecules[1], 'selection_rank': 5, 'job_id': 'other-chemistry'}]
+    before = deepcopy(rows)
+    paths = write_native_chemistry_exports(rows, tmp_path)
+    records = json.loads(Path(paths['chemical_identity_json']).read_text())['records']
+    assert len(records) == 2 and rows == before
+    assert [record['candidate_id'] for record in records] == ['candidate_1', 'candidate_2']
+    assert [record['native_rank'] for record in records] == [2, 5]
+    assert len({record['molecule_specification']['physical_molecule_sha256'] for record in records}) == 2
+
+
 def test_pmo_recipient_views_preserve_nonorderable_identity(tmp_path):
     record = attest_record("pmo", "ACGT", "steric-pmo", "", linkages=None, assumption_status="explicit_request")
     path = tmp_path / "pmo"
     write_recipient_report(path, [record], title="PMO", context="", provenance={})
     assert validate_recipient_report(path)["records_checked"] == 1
     assert record["molecule_specification"]["linkages_5to3"] == ["PHOSPHORODIAMIDATE"] * 3
+
+
+def test_native_chemistry_views_survive_a_report_renderer_upgrade(tmp_path, monkeypatch):
+    from aso_agents import readable_report
+    sequence = 'ACTG'
+    rows = attest_candidate_rows([{'synthesized_antisense_sequence': sequence,
+        'IDT': encode_idt_oligo(sequence, 'steric-hindrance')}], {'chemistry': 'steric-hindrance'})
+    first = write_native_chemistry_exports(rows, tmp_path)
+    original = {path: Path(path).read_bytes() for path in first.values()}
+    monkeypatch.setattr(readable_report, 'READER_CSS', readable_report.READER_CSS + '\n/* presentation update */')
+    second = write_native_chemistry_exports(rows, tmp_path)
+    assert first['chemical_identity_json'] != second['chemical_identity_json']
+    assert json.loads(Path(first['chemical_identity_json']).read_text())['records'] == json.loads(
+        Path(second['chemical_identity_json']).read_text())['records']
+    assert validate_recipient_report(Path(second['chemical_identity_json']).parent)['records_checked'] == 1
+    assert all(Path(path).read_bytes() == value for path, value in original.items())
 
 
 def test_native_export_catches_missing_and_modified_ordering_notation():

@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from agents import Agent, function_tool
 import os
 import json
@@ -1124,5 +1125,5 @@ tiling_agent = Agent(
         "Return ONLY the tool's JSON output as your final answer."
     ),
     tools=[emit_pipeline_config],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 ) 

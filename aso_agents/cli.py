@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import importlib.util
 import json
 import os
@@ -12,6 +13,7 @@ import shutil
 import sys
 
 from . import __version__
+from .model_defaults import DEFAULT_MODEL
 from .paths import (data_root, reference_root, cache_root, oligoai_root,
                     resource_root, save_settings, splice_root)
 
@@ -100,6 +102,7 @@ def _doctor(args):
     from .llm_provider import get_provider_config
     provider = get_provider_config(require_credentials=False)
     add("LLM credentials", "ok" if provider.api_key else "missing", provider.name + " (key configured)" if provider.api_key else provider.name + " (set API key)")
+    add("Default language model", "ok", provider.resolve_model(DEFAULT_MODEL))
     result = {"version": __version__, "data": str(data_root()), "cache": str(cache_root()), "checks": checks}
     if args.json:
         print(json.dumps(result, indent=2))
@@ -157,17 +160,33 @@ def _run(argv):
             if args.output_dir and args.output_dir.expanduser().resolve() != output_root:
                 raise ValueError("A resumed request uses its existing output directory. Omit --output-dir when resuming.")
             os.environ["ASO_RUNS_DIR"] = str(output_root)
-    if "oligoai" in args.require_model and not any(flag in remainder for flag in ("--help", "-h")):
-        from .oligoai_readiness import require_oligoai
-        require_oligoai()
-    from .runtime_binaries import refresh_runtime_path
-    refresh_runtime_path()
-    os.environ.setdefault("MODAL_ASO_SKIP_RUNTIME_INSTALL", "1")
-    from .llm_provider import get_provider_config
-    if not any(flag in remainder for flag in ("--help", "-h")):
-        get_provider_config()
-        print("Starting MODAL-ASO...", flush=True)
-    from run_goal_intake import main as run
+    from .cli_progress import TerminalProgress
+    is_help = any(flag in remainder for flag in ("--help", "-h"))
+    startup = TerminalProgress(sys.stdout)
+    if not is_help:
+        startup.write("Starting MODAL-ASO...\n")
+    with (nullcontext() if is_help else startup.running("Preparing the runtime")):
+        if "oligoai" in args.require_model and not is_help:
+            startup.start("Checking the OligoAI runtime")
+            from .oligoai_readiness import require_oligoai
+            require_oligoai()
+        if not is_help:
+            startup.start("Preparing runtime tools")
+        from .runtime_binaries import refresh_runtime_path
+        refresh_runtime_path()
+        os.environ.setdefault("MODAL_ASO_SKIP_RUNTIME_INSTALL", "1")
+        from .llm_provider import get_provider_config
+        if not is_help:
+            provider = get_provider_config()
+            default_model = provider.resolve_model(DEFAULT_MODEL)
+            startup.write(f"Default language model: {default_model} ({provider.name}).\n")
+            startup.start("Loading MODAL-ASO")
+        from run_goal_intake import main as run
+        if not is_help:
+            from .request_workbench_agent import REQUEST_WORKBENCH_MODEL
+            intake_model = provider.resolve_model(REQUEST_WORKBENCH_MODEL)
+            if intake_model != default_model:
+                startup.write(f"Intake language model: {intake_model}.\n")
     outcome = {}
     run(argv=remainder, result_callback=outcome.update)
     return 0 if not outcome or outcome.get("status") in {"run_complete", "needs_user_input", "completed"} else 1

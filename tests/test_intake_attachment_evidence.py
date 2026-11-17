@@ -18,9 +18,10 @@ def test_complete_small_table_is_available_before_first_planner_and_question_rev
         assert 'a,AACCGGTT,steric' in prompt and 'b,AACCGGTT,gapmer' in prompt
         assert hashlib.sha256(raw).hexdigest() in prompt
         return {"status": "need_clarification", "questions": ["Which tissue?"], "request_envelope": None}
-    async def review(prompt, result):
+    async def review(prompt, result, *, source_artifacts=None):
         assert prompt == calls[0]
         assert request in prompt
+        assert source_artifacts[0]['file_sha256'] == hashlib.sha256(raw).hexdigest()
         return {"error": "test_boundary_reached"}
     monkeypatch.setattr(pipeline, "_run_request_workbench_agent_once", plan)
     monkeypatch.setattr(pipeline, "_review_request_clarifications_if_needed", review)

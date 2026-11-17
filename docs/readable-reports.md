@@ -99,7 +99,48 @@ analysis tab. Included downloads and other file locations share one disclosure.
 Missing files are explicitly labelled unavailable.
 
 The view works without external fonts or services. JavaScript adds table-column controls and expand-all; with JavaScript disabled, all table columns are visible and native HTML details controls still work. Printing expands details and restores the screen state afterward. Existing frozen reports should be previewed into a separate directory, never regenerated in place.
+
+## Selection and interaction
+
+Recommendation filters describe the saved recommendation panel. **In my basket**
+shows the reader's chosen molecules, including choices outside that panel.
+Recommendation buttons show whether each ASO is in the basket and allow removal.
+Clearing the basket offers an immediate undo that restores the selection order;
+another selection change ends that undo opportunity. Empty filter results offer
+a clear-filters action. Exploring recommendations moves keyboard focus to the
+table, and changing a checkbox preserves focus when its row remains visible.
+
+Section links move to recommendations, the binding map, the ASO table, the basket
+and available evidence. A keyboard skip link goes directly to the results.
+Search, panel and basket filters sit together with attribute filters beside the
+binding map. Matching counts describe distinct molecules; histograms label
+repeated binding records separately.
+
+Typing numeric limits preserves both entries, including when a new range lies
+entirely above or below the old one. An unfinished range shows an inline error
+and keeps the last valid results visible. Filtered downloads and bulk additions
+become available when the range is valid. Bulk additions follow the visible
+table order, skip molecules already selected and show the exact number to add.
+Distinct chemistries remain separate selections, and downloads retain their
+recorded binding contexts.
+
+The empty basket stays in the page flow. A selection or pending undo docks it
+for access while reading. Sticky controls leave room for keyboard focus; short
+landscape screens use normal page flow. Browser checks cover range recovery,
+duplicate binding records, distinct chemistries, downloads, section navigation,
+dialog focus, phone layouts and orientation changes.
+
+The UX review uses the [Vercel Web Interface Guidelines](https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines)
+for interaction feedback, keyboard access and recovery. Apply these principles to
+the shared renderer and verify real desktop and mobile reports. Scientific
+measurements, recommendation reasoning and downloads retain their recorded values.
+
 ## Reading levels
+
+The **Analysis and selection evidence** disclosure appears when it has source
+content. Candidate-only views omit that empty disclosure. Report previews can
+use the saved shortlist's structured selection checks for its detailed body,
+while keeping recommendation rationale on the existing ASO cards.
 
 The opening view contains the result, checked counts and known limitations.
 Candidate counts describe their source table. Failed predictions, incomplete
@@ -174,3 +215,16 @@ Final delivery refreshes download links after the requested files exist and
 updates the delivery hashes. Aliases of the same report are omitted from its
 own download list to prevent recursive bundles. Real missing files stay visible.
 Frozen scientific outputs remain intact; use a separate directory for previews.
+
+Question and evaluation reports use the same final delivery refresh. Evaluation
+requests can name an HTML destination alongside their evidence exports. Their
+interactive ASO tables read the complete saved evaluation records, retaining
+declared sequence roles, chemistry and recorded binding coordinates. Records
+without coordinates remain in the table; question reports and empty evaluations
+show their written findings without an empty ASO explorer.
+
+Fresh-run tests exercise task completion, report writing and final delivery with
+fixture model responses and computed observations. They cover questions,
+evaluations with large tables, missing coordinates and no returned rows, design
+reports and combined reports. Relocation checks verify that delivered HTML keeps
+its contents and combined exports keep their child reports.

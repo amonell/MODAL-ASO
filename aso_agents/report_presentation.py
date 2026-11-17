@@ -165,8 +165,39 @@ def local_report_artifact(root, value):
     return matches[0] if len(matches) == 1 else None
 
 
+def _saved_document_payloads(document):
+    """Read typed renderer receipts without inspecting narrative wording."""
+    from html.parser import HTMLParser
+
+    class Payloads(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.active = None
+            self.parts = {}
+
+        def handle_starttag(self, tag, attributes):
+            attrs = dict(attributes)
+            if tag == 'script' and attrs.get('type') == 'application/json':
+                identity = attrs.get('id')
+                if identity in {'report-data', 'reader-document-data'}:
+                    self.active = identity
+                    self.parts[identity] = []
+
+        def handle_data(self, text):
+            if self.active:
+                self.parts[self.active].append(text)
+
+        def handle_endtag(self, tag):
+            if tag == 'script':
+                self.active = None
+
+    parser = Payloads()
+    parser.feed(document)
+    return {key: json.loads(''.join(parts)) for key, parts in parser.parts.items()}
+
+
 def refresh_delivered_report_downloads(run_dir, requested_outputs, exports):
-    """Refresh design-report downloads after delivery, then bind the new bytes.
+    """Refresh native report downloads after delivery, then bind the new bytes.
 
     Report aliases are copies of the page being read. Listing those aliases
     inside the same report creates recursive bundles and premature warnings.
@@ -194,17 +225,36 @@ def refresh_delivered_report_downloads(run_dir, requested_outputs, exports):
                 continue
             refreshed = append_requested_downloads(text, root, downloads)
         else:
-            match = re.search(r'<script id="report-data" type="application/json">(.*?)</script>', text, re.S)
-            if not match:
-                continue
-            payload = json.loads(match[1]); overview = payload.get('overview') or {}
-            markdown = overview.get('report_markdown') or ''
-            refreshed_md = append_requested_downloads(markdown, root, downloads)
-            overview['report_markdown'] = refreshed_md
-            inventory, separator, _ = str(payload.get('results_html') or '').partition('<h2>Report and interpretation</h2>')
-            if separator:
-                payload['results_html'] = inventory + separator + markdown_html(refreshed_md, root)
-            refreshed, _ = standalone_html(render_goal_intake_html(payload), source_path=source, source_root=root)
+            saved = _saved_document_payloads(text)
+            portable_tree = False
+            if 'report-data' in saved:
+                payload = saved['report-data']; overview = payload.get('overview') or {}
+                markdown = overview.get('report_markdown') or ''
+                refreshed_md = append_requested_downloads(markdown, root, downloads)
+                overview['report_markdown'] = refreshed_md
+                inventory, separator, _ = str(payload.get('results_html') or '').partition('<h2>Report and interpretation</h2>')
+                if separator:
+                    payload['results_html'] = inventory + separator + markdown_html(refreshed_md, root)
+                document = render_goal_intake_html(payload)
+            else:
+                descriptor = saved.get('reader-document-data') or {}
+                markdown_source = source.with_suffix('.md')
+                if descriptor.get('version') != 1 or not markdown_source.is_file():
+                    continue
+                from .readable_report import basic_document, composite_document
+                refreshed_md = append_requested_downloads(markdown_source.read_text(encoding='utf-8'), source.parent, downloads)
+                if descriptor.get('kind') == 'basic':
+                    document = basic_document(descriptor['title'], refreshed_md, source.parent)
+                elif descriptor.get('kind') == 'composite':
+                    document = composite_document(descriptor['title'], refreshed_md, descriptor['entries'], source.parent)
+                    portable_tree = True
+                else:
+                    continue
+            # Combined reports retain relative child links. Their exporter
+            # copies a bounded folder containing those complete reports.
+            refreshed = document
+            if not portable_tree:
+                refreshed, _ = standalone_html(document, source_path=source, source_root=root)
         if refreshed != text:
             source.write_text(refreshed, encoding='utf-8')
             changed.add(source)

@@ -60,7 +60,7 @@ def test_quoted_single_program_cap_reaches_export(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('preference', [None, 'all_eligible', 6])
-def test_partly_sized_request_keeps_local_cap_and_late_global_choice(preference, tmp_path, monkeypatch):
+def test_partly_sized_request_keeps_local_cap_with_automatic_or_explicit_count(preference, tmp_path, monkeypatch):
     goal = goal_with_count(second=True)
     assert size_question(goal, False) is None
     assert size_question(goal, True)['restart_stage'] == 'report'
@@ -72,8 +72,8 @@ def test_partly_sized_request_keeps_local_cap_and_late_global_choice(preference,
         assert size_question(goal, True) is None
     panel, counts = export(goal, tmp_path, monkeypatch)
     assert counts['bounded'] == 3
-    assert counts['open'] == (3 if preference == 6 else 5)
-    assert len(panel['rows']) == (6 if preference == 6 else 8)
+    assert counts['open'] == (3 if preference == 6 else 5 if preference == 'all_eligible' else 1)
+    assert len(panel['rows']) == (6 if preference == 6 else 8 if preference == 'all_eligible' else 4)
 
 
 def test_all_program_caps_suppress_question_without_becoming_global_cap(tmp_path, monkeypatch):

@@ -1,0 +1,16 @@
+name: Usage question
+description: Ask about a request, result or installation.
+labels: [question]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What would you like to understand?
+      description: Include relevant commands or report text. Remove credentials and private data.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Run modal-aso --version.

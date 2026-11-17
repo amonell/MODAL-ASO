@@ -95,6 +95,19 @@ def _runner_settings() -> ModelSettings:
     )
 
 
+def test_model_wait_events_surround_request_failures(monkeypatch):
+    events = []
+
+    def failed_response(*args, **kwargs):
+        assert [event["type"] for event in events] == ["model_call"]
+        raise RuntimeError("Connection failed")
+
+    monkeypatch.setattr(Runner, "_responses", failed_response)
+    with pytest.raises(RuntimeError, match="Connection failed"):
+        Runner._run_sync(Agent("test", "Answer."), input="Question", event_callback=events.append)
+    assert [event["type"] for event in events] == ["model_call", "model_result"]
+
+
 @pytest.mark.parametrize("provider", ["openai", "openrouter"])
 @pytest.mark.parametrize("terminal", ["message", "tool", "empty", "incomplete"])
 def test_final_paid_response_is_processed_without_an_extra_tool_batch(
@@ -422,10 +435,14 @@ def test_openrouter_parallel_function_calls_keep_order_and_stable_call_ids(
         },
     ]
     assert [event["type"] for event in events] == [
+        "model_call",
+        "model_result",
         "tool_call",
         "tool_result",
         "tool_call",
         "tool_result",
+        "model_call",
+        "model_result",
         "final_output",
     ]
 
@@ -435,7 +452,7 @@ def test_incomplete_output_preserves_structured_error(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
 ) -> None:
-    response_model = "openai/gpt-5-mini" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
+    response_model = "deepseek/deepseek-v4.1-flash-1017" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
     _install_fake_client(
         monkeypatch,
         provider,
@@ -541,7 +558,7 @@ def test_empty_turn_nudge_uses_provider_continuation_contract(
             ],
         }
     ]
-    expected_model = "openai/gpt-5-mini" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
+    expected_model = "deepseek/deepseek-v4.1-flash-1017" if provider == "openrouter" else "gpt-5-mini-2025-08-07"
     if provider == "openai":
         assert calls[1] == {
             "model": expected_model,

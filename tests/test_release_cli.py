@@ -21,6 +21,35 @@ def test_cli_exit_status_describes_the_native_outcome(monkeypatch, status, exit_
     assert cli.main(['A neutral request']) == exit_status
 
 
+@pytest.mark.parametrize('override', [None, 'qwen/qwen3.8-27b'])
+def test_startup_names_resolved_default_model(monkeypatch, capsys, override):
+    import run_goal_intake
+    monkeypatch.delenv('ASO_LLM_PROVIDER', raising=False)
+    monkeypatch.delenv('OPENROUTER_MODEL', raising=False)
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-only')
+    if override:
+        monkeypatch.setenv('OPENROUTER_MODEL', override)
+    monkeypatch.setattr(run_goal_intake, 'main', lambda **kwargs: None)
+    assert cli.main(['A neutral request']) == 0
+    expected = override or 'deepseek/deepseek-v4.1-flash-1017'
+    assert f'Default language model: {expected} (openrouter).' in capsys.readouterr().out
+
+
+def test_startup_names_separate_intake_override(monkeypatch, capsys):
+    import run_goal_intake
+    import importlib
+    workbench = importlib.import_module('aso_agents.request_workbench_agent')
+    monkeypatch.delenv('ASO_LLM_PROVIDER', raising=False)
+    monkeypatch.delenv('OPENROUTER_MODEL', raising=False)
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'test-only')
+    monkeypatch.setattr(workbench, 'REQUEST_WORKBENCH_MODEL', 'openai/gpt-5.2')
+    monkeypatch.setattr(run_goal_intake, 'main', lambda **kwargs: None)
+    assert cli.main(['A neutral request']) == 0
+    output = capsys.readouterr().out
+    assert 'deepseek/deepseek-v4.1-flash-1017' in output
+    assert 'Intake language model: openai/gpt-5.2.' in output
+
+
 @pytest.mark.parametrize('explicit_output', [False, True])
 def test_resume_preserves_custom_output_root_across_shells(monkeypatch, tmp_path, explicit_output):
     import run_goal_intake

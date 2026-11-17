@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL, DEFAULT_SMALL_MODEL
 from typing import Any, Dict, List, Optional, Set, Tuple
 from copy import deepcopy
 import gzip
@@ -184,6 +185,23 @@ def _get_ensembl_json(path: str, params: Optional[Dict[str, str]] = None) -> Tup
             continue
         if resp.status_code == 404:
             return resp, None
+        if resp.status_code == 400 and path.startswith("/lookup/id/"):
+            # Ensembl reports an absent ID as HTTP 400, including a versioned
+            # ID whose stable-ID lookup may return the exact requested version.
+            # Preserve other HTTP 400 failures so malformed requests remain
+            # distinguishable from missing reference records.
+            requested_id = path.removeprefix("/lookup/id/")
+            try:
+                error_payload = resp.json()
+            except ValueError:
+                error_payload = None
+            if (
+                requested_id
+                and "/" not in requested_id
+                and isinstance(error_payload, dict)
+                and error_payload.get("error") == f"ID '{requested_id}' not found"
+            ):
+                return resp, None
         try:
             resp.raise_for_status()
         except HTTPError as exc:
@@ -468,11 +486,10 @@ def _load_local_gtf_gene_symbol_index(species_key: str) -> Dict[str, List[Dict[s
     ):
         return _LOCAL_GTF_GENE_SYMBOL_CACHE[cache_key]
 
-    cfg = get_species_config(normalized_species)
     index: Dict[str, List[Dict[str, str]]] = defaultdict(list)
     genes_by_id: Dict[str, Dict[str, str]] = {}
     transcript_gene_ids: Dict[str, str] = {}
-    gtf_path = cfg.gtf_path
+    gtf_path = identity[0]
     with _open_gtf_text(str(gtf_path)) as handle:
         for line in handle:
             if not line or line.startswith("#"):
@@ -1500,7 +1517,7 @@ _transcript_id_extractor_agent = Agent(
         "- When multiple IDs are present, choose the one that best matches the referenced gene if provided.\n"
         "- If no Ensembl transcript ID is present, set transcript_id to null. Do NOT invent IDs."
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
 )
 
 
@@ -1522,7 +1539,7 @@ _transcript_confirmation_interpreter_agent = Agent(
         "- If the answer is still ambiguous after using the provided candidates and context, return decision='clarify' with transcript_id=null.\n"
         "- Never invent transcript IDs or choose an ID not present in candidate_transcripts unless candidate_transcripts is empty and the user explicitly gave a full Ensembl transcript ID.\n"
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=JSON_OBJECT_SETTINGS,
 )
 
@@ -1649,7 +1666,7 @@ _additional_transcript_selections_agent = Agent(
         "verb when interpreting a coordinated list. Return an empty list when no explicit selection exists. "
         "If repair_errors and previous_response are supplied, repair the extraction against the same answers."
     ),
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=JSON_OBJECT_SETTINGS,
     tools=[],
 )
@@ -1845,7 +1862,7 @@ _tissue_selector_agent = Agent(
         "Output: strictly JSON: {\"tissueSiteDetailIds\": [\"<ID FROM LIST>\", ...]}. No extra text."
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 def _gtex_pick_best_tissue(tissue_hint: str, tissues: List[Dict]) -> List[Dict[str, str]]:
@@ -2773,7 +2790,7 @@ def web_search(query: str) -> Dict:
 
     for attempt in range(3):
         payload = {
-            "model": "gpt-5.2-2025-12-11",
+            "model": DEFAULT_MODEL,
             "input": prompt,
             "tools": [hosted_search_tool],
             "max_output_tokens": tokens,
@@ -2975,7 +2992,7 @@ _isoform_mapper_agent = Agent(
         "Never invent IDs or return transcript_id=null unless the transcript list is empty."
     ),
     tools=[web_search],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     log_tool_calls=True,
 )
 
@@ -3493,5 +3510,5 @@ transcript_chooser_agent = Agent(
         "No extra commentary. Do not output BED here."
     ),
     tools=[list_transcripts, gtex_list_tissues, gtex_transcript_expression, search_pubmed, gather_pubmed_for_transcripts, get_transcript_structure, build_bed6, conserved_exons_for_transcript],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )

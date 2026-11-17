@@ -80,6 +80,31 @@ def test_jobs_chemistry_and_opposite_objectives_stay_separate(tmp_path):
     assert a['panel_rank']==1 and b['panel_rank'] is None
 
 
+def test_pmo_recommendations_keep_chemistry_through_shortlist_and_report(tmp_path):
+    from aso_molecule import molecule_record
+    from aso_agents.candidate_assessment import write_assessment_artifacts
+    from aso_agents.shortlist_evidence import molecule_id
+    goal, raw, pool = run_fixture(tmp_path)
+    raw[0]['IDT'] = None
+    pool[0]['IDT'] = None
+    pool[0]['synthesized_antisense_sequence'] = raw[0]['Synthesis']
+    pool[0]['molecule_specification'] = molecule_record(raw[0]['Synthesis'], 'steric-pmo', '')
+    evidence = {'candidate_id': molecule_id(pool[0]), 'why_chosen': 'Targets the requested splice junction.',
+                'panel_role': 'Lead splice-blocking candidate.', 'tradeoff': 'Cellular activity remains unresolved.',
+                'evidence': [], 'comparison_evidence': []}
+    review = {'status': 'completed', 'summary': 'One PMO targets the selected splice junction.',
+              'reviewed_molecule_count': 1, 'recommendations': {molecule_id(pool[0]): evidence}}
+    write_assessment_artifacts(pool, pool, goal, tmp_path/'artifacts/candidates', review=review)
+    save(tmp_path, 'artifacts/design/steric_jobs/j/scored_tiles.json', {'rows': raw})
+    data = project_run(tmp_path)
+    panel = [row for row in data['records'] if row['panel_rank'] is not None]
+    assert len(panel) == 1 and panel[0]['aso'] == raw[0]['Synthesis']
+    assert panel[0]['recommendation'] == evidence
+    assert 'morpholino' in panel[0]['chemistry']['detail']
+    document = basic_document('PMO', '', candidate_data=data)
+    assert 'Add ASO 1 to basket' in document and evidence['why_chosen'] in document
+
+
 def test_missing_second_prediction_and_unknown_screen_are_kept(tmp_path):
     goal, raw, pool = run_fixture(tmp_path)
     raw[-1]['splice_site_deltas'][0]['delta_acceptor_replacement']=None

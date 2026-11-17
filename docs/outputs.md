@@ -1,6 +1,18 @@
 # Reading a run
 
+During a run, the terminal announces each main step. After 30 seconds without
+a status message, it prints the active operation and its elapsed time, for example,
+`Still running: Predicting splice effects (2m 00s elapsed).` Updates also cover
+loading, model waits and resumed steps, and remain visible in redirected logs.
+The timer measures time spent waiting for the current operation to return.
+Updates pause while the run asks for your input and stop when execution ends.
+
 Start with **`report.html`**. It summarizes the request, candidate panel, calculations and limitations. Its links lead to the supporting tables and files.
+
+**What this run was asked to do** keeps the recorded biological objectives visible
+as you switch targets and approaches. It includes requested programs that retained
+no candidates. The selected approach's splice-site aim and ranking rationale
+appear under **Targets and approaches**.
 
 **Targets and approaches** shows each saved approach rank, confidence and reason beside target selection. **Compare all ranked approaches** expands the alternatives and their reasons, including approaches that retained zero candidates. Rankings stay within the design job that produced them. **Analysis rank** in the ASO table records candidate priority within an approach. Runs that evaluate one approach say so; unavailable comparison rankings remain explicit. These views use the saved analysis and make no new ranking calls.
 
@@ -26,11 +38,11 @@ Open **`report.md`** for a text version. The **`artifacts/`** directory retains 
 
 Keep the whole run folder together when moving it. Report links use paths within that folder.
 
-The `artifacts/candidates/` directory includes `candidate_assessments.json` (the complete assessed eligible pool) and `recommended_shortlist.json`, `.csv`, and `.md` (distinct selected molecules and their evidence). Explicit panel/role objectives and hard requirements take precedence. Otherwise selection uses scientific direction, comparable off-target evidence, applicable motif flags and the native ranking. Missing or incomplete screens remain visible.
+The `artifacts/candidates/` directory includes `candidate_assessments.json` (the complete assessed pool), `recommendation_review.json` (the model review), and `recommended_shortlist.json`, `.csv`, and `.md` (distinct selected molecules and their reasons, tradeoffs and evidence). The configured model reviews the eligible molecules and compares the leading choices using their saved analysis. Explicit panel/role objectives and hard requirements take precedence. A separate review checks each explanation against the evidence. See [Recommended ASOs](recommended-asos.md) for coverage, validation and recovery behavior.
 
 Shortlists include genomic coordinates, producing programs and jobs, response-site predictions and the recorded rank with its scope. Junction-spanning ASOs retain every binding segment. Named rank components accompany the original ranking vectors for compatibility. `design_qualification.json` records filter thresholds from execution receipts, including inclusive or exclusive GC bounds where recorded. Older runs retain an explicit unavailable status for missing receipts.
 
-An exact requested count sets both a minimum and a maximum; a minimum-only request does not cap the panel. Global totals and independently requested per-site bounds retain their own scope. When no upper bound or all-eligible preference is supplied, the final shortlist-size question remains available after scoring, with existing minimums and scientific artifacts preserved.
+An exact requested count sets both a minimum and a maximum. A minimum-only request sets the required minimum. Global totals and independently requested per-site bounds retain their own scope. When the panel size is unspecified, the review chooses and explains a compact count while preserving required minimums and region coverage. An all-eligible request includes every eligible molecule. The complete assessed library stays available alongside the panel.
 
 Genomic tiling evidence identifies the configured reference indexes by their contents, the searched substitution budget and the counting unit. Its genomic search does not cover spliced transcript junctions. A censored search retains unknown higher-mismatch counts; it cannot be treated as a complete clean screen. Mature-transcript searches retain their separate mapping provenance.
 

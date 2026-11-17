@@ -246,7 +246,7 @@ def test_input_output_token_names_and_failed_calls_are_normalized(
         ]
     )
     monkeypatch.setattr(llm_provider, "_get_client", lambda _config: successful_client)
-    config = llm_provider.get_provider_config({"OPENAI_API_KEY": "openai-test"})
+    config = llm_provider.get_provider_config({"ASO_LLM_PROVIDER": "openai", "OPENAI_API_KEY": "openai-test"})
 
     with evaluation_trace({"case_id": "usage-aliases"}) as trace:
         llm_provider.create_response(

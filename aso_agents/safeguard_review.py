@@ -1,4 +1,6 @@
 """Review every proposed splice safeguard against the current biological goal."""
+
+from aso_agents.model_defaults import DEFAULT_MODEL
 from copy import deepcopy
 import hashlib
 import json
@@ -7,7 +9,7 @@ from .splice_safeguards import DEFAULT_GUARD_TOLERANCE, physical_site
 
 MAX_CASES_PER_BATCH = 16
 MAX_BATCH_CHARACTERS = 60000
-REVIEW_MODEL = 'gpt-5.2-2025-12-11'
+REVIEW_MODEL = DEFAULT_MODEL
 POLICIES = {'protect_both', 'limit_increase', 'limit_decrease', 'observe', 'keep_explicit'}
 ROLES = {'intended', 'acceptable', 'unwanted', 'uncertain'}
 INSTRUCTIONS = """Review the complete proposed splice-safeguard plan for this design job.

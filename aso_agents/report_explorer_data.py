@@ -327,7 +327,7 @@ def _record(row, context, sites, order, panel_rank=None, *, activity=()):
 
 def _objective(program, gene):
     text = program.get('objective')
-    if isinstance(text,str) and 0<len(text.strip())<=150:
+    if isinstance(text,str) and text.strip():
         return text.strip()
     event = (program.get('splice_event') or {}).get('event_type')
     action = {'intron_retention':'Increase retention of the selected intron', 'intron_excision':'Increase removal of the selected intron'}.get(event)
@@ -345,7 +345,27 @@ def _root_file(root, name):
     return path if path.is_file() and path.resolve().is_relative_to(root) else None
 
 
-def project_run(run_dir, *, goal=None, kind='design'):
+def _requested_objective(goal, root, request=None):
+    """Prefer saved user wording; program and route goals describe the plan."""
+    if isinstance(request, str) and request.strip():
+        # The caller can supply the public request from an archived report when
+        # the projected review directory contains only saved candidate evidence.
+        return request.strip()
+    intake = read_record(_root_file(root, 'goal_intake.json'))
+    request = intake.get('request')
+    if not isinstance(request, str) or not request.strip():
+        path = _root_file(root, 'request.txt')
+        request = path.read_text(encoding='utf-8') if path else None
+    if isinstance(request, str) and request.strip():
+        from .report_presentation import display_request
+        envelope = intake.get('request_envelope') or read_record(_root_file(root, 'request_envelope.json'))
+        return display_request(root, envelope, request.strip())
+    programs = [p for p in goal.get('design_programs') or [] if isinstance(p, dict)] or [goal]
+    objectives = dict.fromkeys(_objective(p, goal.get('gene_symbol')) for p in programs)
+    return '\n\n'.join(objectives)
+
+
+def project_run(run_dir, *, goal=None, kind='design', request=None):
     """Project every recorded producer; preserve all source data on disk."""
     if not run_dir:
         return None
@@ -485,11 +505,17 @@ def project_run(run_dir, *, goal=None, kind='design'):
             for index,row in enumerate(combined,1):
                 rank = None
                 for panel_rank,chosen in panel_by_sequence.get(sequence(row),[]):
-                    if physical_identity(row)==physical_identity(chosen) or (notation(row) and notation(row)==notation(chosen)):
+                    both_attested = all((item.get('molecule_specification') or {}).get('physical_molecule_sha256')
+                                        for item in (row, chosen))
+                    if physical_identity(row)==physical_identity(chosen) or (
+                            not both_attested and notation(row) and notation(row)==notation(chosen)):
                         rank = panel_rank; break
                 record = _record(row,context,context_sites,index,rank,
                                  activity=activities.get(activity_join_key(row),()))
                 if record:
+                    record['recommendation'] = (chosen.get('recommendation_review') or {}) if rank is not None else {}
+                    if record['recommendation']:
+                        record['selection_note'] = record['recommendation']['why_chosen']
                     records.append(record)
                     source = source_row(row)
                     for s in collection(source.get('splice_site_deltas')) or []:
@@ -550,9 +576,13 @@ def project_run(run_dir, *, goal=None, kind='design'):
     else:
         facts.append({'label':'Chemistry','value':f'{len(all_chemistries)} specifications','note':'The exact chemistry stays attached to each ASO'})
     result = {'version':1,'kind':report_kind,'contexts':contexts,'records':records,'facts':facts,
-              'objective':contexts[0]['objective'],
+              'objective':_requested_objective(goal, root, request),
               'panel_label':'Recommended panel' if selected.get('records') else 'Selected panel',
               'scope':'Saved scored and assessed candidates; each binding record retains its design group.'}
+    review = selected.get('review') or generated.get('recommendation_review') or {}
+    result['recommendation_review'] = {key: review[key] for key in (
+        'status', 'summary', 'size_reason', 'reviewer', 'eligible_molecule_count',
+        'reviewed_molecule_count', 'reviewed_binding_record_count') if key in review}
     from .report_approaches import project_approaches
     result['approach_rankings'] = project_approaches(
         goal, contexts, read_record(_root_file(root, 'strategy_router_summary.json')))
@@ -619,7 +649,9 @@ def project_analysis(report_dir):
     layout. They are never coerced into an ASO design or ordering contract.
     """
     root = Path(report_dir).resolve()
-    paths = [root/'provided_aso_evaluation.json']
+    # Final responses retain the complete computed records. The model-facing
+    # evidence summary can omit sequence roles, chemistry and binding geometry.
+    paths = [_root_file(root, 'existing_aso_evaluation.json') or root/'provided_aso_evaluation.json']
     if not paths[0].is_file():
         paths = [root/'evaluation_evidence.json']
     if not paths[0].is_file():
@@ -628,7 +660,7 @@ def project_analysis(report_dir):
     if len(present)!=1:
         return None
     source = read_record(present[0])
-    summary = source.get('response_evaluation_summary') or source.get('evaluation_summary') or source
+    summary = source.get('evaluation_summary') or source.get('response_evaluation_summary') or source
     context = summary.get('context_summary') or {}
     gene = context.get('gene_symbol')
     result = project_records(summary.get('provided_asos') or [], title=f'{gene} evaluation' if gene else 'Supplied ASOs',

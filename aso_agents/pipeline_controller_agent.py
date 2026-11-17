@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 from agents import Agent, ModelSettings
 
 from .pipeline_tools import (
@@ -144,7 +145,7 @@ pipeline_controller_agent = Agent(
         restart_from_stage,
         read_run_state,
     ],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     log_tool_calls=False,
     model_settings=ModelSettings(reasoning={"effort": "high"}),
 )

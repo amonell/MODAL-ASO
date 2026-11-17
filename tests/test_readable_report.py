@@ -268,6 +268,27 @@ def test_specific_finding_is_not_preceded_by_an_empty_generic_summary():
     assert 'This report presents the results of an ASO analysis.' not in page
 
 
+def test_candidate_explorer_omits_an_empty_analysis_disclosure():
+    from aso_agents.report_explorer_data import project_records
+    data = project_records([{'antisense_5to3': 'ACGT', 'ordering_notation': 'ACGT'}])
+    for source in ('', ' \n\t', '# Results\n', '## Method\nSaved method details.'):
+        page = basic_document('Results', source, candidate_data=data)
+        assert 'id="candidate-explorer"' in page
+        assert 'id="reader-analysis"' not in page
+        if 'Saved method details.' in source:
+            assert 'Saved method details.' in page
+
+
+def test_candidate_explorer_keeps_real_analysis_and_exact_table_values():
+    from aso_agents.report_explorer_data import project_records
+    data = project_records([{'antisense_5to3': 'ACGT', 'ordering_notation': 'ACGT'}])
+    source = '## Selection checks\n\nAccessibility is unavailable.\n\n| ASO | Value |\n|---|---|\n| ACGT | 0 |\n'
+    page = basic_document('Results', source, candidate_data=data)
+    assert 'id="reader-analysis"' in page
+    assert page.count('Accessibility is unavailable.') == 1
+    assert '<td>ACGT</td><td>0</td>' in page
+
+
 def test_explicit_recorded_aso_strand_precedes_target_without_computing_a_sequence():
     record = 'AACCGG (transcript_oriented_target_binding_site); synthesized ASO: CCGGTT'
     page = readable_markdown_html('| Antisense oligo (5′→3′) |\n|---|\n| ' + record + ' |')

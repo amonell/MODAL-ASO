@@ -1,5 +1,6 @@
 name: Feature request
 description: Suggest an improvement.
+labels: [enhancement]
 body:
   - type: textarea
     id: request
@@ -8,3 +9,8 @@ body:
       description: Describe the workflow and the result you need.
     validations:
       required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What would a successful result look like?
+      description: An example input and the desired output help us assess the change.

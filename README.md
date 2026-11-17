@@ -8,6 +8,8 @@ Design and evaluate antisense oligonucleotides from a natural-language request.
 
 [Quick start](#quick-start) · [GUI](#optional-browser-gui) · [Installation](docs/installation.md) · [Examples](docs/examples.md) · [Outputs](docs/outputs.md)
 
+[Release 1.0.1](https://github.com/amonell/MODAL-ASO/releases/tag/v1.0.1) · [Changes](CHANGELOG.md) · [Report an issue](https://github.com/amonell/MODAL-ASO/issues/new/choose)
+
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-164A79?style=flat-square)
 ![License GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-0FA3BE?style=flat-square)
 
@@ -35,10 +37,11 @@ MODAL-ASO connects transcript selection, candidate design, chemistry, off-target
 Use **Linux**, **Windows with WSL2**, or **Apple silicon macOS**. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the [platform prerequisites](docs/installation.md#prerequisites).
 
 ```bash
-git clone https://github.com/amonell/MODAL-ASO.git
+git clone --branch v1.0.1 https://github.com/amonell/MODAL-ASO.git
 cd MODAL-ASO
 uv sync --frozen --extra splice
 source .venv/bin/activate
+modal-aso --version
 
 modal-aso setup --species human --features tools references splice
 modal-aso doctor
@@ -46,13 +49,10 @@ modal-aso doctor
 
 Setup stores downloads outside the repository. Future sessions reuse the same tools, models, genomes and indexes. [Choose a data drive or import existing references →](docs/references.md)
 
-Configure DeepSeek through OpenRouter:
+MODAL-ASO defaults to DeepSeek v4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through OpenRouter. Set your API key:
 
 ```bash
-export ASO_LLM_PROVIDER=openrouter
 export OPENROUTER_API_KEY="your-api-key"
-export OPENROUTER_MODEL="deepseek/deepseek-v4.1-flash"
-export OPENROUTER_REASONING_EFFORT=max
 ```
 
 Then describe your request:
@@ -63,7 +63,7 @@ modal-aso "Design 10 RNase H-active gapmer ASOs targeting human PCSK9 mRNA."
 
 Answer any clarification questions in the terminal. Open the printed **`report.html`** path when the run finishes.
 
-If a design request does not specify a panel size, MODAL-ASO asks after scoring how many distinct ASOs to recommend. Answer with an overall count or `all eligible`. Changing that preference resumes selection and reporting from the computed candidates. The full assessed pool remains in `candidate_assessments.json`; `recommended_shortlist.json`, `.csv`, and `.md` explain the selected molecules.
+If a design request does not specify a panel size, the reviewer proposes a compact panel based on the saved evidence. You can request an overall count or `all eligible`. Large libraries are reviewed in parallel batches: every eligible molecule enters the nomination pass, finalists receive a detailed comparison, and the selected ASOs receive explanations checked against the full evidence. The terminal shows candidate and batch counts as the review progresses. Requested counts, binding regions, roles and spacing remain enforced, and all eligible candidates remain available to the selector. The full assessed pool stays in `candidate_assessments.json`; `recommended_shortlist.json`, `.csv`, and `.md` explain the selected molecules.
 
 Each design also exports `design_qualification.json`: versioned mechanism requirements, resolved reference identities, selected and pool counts, physical splice-element coverage, and missing evidence. For a typed isoform conversion, an observed bypass junction can resolve a physical cassette exon despite different exon numbering; conflicting evidence requires clarification. Gapmer exports record each job's actual template, including separate templates in a mixed panel. An exon label that describes an isoform outcome does not restrict gapmer binding to that exon; explicit binding regions retain their own constraints.
 
@@ -81,7 +81,7 @@ export OPENROUTER_MODEL="provider/model"
 export OPENROUTER_REASONING_EFFORT=none
 ```
 
-Choose a model that supports tool calling and your selected reasoning effort. [OpenRouter settings →](docs/llm-providers.md)
+Choose a model that supports tool calling and your selected reasoning effort. Explicit provider and model settings take precedence over the defaults. The CLI prints the selected model at startup. [Provider and model settings →](docs/llm-providers.md)
 
 </details>
 

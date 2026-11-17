@@ -1,5 +1,7 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 from typing import Dict, Any
 from agents import Agent
+from aso_chemistry import MIN_NATIVE_GAPMER_DNA_GAP_NT
 from .chemistry_mechanism import CHEMISTRY_MECHANISM_SCOPE
 
 # The model selects typed building blocks; code derives profile labels,
@@ -26,7 +28,7 @@ chemistry_agent = Agent(
         "The MOE profile uses 5-methylcytosine at every C (including MOE wings and DNA gap); "
         "the OMe profile has unmodified cytosines, including its DNA gap. mC means OMe C, not 5-methylcytosine. "
         "Preserve any explicit base-modification requirement. A native RNase-H design needs a DNA gap "
-        "of at least six bases. Native support is limited to full-PS MOE/OMe and PMO identity; "
+        f"of at least {MIN_NATIVE_GAPMER_DNA_GAP_NT} bases under the platform's support contract. Native support is limited to full-PS MOE/OMe and PMO identity; "
         "mixed PS/PO, stereodefined PS, other sugars, terminal modifications and conjugates require "
         "recommendation=null with the unsupported requirement retained in unsupported_reason. "
         "Never claim that PMO has an IDT MOE/OMe ordering code.\n"
@@ -40,6 +42,10 @@ chemistry_agent = Agent(
         "program only. Explain its mechanism and compatibility without recommending, approving, "
         "or rejecting unexecuted fallback architectures. Conditional future programs require "
         "their own constraint-compatible chemistry selection if activated.\n"
+        "Use native_chemistry_contract for platform support and encoding rules. The rationale "
+        "should describe the physical molecule, its mechanism and relevant uncertainty. Keep "
+        "JSON serialization details in the structured fields. The application expands the "
+        "typed proposal into compiled chemistry before review; both forms are supplied to reviewers.\n"
         "Genomic coordinates and coordinate conversion identify a location, not an RNA "
         "substrate. These profiles model antisense binding to RNA; do not infer a supported "
         "DNA/antigene mechanism merely from a regulatory-region label. If the requested "
@@ -48,5 +54,5 @@ chemistry_agent = Agent(
         + CHEMISTRY_MECHANISM_SCOPE + "\nReturn the supplied JSON schema only."
     ),
     tools=[],   # no external tools needed for this reasoning step
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )

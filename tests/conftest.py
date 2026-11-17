@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 # Importing a submodule initializes aso_agents.__init__, so seed the selected
 # test credential before package imports that may read configuration.
-_PROVIDER_HINT = str(os.environ.get("ASO_LLM_PROVIDER") or "openai").strip().lower()
+_PROVIDER_HINT = str(os.environ.get("ASO_LLM_PROVIDER") or "openrouter").strip().lower()
 _CREDENTIAL_HINT = (
     "OPENROUTER_API_KEY" if _PROVIDER_HINT == "openrouter" else "OPENAI_API_KEY"
 )
@@ -36,6 +36,8 @@ def _offline_safeguard_review(monkeypatch):
     def unavailable(*args, **kwargs):
         raise ConnectionError('No provider configured for this unit test')
     monkeypatch.setattr(safeguard_review, '_review_batch', unavailable)
+    from aso_agents import shortlist_review
+    monkeypatch.setattr(shortlist_review, '_model_call', unavailable)
 
 
 @pytest.fixture(autouse=True)

@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from aso_agents.llm_provider import ProviderConfig, create_response, get_provider_config  # noqa: E402
+from aso_agents.llm_provider import ProviderConfig, create_response, get_provider_config, selected_provider_name  # noqa: E402
+from aso_agents.model_defaults import DEFAULT_MODEL, DEFAULT_SMALL_MODEL, DEFAULT_OPENROUTER_MODEL
 
 
 SMOKE_FLAG = "ASO_RUN_OPENROUTER_SMOKE"
@@ -36,24 +37,14 @@ class LogicalModelTarget:
 
 DEFAULT_LOGICAL_MODEL_TARGETS = (
     LogicalModelTarget(
-        logical_model="gpt-5.2-2025-12-11",
-        resolved_model="openai/gpt-5.2",
-        accepted_response_models=frozenset(
-            {
-                "openai/gpt-5.2",
-                "openai/gpt-5.2-2025-12-11",
-            }
-        ),
+        logical_model=DEFAULT_MODEL,
+        resolved_model=DEFAULT_OPENROUTER_MODEL,
+        accepted_response_models=frozenset({DEFAULT_OPENROUTER_MODEL}),
     ),
     LogicalModelTarget(
-        logical_model="gpt-5-mini-2025-08-07",
-        resolved_model="openai/gpt-5-mini",
-        accepted_response_models=frozenset(
-            {
-                "openai/gpt-5-mini",
-                "openai/gpt-5-mini-2025-08-07",
-            }
-        ),
+        logical_model=DEFAULT_SMALL_MODEL,
+        resolved_model=DEFAULT_OPENROUTER_MODEL,
+        accepted_response_models=frozenset({DEFAULT_OPENROUTER_MODEL}),
     ),
 )
 
@@ -266,7 +257,10 @@ def openrouter_smoke_ready(env: Mapping[str, str] | None = None) -> bool:
     """Return whether every prerequisite for a live OpenRouter call is present."""
 
     source = os.environ if env is None else env
-    provider = str(source.get("ASO_LLM_PROVIDER") or "").strip().lower()
+    try:
+        provider = selected_provider_name(source)
+    except ValueError:
+        return False
     return (
         provider == "openrouter"
         and live_smoke_enabled(source)
@@ -472,7 +466,7 @@ def _parser() -> argparse.ArgumentParser:
             "for every logical model."
         ),
         epilog=(
-            f"Live calls require ASO_LLM_PROVIDER=openrouter, {OPENROUTER_CREDENTIAL}, "
+            f"Live calls use OpenRouter and require {OPENROUTER_CREDENTIAL}, "
             f"and {SMOKE_FLAG}=1. This command never prints prompts, response bodies, "
             "credentials, or request headers."
         ),

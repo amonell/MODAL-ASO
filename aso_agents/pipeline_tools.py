@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 from aso_agents.paths import runs_root as managed_runs_root
 import csv
 import asyncio
@@ -192,13 +193,25 @@ request_clarification_review_agent = Agent(
         + "You independently audit an ASO request compiler result for clarification completeness. "
         "Review both ready and need_clarification results.\n"
         "A question is blocking only when a canonical execution requirement needs a user-specific "
-        "fact that is absent from the supplied request evidence, current envelope, and clarification "
+        "fact that is absent from the supplied request evidence and clarification "
         "history, and the platform cannot safely use a declared default or resolve the fact from a "
         "configured public/reference source.\n"
         "Do not retain questions that ask the user to confirm an explicitly requested operation, "
         "mechanism, or constraint. Do not retain requests for optional preferences, pipeline-defaultable "
         "settings, or public facts the platform is expected to resolve. If one proposed question bundles "
         "only such nonblocking items, drop it. The input also includes platform_execution_validation. "
+        "Inspect both issues and repairable_issues for every task. A repairable execution requirement "
+        "can need user input when its value is absent from all evidence; for example, a missing "
+        "organism can require clarification even while biological context is also missing. "
+        "Check these requirements together before returning any questions. Preserve compiler repairs "
+        "as compiler work when the evidence or declared reference sources can supply the value. "
+        "Also verify the source of each proposed species and biological context even when validation "
+        "lists no missing field. The current envelope is generated compiler output, not evidence of "
+        "a user choice. An installed reference genome or a model-authored assumption cannot select "
+        "the user's organism. A gene symbol alone does not establish species. Use the original "
+        "request, scoped clarification answers, an explicitly supplied target reference, or an "
+        "authoritative lookup of a user-supplied accession. Ask for all unsupported required choices "
+        "together, without embedding an unsupported species/context assumption in the questions. "
         "A standard gene, transcript, numeric exon, or annotated splice site is source-resolvable unless "
         "the evidence explicitly requires a nonstandard identity or a user-controlled mapping. A requested "
         "candidate count per site does not require the user to enumerate sites when the requested gene, "
@@ -207,8 +220,8 @@ request_clarification_review_agent = Agent(
         "summary, label, envelope field, or validation interpretation. A generated contradiction, "
         "mutation, or omission is a compiler repair obligation, never a reason to question the user. "
         "Platform execution issues identify required fields but do not prove their values are absent: "
-        "retain a proposed question that resolves one only when neither request_evidence nor the current "
-        "envelope supplies the value. Preserve an adequate proposed question by index. Add any "
+        "retain a proposed question that resolves one only when user evidence or an authorized source "
+        "cannot supply the value. Preserve an adequate proposed question by index. Add any "
         "omitted independent user-specific blocker under additional_blocking_questions using exactly "
         "missing_field, question, and reason. Collect the smallest complete blocker set in one round. "
         "When platform_execution_validation reports the applicable unresolved issue, copy that exact "
@@ -1128,7 +1141,7 @@ def _record_chemical_requirements(
 
 
 def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]) -> Dict[str, Any]:
-    from aso_chemistry import require_native_linkage_identity
+    from aso_chemistry import require_native_linkage_identity, native_chemistry_contract
     require_native_linkage_identity(goal)
     deferred = _unselected_chemistry_payload(goal)
     if deferred:
@@ -1165,9 +1178,11 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
     if isinstance(chemistry_agent_obj, Agent):
         chemistry_agent_obj = _agent_with_strict_output_schema(
             chemistry_agent_obj, schema_name="aso_chemical_architecture", schema=schema)
+    native_contract = native_chemistry_contract()
     prompt: Dict[str, Any] = {"structured_goal": goal,
                               "exact_requested_length_nt": requested_length,
                               "recorded_chemical_requirements": requirements,
+                              "native_chemistry_contract": native_contract,
                               "output_schema": schema}
     history = []
     canonical = None
@@ -1186,6 +1201,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                 chem_payload = json.loads(raw) if isinstance(raw, str) else raw
             except (TypeError, ValueError):
                 chem_payload = {}
+            selection_proposal = deepcopy(chem_payload)
             try:
                 chem_payload = compile_chemistry_proposal(chem_payload)
                 errors = chemistry_contract_errors(chem_payload, requested_length, native_modality=goal.get("modality"), native_design=True)
@@ -1200,6 +1216,8 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
         if not errors:
             if canonical is None:
                 canonical = _canonicalize_chemistry_payload(chem_payload, source_hint="chemistry_agent")
+            review_evidence = {"selection_proposal": selection_proposal,
+                               "native_chemistry_contract": native_contract}
             adjudication = None
             try:
                 audit_schema = mechanism_audit_schema(canonical)
@@ -1209,6 +1227,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                     schema=audit_schema,
                 )
                 audit_input = {"structured_goal": goal, "chemistry": canonical,
+                               **review_evidence,
                                "output_schema": audit_schema}
                 if audit_feedback is not None:
                     audit_input["output_contract_feedback"] = audit_feedback
@@ -1241,6 +1260,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                         schema_name="aso_chemistry_finding_adjudication", schema=adjudication_schema)
                     adjudication = run_async_from_sync(lambda: _run_schema_validated_agent_once(
                         agent=judge, prompt=json.dumps({"structured_goal": goal, "chemistry": canonical,
+                            **review_evidence,
                             "issues": issues, "output_schema": adjudication_schema}, ensure_ascii=False),
                         schema=adjudication_schema, error_prefix="chemistry_finding_adjudication",
                         contract_validator=lambda result: _json_schema_validation_errors(result, adjudication_schema)
@@ -1260,6 +1280,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
                     "recommendation_sha256": recommendation_digest(canonical),
                     "check": "same_model_mechanism_consistency",
                     "independent_validation": False,
+                    "review_evidence": deepcopy(review_evidence),
                 }
                 if adjudication is not None:
                     canonical["mechanism_review"]["finding_adjudication"] = adjudication
@@ -1267,6 +1288,7 @@ def _run_chemistry_agent_for_goal(chemistry_agent_obj: Any, goal: Dict[str, Any]
         history.append({"attempt": attempt + 1, "validation_errors": list(errors)})
         prompt["output_contract_feedback"] = {
             "attempt": attempt + 1, "previous_response": raw,
+            "compiled_recommendation": deepcopy(canonical),
             "validation_errors": errors,
             "instruction": "Repair these exact chemistry/length/scope/mechanism conflicts in place. "
                            "Retain compatible decisions and return the complete recommendation JSON.",
@@ -16526,7 +16548,7 @@ def _run_answer_web_search_once(
     model = (
         str(os.environ.get("ASO_ANSWER_WEB_SEARCH_MODEL") or os.environ.get("ASO_WORKBENCH_RESPONSE_MODEL") or "")
         .strip()
-        or "gpt-5.2-2025-12-11"
+        or DEFAULT_MODEL
     )
     prompt = _answer_web_search_prompt(
         query=query,
@@ -16988,6 +17010,7 @@ def _compact_request_execution_validation(
                     "task_type",
                     "status",
                     "issues",
+                    "repairable_issues",
                     "questions",
                     "reason",
                 )
@@ -17005,6 +17028,7 @@ def _compact_request_execution_validation(
 async def _review_request_clarifications_if_needed(
     request_evidence: str,
     planned: Dict[str, Any],
+    *, source_artifacts: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if not isinstance(planned, dict):
         return planned
@@ -17028,8 +17052,13 @@ async def _review_request_clarifications_if_needed(
     compact_execution_validation = _compact_request_execution_validation(
         current_envelope
     )
-    artifact_evidence: List[Dict[str, str]] = []
-    _extend_goal_audit_evidence_from_declared_artifacts(artifact_evidence, current_envelope)
+    if source_artifacts is None:
+        # Established intake/audit callers may carry explicit attachments in
+        # the envelope. The unverified planner supplies its source scope below.
+        artifact_evidence: List[Dict[str, Any]] = []
+        _extend_goal_audit_evidence_from_declared_artifacts(artifact_evidence, current_envelope)
+    else:
+        artifact_evidence = deepcopy(source_artifacts)
     review_prompt = json.dumps(
         {
             "request_evidence": str(request_evidence or ""),
@@ -17168,6 +17197,8 @@ async def _finalize_verified_request_plan(
     request_evidence: str,
     planned: Dict[str, Any],
 ) -> Dict[str, Any]:
+    from .request_artifact_evidence import collect_request_artifacts
+    source_artifacts = collect_request_artifacts(sys.modules[__name__], request_evidence)["entries"]
     reviewed = await _review_request_execution_completeness(
         request_evidence,
         planned,
@@ -17180,6 +17211,7 @@ async def _finalize_verified_request_plan(
         reviewed = await _review_request_clarifications_if_needed(
             request_evidence,
             reviewed,
+            source_artifacts=source_artifacts,
         )
         if str(reviewed.get("error") or "").strip():
             return reviewed
@@ -17194,6 +17226,7 @@ async def _finalize_verified_request_plan(
     return await _review_request_clarifications_if_needed(
         request_evidence,
         synthesized,
+        source_artifacts=source_artifacts,
     )
 
 
@@ -18391,7 +18424,10 @@ async def _run_verified_request_workbench_agent_once(
     request_evidence: Optional[str] = None,
 ) -> Dict[str, Any]:
     user_evidence = prompt if request_evidence is None else request_evidence
-    from .request_artifact_evidence import append_request_artifact_evidence
+    from .request_artifact_evidence import append_request_artifact_evidence, collect_request_artifacts
+    source_artifacts = collect_request_artifacts(sys.modules[__name__], user_evidence)["entries"]
+    decision_evidence = append_request_artifact_evidence(
+        sys.modules[__name__], user_evidence, user_evidence, include_runtime_references=False)
     prompt = append_request_artifact_evidence(sys.modules[__name__], prompt, user_evidence)
     planned = await _run_request_workbench_agent_once(prompt)
     if str(planned.get("error") or "").strip():
@@ -18405,7 +18441,8 @@ async def _run_verified_request_workbench_agent_once(
     seen_proposals: Set[str] = set()
     for revision_index in range(max_revisions + 1):
         planned = _bind_request_task_executors(planned)
-        planned = await _review_request_clarifications_if_needed(prompt, planned)
+        planned = await _review_request_clarifications_if_needed(
+            decision_evidence, planned, source_artifacts=source_artifacts)
         if planned.get("error") == "request_graph_required_after_clarification_review":
             proposal_digest = json.dumps(planned["prior_response"], sort_keys=True, default=str)
             if proposal_digest in seen_proposals:
@@ -18456,11 +18493,11 @@ async def _run_verified_request_workbench_agent_once(
             if str(planned.get("error") or "").strip():
                 return planned
             continue
-        review_prompt = _request_graph_review_prompt(prompt, envelope)
+        review_prompt = _request_graph_review_prompt(decision_evidence, envelope)
         review = await _run_request_graph_review_agent_once(review_prompt)
         if str(review.get("error") or "").strip():
             return review
-        evidence_errors = _request_graph_review_evidence_errors(review, prompt)
+        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
         if evidence_errors:
             review = await _run_request_graph_review_agent_once(
                 _request_graph_review_retry_prompt(
@@ -18473,7 +18510,7 @@ async def _run_verified_request_workbench_agent_once(
                 return review
             evidence_errors = _request_graph_review_evidence_errors(
                 review,
-                prompt,
+                decision_evidence,
             )
             if evidence_errors:
                 return {
@@ -18482,13 +18519,13 @@ async def _run_verified_request_workbench_agent_once(
                 }
         if str(review.get("status") or "").strip().lower() == "valid":
             review_prompt = _request_graph_operation_coverage_review_prompt(
-                prompt,
+                decision_evidence,
                 envelope,
             )
             review = await _run_request_graph_review_agent_once(review_prompt)
             if str(review.get("error") or "").strip():
                 return review
-            evidence_errors = _request_graph_review_evidence_errors(review, prompt)
+            evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
             if evidence_errors:
                 return {
                     "error": "request_graph_review_unverified_evidence",
@@ -18498,7 +18535,7 @@ async def _run_verified_request_workbench_agent_once(
                 if planned_status != "ready":
                     return planned
                 return await _finalize_verified_request_plan(
-                    prompt,
+                    decision_evidence,
                     planned,
                 )
         review = await _run_request_graph_review_adjudicator_once(
@@ -18506,7 +18543,7 @@ async def _run_verified_request_workbench_agent_once(
         )
         if str(review.get("error") or "").strip():
             return review
-        evidence_errors = _request_graph_review_evidence_errors(review, prompt)
+        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
         if evidence_errors:
             return {
                 "error": "request_graph_review_unverified_evidence",
@@ -18516,7 +18553,7 @@ async def _run_verified_request_workbench_agent_once(
             if planned_status != "ready":
                 return planned
             return await _finalize_verified_request_plan(
-                prompt,
+                decision_evidence,
                 planned,
             )
         issues = review.get("issues") if isinstance(review.get("issues"), list) else []
@@ -23266,9 +23303,9 @@ def _request_validation_summary(request_envelope: Dict[str, Any]) -> Dict[str, A
                     repairable_issues.extend(
                         _canonical_design_goal_contract_issues(structured_goal)
                     )
-                    repairable_issues.extend(
-                        _design_goal_execution_contract_issues(context_goal)
-                    )
+                repairable_issues.extend(
+                    _design_goal_execution_contract_issues(context_goal)
+                )
         elif task_type == "analyze_artifact":
             if not artifact_refs and not has_generated_design_output:
                 issues.append("artifact_refs_missing")
@@ -28617,6 +28654,8 @@ def _bind_candidate_physical_site_groups(rows, groups, intervals_for_row):
 
 
 def _sort_generated_candidate_indexed_rows(indexed_rows: List[Tuple[int, Dict[str, Any]]]) -> List[Tuple[int, Dict[str, Any]]]:
+    if indexed_rows and all(type(row.get("_recommendation_order")) is int for _, row in indexed_rows):
+        return sorted(indexed_rows, key=lambda item: item[1]["_recommendation_order"])
     native = _native_sort_generated_candidate_indexed_rows(indexed_rows)
     if not any(row.get("candidate_assessment") for _, row in native):
         return native
@@ -28781,12 +28820,21 @@ def _apply_generated_candidate_limit(
     diversify: bool = False,
     candidate_minimum: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    from .candidate_presentation import molecule_key
+    def distinct(indexed):
+        seen, result = set(), []
+        for item in indexed:
+            key = molecule_key(item[1])
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+        return result
     if candidate_limit is None:
         if not per_site:
             return list(rows), {}
         candidate_limit = None
     if not per_site:
-        indexed_rows = _sort_generated_candidate_indexed_rows(list(enumerate(rows)))
+        indexed_rows = distinct(_sort_generated_candidate_indexed_rows(list(enumerate(rows))))
         ranked_rows = [row for _idx, row in indexed_rows]
         if diversify:
             from .target_accessibility import select_panel_rows
@@ -28823,7 +28871,7 @@ def _apply_generated_candidate_limit(
     selected_indexed: List[Tuple[int, Dict[str, Any]]] = []
     groups_summary: List[Dict[str, Any]] = []
     for label in group_order:
-        indexed_rows = _sort_generated_candidate_indexed_rows(grouped.get(label, []))
+        indexed_rows = distinct(_sort_generated_candidate_indexed_rows(grouped.get(label, [])))
         limits = [value for value in (candidate_limit, (group_limits or {}).get(label)) if value is not None]
         group_limit = min(limits) if limits else None
         if diversify:
@@ -29575,7 +29623,10 @@ def _normalized_generated_candidate_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
+def _emit_v2_generated_design_artifacts(run_dir: str, *, review_recommendations=False, retry_recommendations=False) -> Dict[str, Any]:
+    if review_recommendations:
+        return _build_v2_generated_design_artifacts(run_dir, review_recommendations=True,
+                                                     retry_recommendations=retry_recommendations)
     from .report_build import build_identity, read_receipt, verified_artifacts, write_receipt
     context = _goal_payload_context(run_dir)
     goal = context.get("structured_goal") or {}
@@ -29610,92 +29661,12 @@ def _emit_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     return artifacts
 
 
-def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
-    stage_payload = _collect_generated_stage_sets(run_dir)
-    stage_sets = stage_payload.get("stage_sets") if isinstance(stage_payload.get("stage_sets"), dict) else {}
-    context = _goal_payload_context(run_dir)
-    structured_goal = context.get("structured_goal") if isinstance(context.get("structured_goal"), dict) else {}
-    final_payload = context.get("final_payload") if isinstance(context.get("final_payload"), dict) else {}
-    candidate_rows = _collect_generated_candidate_rows(run_dir, structured_goal=structured_goal)
-    branches = _build_branch_outcomes_for_report(structured_goal, final_payload)
-    completed_empty = bool(branches) and all(
-        branch.get("status") in {"no_candidates_after_constraints", "no_candidates_found"}
-        for branch in branches.values() if branch.get("requested"))
-    if not candidate_rows and not any(stage_sets.values()) and not completed_empty:
-        return {}
-
-    run_path = Path(run_dir)
-    generated_set_path = _write_run_path(run_path, "generated_aso_set.json")
-    generated_trace_path = _write_run_path(run_path, "generated_filter_trace.json")
-
-    normalized_rows = [_normalized_generated_candidate_row(row) for row in candidate_rows]
-    from .candidate_region_gate import filter_final_rows_by_regions
-    normalized_rows, global_region_filter = filter_final_rows_by_regions(
-        normalized_rows, structured_goal, _goal_runtime_module()._tile_row_overlap_intervals)
-    gapmer_results = (
-        final_payload.get("gapmer_tiling_results")
-        if isinstance(final_payload.get("gapmer_tiling_results"), dict)
-        else {}
-    )
-    steric_results = (
-        final_payload.get("tiling_results")
-        if isinstance(final_payload.get("tiling_results"), dict)
-        else {}
-    )
-    gapmer_required_filter = (
-        gapmer_results.get("required_evidence_filtering")
-        if isinstance(gapmer_results.get("required_evidence_filtering"), dict)
-        else {}
-    )
-    steric_required_filter = (
-        steric_results.get("required_evidence_filtering")
-        if isinstance(steric_results.get("required_evidence_filtering"), dict)
-        else {}
-    )
-    persisted_required_filter = gapmer_required_filter or steric_required_filter
-    trace_eligibility_rows = list(normalized_rows)
-    required_filter_input_path = str(persisted_required_filter.get("input_path") or "").strip()
-    if required_filter_input_path and Path(required_filter_input_path).exists():
-        input_rows = _load_candidate_rows_from_json(Path(required_filter_input_path))
-        if input_rows:
-            trace_eligibility_rows = [_normalized_generated_candidate_row(row) for row in input_rows]
-    cross_species_required = bool(
-        _cross_species_required(None, structured_goal)
-        or (not _request_contract_cross_species_optional(structured_goal)
-            and any(_coerce_bool(row.get("cross_species_required")) is True for row in normalized_rows))
-    )
-    cross_species_values = [_row_cross_species_pass(row) for row in normalized_rows]
-    trace_cross_species_values = [_row_cross_species_pass(row) for row in trace_eligibility_rows]
-    unchecked_count = (
-        sum(1 for value in trace_cross_species_values if value is None)
-        if cross_species_required
-        else 0
-    )
-    failed_cross_species_count = (
-        sum(1 for value in trace_cross_species_values if value is False)
-        if cross_species_required
-        else 0
-    )
-    requested_cross_species = _requested_species_from_contexts(None, structured_goal)
-    if cross_species_required:
-        eligible_rows = [
-            row for row, passed in zip(normalized_rows, cross_species_values) if passed is True
-        ]
-    else:
-        eligible_rows = list(normalized_rows)
-    _annotate_requested_exon_proximity(eligible_rows, structured_goal)
-    from .chemical_identity import attest_candidate_rows
-    from .candidate_assessment import assess_candidates, write_assessment_artifacts
-    assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
-    # Activity belongs to the full assessed library, independent of panel size
-    # and selection. The evaluator deduplicates identical model inputs and the
-    # runner batches inference; selected copies retain their attached evidence.
-    from .oligoai import evaluate_candidates
-    oligoai_evaluation = evaluate_candidates(
-        assessment_pool, structured_goal, generated_set_path.parent, runtime=_goal_runtime_module(),
-        candidate_scope="assessed_pool_before_panel_selection")
-    eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
-    eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+def _select_generated_design_panel(rows, structured_goal, *, directory, region_status="complete", persisted=None):
+    """Apply the existing typed panel contract to the supplied evidence ordering."""
+    eligible_rows = list(rows)
+    generated_set_path = Path(directory) / "generated_aso_set.json"
+    gapmer_results = {"candidate_selection": persisted or {}}
+    global_region_filter = {"status": region_status}
     candidate_limit = _structured_candidate_limit(structured_goal)
     candidate_limit_per_site = _structured_candidate_limit_is_per_site(structured_goal)
     candidate_group_scope = _structured_candidate_group_scope(structured_goal)
@@ -29845,6 +29816,103 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
                                    "export_selection": export_selection}
             if export_selection.get("unselected_count"):
                 candidate_selection["selected_count"] = len(eligible_rows)
+    return eligible_rows, candidate_selection
+
+
+def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations=False, retry_recommendations=False) -> Dict[str, Any]:
+    stage_payload = _collect_generated_stage_sets(run_dir)
+    stage_sets = stage_payload.get("stage_sets") if isinstance(stage_payload.get("stage_sets"), dict) else {}
+    context = _goal_payload_context(run_dir)
+    structured_goal = context.get("structured_goal") if isinstance(context.get("structured_goal"), dict) else {}
+    final_payload = context.get("final_payload") if isinstance(context.get("final_payload"), dict) else {}
+    candidate_rows = _collect_generated_candidate_rows(run_dir, structured_goal=structured_goal)
+    branches = _build_branch_outcomes_for_report(structured_goal, final_payload)
+    completed_empty = bool(branches) and all(
+        branch.get("status") in {"no_candidates_after_constraints", "no_candidates_found"}
+        for branch in branches.values() if branch.get("requested"))
+    if not candidate_rows and not any(stage_sets.values()) and not completed_empty:
+        return {}
+
+    run_path = Path(run_dir)
+    generated_set_path = _write_run_path(run_path, "generated_aso_set.json")
+    generated_trace_path = _write_run_path(run_path, "generated_filter_trace.json")
+
+    normalized_rows = [_normalized_generated_candidate_row(row) for row in candidate_rows]
+    from .candidate_region_gate import filter_final_rows_by_regions
+    normalized_rows, global_region_filter = filter_final_rows_by_regions(
+        normalized_rows, structured_goal, _goal_runtime_module()._tile_row_overlap_intervals)
+    gapmer_results = (
+        final_payload.get("gapmer_tiling_results")
+        if isinstance(final_payload.get("gapmer_tiling_results"), dict)
+        else {}
+    )
+    steric_results = (
+        final_payload.get("tiling_results")
+        if isinstance(final_payload.get("tiling_results"), dict)
+        else {}
+    )
+    gapmer_required_filter = (
+        gapmer_results.get("required_evidence_filtering")
+        if isinstance(gapmer_results.get("required_evidence_filtering"), dict)
+        else {}
+    )
+    steric_required_filter = (
+        steric_results.get("required_evidence_filtering")
+        if isinstance(steric_results.get("required_evidence_filtering"), dict)
+        else {}
+    )
+    persisted_required_filter = gapmer_required_filter or steric_required_filter
+    trace_eligibility_rows = list(normalized_rows)
+    required_filter_input_path = str(persisted_required_filter.get("input_path") or "").strip()
+    if required_filter_input_path and Path(required_filter_input_path).exists():
+        input_rows = _load_candidate_rows_from_json(Path(required_filter_input_path))
+        if input_rows:
+            trace_eligibility_rows = [_normalized_generated_candidate_row(row) for row in input_rows]
+    cross_species_required = bool(
+        _cross_species_required(None, structured_goal)
+        or (not _request_contract_cross_species_optional(structured_goal)
+            and any(_coerce_bool(row.get("cross_species_required")) is True for row in normalized_rows))
+    )
+    cross_species_values = [_row_cross_species_pass(row) for row in normalized_rows]
+    trace_cross_species_values = [_row_cross_species_pass(row) for row in trace_eligibility_rows]
+    unchecked_count = (
+        sum(1 for value in trace_cross_species_values if value is None)
+        if cross_species_required
+        else 0
+    )
+    failed_cross_species_count = (
+        sum(1 for value in trace_cross_species_values if value is False)
+        if cross_species_required
+        else 0
+    )
+    requested_cross_species = _requested_species_from_contexts(None, structured_goal)
+    if cross_species_required:
+        eligible_rows = [
+            row for row, passed in zip(normalized_rows, cross_species_values) if passed is True
+        ]
+    else:
+        eligible_rows = list(normalized_rows)
+    _annotate_requested_exon_proximity(eligible_rows, structured_goal)
+    from .chemical_identity import attest_candidate_rows
+    from .candidate_assessment import assess_candidates, write_assessment_artifacts
+    assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
+    # Activity belongs to the full assessed library, independent of panel size
+    # and selection. The evaluator deduplicates identical model inputs and the
+    # runner batches inference; selected copies retain their attached evidence.
+    from .oligoai import evaluate_candidates
+    oligoai_evaluation = evaluate_candidates(
+        assessment_pool, structured_goal, generated_set_path.parent, runtime=_goal_runtime_module(),
+        candidate_scope="assessed_pool_before_panel_selection")
+    eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
+    eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+    from .shortlist_review import recommend_panel
+    eligible_rows, candidate_selection, recommendation_review = recommend_panel(
+        assessment_pool, structured_goal, generated_set_path.parent,
+        select_panel=lambda rows, goal: _select_generated_design_panel(
+            rows, goal, directory=generated_set_path.parent,
+            region_status=global_region_filter["status"],
+            persisted=gapmer_results.get("candidate_selection")),
+        allow_model_calls=review_recommendations, retry_failed=retry_recommendations)
     persisted_total_count = persisted_required_filter.get("total_count")
     unfiltered_row_count = int(
         persisted_total_count
@@ -29917,6 +29985,7 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
         "global_region_filter": global_region_filter,
         "sources": stage_payload.get("sources") if isinstance(stage_payload.get("sources"), dict) else {},
     }
+    generated_set_payload["recommendation_review"] = recommendation_review
     if oligoai_evaluation:
         generated_set_payload["oligoai_evaluation"] = oligoai_evaluation
     if completed_empty:
@@ -29994,7 +30063,7 @@ def _build_v2_generated_design_artifacts(run_dir: str) -> Dict[str, Any]:
     from aso_agents.design_delivery import write_design_panel
     panel_artifacts = write_design_panel(generated_set_payload, structured_goal, generated_set_path.parent)
     chemistry_artifacts = write_native_chemistry_exports(eligible_rows, generated_set_path.parent)
-    assessment_artifacts = write_assessment_artifacts(assessment_pool, eligible_rows, structured_goal, generated_set_path.parent)
+    assessment_artifacts = write_assessment_artifacts(assessment_pool, eligible_rows, structured_goal, generated_set_path.parent, review=recommendation_review)
     write_layout_manifest(run_path)
     return {
         "generated_aso_set_json": str(generated_set_path),
@@ -33030,6 +33099,10 @@ def _write_requested_evaluation_exports(
     rows = _provided_aso_export_rows(response_payload)
     for index, path in enumerate(paths, 1):
         suffix = path.suffix.lower()
+        if suffix in {".html", ".htm"}:
+            # The canonical HTML is written after these evidence exports.
+            # Final delivery copies it with its bounded, portable downloads.
+            continue
         if suffix not in {".csv", ".tsv", ".md", ".markdown", ".json", ".xlsx"}:
             raise ValueError(f"unsupported_evaluation_export: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -43867,7 +43940,8 @@ def tool_parse_goal_request(
         try:
             request_parse_out = run_async_from_sync(
                 lambda: _run_verified_request_workbench_agent_once(
-                    workbench_prompt, request_evidence=request_text,
+                    workbench_prompt, request_evidence=(request_text + "\n\nClarification history:\n"
+                        + _render_request_workbench_history(qa_history) if qa_history else request_text),
                 )
             )
         except Exception as exc:
@@ -46490,6 +46564,19 @@ def tool_resolve_isoforms_and_sites(
             details={"run_dir": run_dir},
             fatal=True,
         )
+    from .reference_setup import inspect_resolution_references
+    from .runtime_warnings import emit_warning
+    previous_reference_setup = state.get("reference_setup") or {}
+    reference_setup = {}
+    for species_key in _preflight_species_keys(structured_goal):
+        check = inspect_resolution_references(species_key)
+        reference_setup[species_key] = check
+        if check["message"] and previous_reference_setup.get(species_key) != check:
+            emit_warning(check["message"])
+            _event(state, "reference_setup", check["message"], level="warning")
+    if reference_setup != previous_reference_setup:
+        state["reference_setup"] = reference_setup
+        _save_state(state_path, state, snapshot_reason="reference_setup_checked")
     if _restore_design_objective_preseed_to_payload(
         structured_goal,
         final_payload,
@@ -56241,19 +56328,8 @@ def tool_build_report_payload(
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
     existing_payload = final_payload.get("report_payload") if isinstance(final_payload.get("report_payload"), dict) else {}
-    from .shortlist_clarification import size_question
-    question = size_question(structured_goal, bool(_collect_generated_candidate_rows(run_dir, structured_goal)))
-    if question:
-        _apply_clarification_request_to_state(state, question)
-        state["pending_questions"] = question["questions"]
-        state["status"] = "needs_user_input"
-        state["phase"] = "awaiting_clarification"
-        _mark_last_tool(state, "tool_build_report_payload", "ok")
-        _save_state(state_path, state, snapshot_reason="shortlist_size_requested")
-        return {"status":"needs_user_input", "needs_user_input":True, "state_path":state_path,
-                "run_dir":run_dir, "questions":question["questions"], "clarification_kind":"shortlist_size",
-                "clarification_request":question}
-    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
+    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True,
+                                                           retry_recommendations=force_stage)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
     report_payload = _build_report_payload_manifest(
@@ -56341,7 +56417,7 @@ def tool_write_markdown_report(
     payload = context["payload"]
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
-    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
+    generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
     report_payload = _build_report_payload_manifest(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aso_agents.model_defaults import DEFAULT_MODEL
+
 import json
 from typing import Any, Dict, List, Optional, Tuple, Set
 
@@ -63,7 +65,7 @@ _mixed_junction_decider_agent = Agent(
         "- Keep rationales concise (<=120 characters) and mention key trade-offs.\n"
     ),
     tools=[],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=HIGH_REASONING_JSON,
 )
 
@@ -124,7 +126,7 @@ _ambiguous_safeguard_decider_agent = Agent(
         "- Rationales must be concise (<=120 characters) and mention the key reason.\n"
     ),
     tools=[],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=HIGH_REASONING_JSON,
 )
 
@@ -188,7 +190,7 @@ _target_identifier_agent = Agent(
         "- Do not invent new isoforms, genomic positions, or directions beyond what the context supports."
     ),
     tools=[],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=HIGH_REASONING_JSON,
 )
 
@@ -208,7 +210,7 @@ _target_ranker_agent = Agent(
         " Desired directions and leverage derived from objectives are not effect measurements. Preserve unresolved mechanism qualifiers from the input; never turn a shared-site exploratory hypothesis into an established isoform shift."
     ),
     tools=[],
-    model="gpt-5.2-2025-12-11",
+    model=DEFAULT_MODEL,
     model_settings=HIGH_REASONING_JSON,
 )
 

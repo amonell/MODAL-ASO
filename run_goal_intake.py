@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Lightweight CLI to run the goal intake agent and persist outputs under runs/."""
 
+from aso_agents.model_defaults import DEFAULT_MODEL, DEFAULT_SMALL_MODEL
+
 import argparse
 import asyncio
 import contextlib
@@ -15,7 +17,6 @@ import os
 import re
 import sys
 import subprocess
-import threading
 import time
 import textwrap
 import zipfile
@@ -29,6 +30,7 @@ from aso_agents.ranking_contracts import gapmer_selection_key, gapmer_selection_
 from aso_agents.splice_recommendations import recommendation_sort_key, report_recommendation_fields
 from aso_agents.transcript_metadata import resolved_transcript_metadata
 from aso_agents.splice_safeguards import DEFAULT_GUARD_TOLERANCE
+from aso_agents.cli_progress import TerminalProgress
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
@@ -399,49 +401,45 @@ def _cli_message_for_tool(tool_name: str, count: int) -> Optional[str]:
     if tool_name in CLI_SILENT_TOOLS:
         return None
     static_messages = {
-        "initialize_run_state": "I'm setting up the run and preparing a clean workspace.",
-        "tool_parse_goal_request": "I'm reading your request and deciding whether this needs design work, analysis, or a direct answer.",
-        "tool_validate_goal_schema": "I'm validating the design objective and normalizing the constraints.",
-        "tool_resolve_isoforms_and_sites": "I'm resolving the transcripts, isoforms, and splice sites that matter for this request.",
-        "tool_reference_preflight": "I'm checking that the required reference assets are available before the heavy lifting starts.",
-        "tool_download_reference_assets": "I'm downloading the missing reference assets and building any required genome indexes.",
-        "tool_materialize_region_constraints": "I'm building the targeting constraints from any motifs, binding sites, or explicit regions you asked for.",
-        "tool_derive_exploratory_steric_regions": "I'm mapping the steric targeting windows that are worth exploring.",
-        "tool_build_steric_regions": "I'm assembling the steric target regions for candidate generation.",
-        "tool_build_gapmer_regions": "I'm assembling the gapmer target regions for knockdown design.",
-        "tool_emit_tiling_config": "I'm preparing the tiling configuration for the design engine.",
-        "tool_run_steric_tiling": "I'm tiling steric ASO candidates across the selected regions.",
-        "tool_collect_steric_results": "I'm collecting and organizing the initial steric tiling results.",
-        "tool_filter_steric_tiles": "I'm filtering out weak steric candidates before deeper scoring.",
-        "tool_annotate_offtarget_expression": "I'm checking whether likely off-target genes are actually expressed in relevant tissue contexts.",
-        "tool_score_steric_uniqueness": "I'm scoring steric candidates for specificity and uniqueness.",
-        "tool_run_splice_eval": "I'm estimating splice effects for the steric candidates.",
-        "tool_build_routing_plan": "I'm turning the splice predictions into route-specific candidate sets.",
-        "tool_summarize_routes": "I'm summarizing the routed candidate sets into clean deliverables.",
-        "tool_run_gapmer_tiling": "I'm tiling candidate gapmers for the knockdown branch.",
-        "tool_score_gapmer_uniqueness": "I'm scoring gapmer candidates for specificity and uniqueness.",
-        "tool_apply_gapmer_constraints": "I'm applying the final gapmer constraints and cleanup rules.",
-        "tool_build_report_payload": "I'm assembling the final story of the run from the artifacts I generated.",
-        "tool_write_markdown_report": "I'm writing the markdown report so the run is easy to review.",
-        "tool_write_aux_exports": "I'm generating the HTML summary and export files.",
-        "tool_execute_design_task": "I'm launching the next scoped design task as its own child run.",
-        "tool_answer_question": "I'm answering your ASO question directly without launching a design run.",
-        "tool_analyze_artifact": "I'm reading the referenced run artifacts and extracting the conclusion from them.",
-        "tool_evaluate_existing_aso_set": "I'm normalizing the provided ASO sequences so I can evaluate or compare them cleanly.",
-        "tool_compare_aso_sets": "I'm comparing the provided ASOs against the referenced candidate set.",
-        "tool_trace_filter_decisions": "I'm tracing where the provided ASOs survive or drop out across the pipeline stages.",
-        "tool_run_sandbox_analysis": "I'm running the custom derived analysis in the sandboxed analysis step.",
-        "tool_build_composite_report": "I'm combining the completed analyses into one clean answer.",
-        "tool_persist_run_outputs": "I'm saving everything into a reproducible run folder.",
-        "finalize_run_state": "I'm doing a final integrity check before I call the run complete.",
-        "request_clarification": "I need one clarification before I continue.",
+        "initialize_run_state": "Preparing the run folder.",
+        "tool_parse_goal_request": "Reading your request and identifying the required work.",
+        "tool_validate_goal_schema": "Checking the design objective and your requirements.",
+        "tool_resolve_isoforms_and_sites": "Mapping transcripts and target sites.",
+        "tool_reference_preflight": "Checking reference files needed for design and screening.",
+        "tool_download_reference_assets": "Downloading reference files and preparing genome indexes.",
+        "tool_materialize_region_constraints": "Locating the requested motifs and target regions.",
+        "tool_derive_exploratory_steric_regions": "Identifying regions for steric-blocking ASOs.",
+        "tool_build_steric_regions": "Preparing regions for steric-blocking ASO design.",
+        "tool_build_gapmer_regions": "Preparing regions for gapmer design.",
+        "tool_emit_tiling_config": "Preparing candidate generation.",
+        "tool_run_steric_tiling": "Generating and screening steric-blocking ASOs across the target regions.",
+        "tool_collect_steric_results": "Collecting generated ASOs.",
+        "tool_filter_steric_tiles": "Filtering ASOs against the design requirements.",
+        "tool_annotate_offtarget_expression": "Checking expression of other genes the ASOs may bind.",
+        "tool_score_steric_uniqueness": "Assessing how specifically the ASOs bind the intended target.",
+        "tool_run_splice_eval": "Predicting splice effects.",
+        "tool_build_routing_plan": "Planning candidate selection for each design objective.",
+        "tool_summarize_routes": "Summarizing candidates for each design objective.",
+        "tool_run_gapmer_tiling": "Generating and screening gapmers across the target regions.",
+        "tool_score_gapmer_uniqueness": "Assessing how specifically the gapmers bind the intended target.",
+        "tool_apply_gapmer_constraints": "Checking gapmers against the design requirements.",
+        "tool_build_report_payload": "Reviewing the results and assembling report evidence.",
+        "tool_write_markdown_report": "Writing the report.",
+        "tool_write_aux_exports": "Generating the HTML report and supporting files.",
+        "tool_execute_design_task": "Running the next design task.",
+        "tool_answer_question": "Preparing an answer to your ASO question.",
+        "tool_analyze_artifact": "Analyzing the supplied results.",
+        "tool_evaluate_existing_aso_set": "Preparing the supplied ASOs for evaluation.",
+        "tool_compare_aso_sets": "Comparing the ASO sets.",
+        "tool_trace_filter_decisions": "Checking which filters each ASO passes.",
+        "tool_run_sandbox_analysis": "Running the requested analysis.",
+        "tool_build_composite_report": "Combining the analyses into the report.",
+        "tool_persist_run_outputs": "Saving the results.",
+        "finalize_run_state": "Checking the completed output files.",
+        "request_clarification": "Preparing a clarification question.",
     }
     if tool_name == "tool_execute_route_goal":
-        return (
-            "I'm executing the next routing objective and refining the candidate set."
-            if count <= 1
-            else f"I'm executing routing objective {count} and tightening the candidate set."
-        )
+        return "Evaluating candidates for the current design objective."
     return static_messages.get(tool_name)
 
 
@@ -475,19 +473,12 @@ class _CliNarrator:
         self.stream = stream
         self.enable_stream = bool(enable_stream)
         self.enable_spinner = bool(enable_spinner and getattr(stream, "isatty", lambda: False)())
-        self._spinner_stop: Optional[threading.Event] = None
-        self._spinner_thread: Optional[threading.Thread] = None
-        self._spinner_width = 0
+        self._progress = TerminalProgress(stream, animate=self.enable_spinner)
         self._tool_counts: Dict[str, int] = {}
         self._last_message: str = ""
-        self._spinner_interval = 0.5
 
     def _write(self, text: str) -> None:
-        try:
-            self.stream.write(text)
-            self.stream.flush()
-        except Exception:
-            pass
+        self._progress.write(text)
 
     def _stream_line(self, text: str) -> None:
         line = str(text or "").strip()
@@ -509,42 +500,10 @@ class _CliNarrator:
         self._write("\n")
 
     def _start_spinner(self, message: str) -> None:
-        if not self.enable_spinner:
-            return
-        self.stop_spinner(clear=True)
-        spinner_message = str(message or "").strip()
-        if len(spinner_message) > 88:
-            spinner_message = spinner_message[:85].rstrip() + "..."
-        stop_event = threading.Event()
-        self._spinner_stop = stop_event
-
-        def _spin() -> None:
-            frames = ("|", "/", "-", "\\")
-            idx = 0
-            while not stop_event.wait(self._spinner_interval):
-                frame = frames[idx % len(frames)]
-                line = f"\r  {frame} {spinner_message}"
-                self._spinner_width = max(self._spinner_width, len(line))
-                self._write(line.ljust(self._spinner_width))
-                idx += 1
-
-        self._spinner_thread = threading.Thread(target=_spin, daemon=True)
-        self._spinner_thread.start()
+        self._progress.start(message)
 
     def stop_spinner(self, *, clear: bool = True) -> None:
-        stop_event = self._spinner_stop
-        thread = self._spinner_thread
-        if stop_event is None:
-            return
-        stop_event.set()
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=0.2)
-        if clear and self._spinner_width:
-            self._write("\r" + (" " * self._spinner_width) + "\r")
-        elif self._spinner_width:
-            self._write("\n")
-        self._spinner_stop = None
-        self._spinner_thread = None
+        self._progress.stop()
 
     def intro(self, *, resuming: bool = False) -> None:
         self._write("\nMODAL-ASO\n")
@@ -557,6 +516,23 @@ class _CliNarrator:
         if not isinstance(event, dict):
             return
         event_type = str(event.get("type") or "").strip().lower()
+        if event_type == "progress":
+            message = str(event.get("message") or "").strip()
+            if message:
+                self._write(message + "\n")
+                self._start_spinner(message)
+            return
+        if event_type == "warning":
+            message = str(event.get("message") or "").strip()
+            if message:
+                self._write(f"Reference setup: {message}\n")
+            return
+        if event_type == "model_call":
+            self._start_spinner("Waiting for the language model")
+            return
+        if event_type == "model_result":
+            self._start_spinner("Reviewing the model response")
+            return
         if event_type == "tool_call":
             tool_name = str(event.get("tool") or "").strip()
             if not tool_name:
@@ -565,6 +541,7 @@ class _CliNarrator:
             self._tool_counts[tool_name] = count
             message = _cli_message_for_tool(tool_name, count)
             if not message:
+                self._start_spinner("Checking the run and preparing the next step")
                 return
             if tool_name != "tool_execute_route_goal" and message == self._last_message:
                 self._start_spinner(message)
@@ -574,7 +551,7 @@ class _CliNarrator:
             self._start_spinner(message)
             return
         if event_type == "tool_result":
-            self.stop_spinner(clear=True)
+            self._start_spinner("Reviewing the latest results")
 
     def show_clarification(
         self,
@@ -17561,7 +17538,7 @@ def _generate_splice_strategy_analysis(
     agent_trace.extend(strategy_trace)
 
     strategy_model = _model_attribution_from_trace(
-        "gpt-5.2-2025-12-11",
+        DEFAULT_MODEL,
         strategy_trace,
     )
 
@@ -18897,7 +18874,7 @@ snapgene_isoform_mapper_agent = Agent(
         "- If error_hint is provided, fix the output accordingly.\n"
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 
@@ -32355,6 +32332,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                 raise SystemExit("Existing agentic state is missing request text.")
 
         from aso_agents.agentic_runner import run_agentic_pipeline
+        from aso_agents.runtime_warnings import warning_handler
 
         current_state_path = existing_state_path_resolved
         pending_answers = clarification_answers
@@ -32379,7 +32357,12 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
             if pretty_cli:
                 stdout_buffer = io.StringIO()
                 stderr_buffer = io.StringIO()
-                with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                with (
+                    contextlib.redirect_stdout(stdout_buffer),
+                    contextlib.redirect_stderr(stderr_buffer),
+                    warning_handler(narrator.on_runner_event),
+                    narrator._progress.running("Preparing the next step"),
+                ):
                     agentic_result = run_agentic_pipeline(
                         user_request=user_request,
                         skip_router=skip_router,
@@ -32397,21 +32380,25 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None) -> Non
                 captured_text = stdout_buffer.getvalue() + stderr_buffer.getvalue()
                 if captured_text.strip():
                     captured_cli_logs.append(captured_text)
-                narrator.stop_spinner(clear=True)
             else:
-                agentic_result = run_agentic_pipeline(
-                    user_request=user_request,
-                    skip_router=skip_router,
-                    skip_ensembl_check=skip_ensembl_check,
-                    router_max_steps=router_max_steps,
-                    router_log_tool_calls=router_log_tool_calls,
-                    router_debug_dir=router_debug_dir_arg,
-                    router_print_summary=router_print_summary,
-                    existing_state_path=current_state_path,
-                    clarification_answers=pending_answers,
-                    clarification_answer_summary=pending_summary,
-                    max_steps=agentic_max_steps,
-                )
+                with (
+                    warning_handler(narrator.on_runner_event),
+                    narrator._progress.running("Preparing the next step"),
+                ):
+                    agentic_result = run_agentic_pipeline(
+                        user_request=user_request,
+                        skip_router=skip_router,
+                        skip_ensembl_check=skip_ensembl_check,
+                        router_max_steps=router_max_steps,
+                        router_log_tool_calls=router_log_tool_calls,
+                        router_debug_dir=router_debug_dir_arg,
+                        router_print_summary=router_print_summary,
+                        existing_state_path=current_state_path,
+                        clarification_answers=pending_answers,
+                        clarification_answer_summary=pending_summary,
+                        max_steps=agentic_max_steps,
+                        event_callback=narrator.on_runner_event,
+                    )
             status = str(agentic_result.get("status") or "").strip().lower()
             if status == "in_progress":
                 state_path_for_resume = agentic_result.get("state_path")

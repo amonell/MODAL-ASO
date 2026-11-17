@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_MODEL
 import os
 from typing import Optional
 
@@ -33,9 +34,9 @@ REQUEST_WORKBENCH_MODEL = (
     str(
         os.environ.get("ASO_REQUEST_WORKBENCH_MODEL")
         or os.environ.get("ASO_GOAL_INTAKE_MODEL")
-        or "gpt-5.2-2025-12-11"
+        or DEFAULT_MODEL
     ).strip()
-    or "gpt-5.2-2025-12-11"
+    or DEFAULT_MODEL
 )
 REQUEST_WORKBENCH_REASONING_EFFORT = (
     str(

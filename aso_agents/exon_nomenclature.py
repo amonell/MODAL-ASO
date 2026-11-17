@@ -8,6 +8,8 @@ the structural ordinal needed for coordinate materialization.
 
 from __future__ import annotations
 
+from aso_agents.model_defaults import DEFAULT_MODEL
+
 import hashlib
 import gzip
 import io
@@ -100,9 +102,9 @@ _MODEL = (
     str(
         os.environ.get("ASO_EXON_NOMENCLATURE_MODEL")
         or os.environ.get("ASO_GOAL_INTAKE_MODEL")
-        or "gpt-5.2-2025-12-11"
+        or DEFAULT_MODEL
     ).strip()
-    or "gpt-5.2-2025-12-11"
+    or DEFAULT_MODEL
 )
 _REASONING_EFFORT = (
     str(

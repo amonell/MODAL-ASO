@@ -5,6 +5,7 @@ ATTRIBUTE_HTML = '''
 <div class="report-attribute-toolbar report-sidebar-toolbar"><h2>Filters</h2>
 <button type="button" class="report-button" data-attribute-action="add">Add filter</button>
 <button type="button" class="report-button" data-action="filtered-csv">Download matching ASOs</button></div>
+<!-- BASIC_FILTERS -->
 <div class="report-color-controls"><span>Color by</span><div data-role="attribute-quick" class="report-attribute-quick"></div>
 <button type="button" class="report-button" data-attribute-action="color"><span data-role="attribute-color-label">Choose an attribute</span> ▾</button></div>
 <p class="report-sub" data-role="attribute-color-description"></p>
@@ -14,7 +15,7 @@ ATTRIBUTE_HTML = '''
 <dialog class="report-attribute-picker" aria-label="Choose a stored ASO attribute">
 <div class="report-attribute-toolbar"><h2 data-role="attribute-picker-title">Choose an attribute</h2><button type="button" class="report-button" data-attribute-action="close" aria-label="Close attribute chooser">Close</button></div>
 <label>Find an attribute<input type="search" data-role="attribute-search" placeholder="Activity, conservation, motif, chemistry…" autocomplete="off"></label>
-<p class="report-sub" data-role="attribute-search-count"></p>
+<p class="report-sub" data-role="attribute-search-count" aria-live="polite"></p>
 <select size="9" data-role="attribute-options" aria-label="Stored ASO attributes"></select>
 <p class="report-sub" data-role="attribute-picker-description"></p>
 <button type="button" class="report-button report-button-primary" data-attribute-action="choose">Use attribute</button>
@@ -27,6 +28,8 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  const q=role=>root.querySelector(`[data-role="${role}"]`),dialog=root.querySelector('.report-attribute-picker');
  const rowIndex=new Map(rows.map((r,i)=>[r.id,i])),catalog=new Map((attributes||[]).map(a=>[a.id,a]));
  const filters=new Map(),domains=new Map(),categoryColors=new Map(),categoryChoices=new Map(),knownValues=new Map(),decodedArrays=new WeakMap();let colorId='',pickerMode='color',histogramOpen=true;
+ const valid=()=>[...filters.values()].every(f=>!f.error);
+ const moleculeCount=items=>new Set(items.map(r=>r.molecule||r.id)).size;
  const colorChoices=new Map();
  const missingColor='#b9c0c8',palette=['#16788c','#b16b2e','#8863aa','#44865b','#bc5d82','#5279b6','#a38c27','#755b4b','#529b99','#8b738a'];
  const format=(value,unit='')=>finite(value)?value.toLocaleString(undefined,{maximumSignificantDigits:5})+(unit?' '+unit:''):'Unavailable';
@@ -140,6 +143,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  }
  function histogram(a,population,filter){
   const d=domain(a),width=360,height=62,baseline=48;
+  const noun=moleculeCount(population)===population.length?'ASOs':'binding records';
   if(!d.exists)return '<p class="report-sub">No values are recorded for this target.</p>';
   let bars=[],maximum=1,missing=0,observations=0;
   if(a.kind==='number'){
@@ -148,9 +152,9 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
    maximum=Math.max(1,...bins);
    bars=bins.map((count,i)=>{const lo=d.low+range*i/n,hi=d.low===d.high?d.high:d.low+range*(i+1)/n;
     const x=i*width/n,w=Math.max(width/n-1,1),h=count/maximum*42,chosenHeight=selected[i]/maximum*42;
-    const title=`${esc(format(lo,a.unit))}–${esc(format(hi,a.unit))}: ${count.toLocaleString()} ${d.multiple?'values':'ASOs'}${filter?' · '+selected[i].toLocaleString()+' in range':''}`;
+    const title=`${esc(format(lo,a.unit))}–${esc(format(hi,a.unit))}: ${count.toLocaleString()} ${d.multiple?'values':noun}${filter?' · '+selected[i].toLocaleString()+' in range':''}`;
     return `<g><title>${title}</title><rect x="${x}" y="${baseline-h}" width="${w}" height="${h}" fill="#dce4e8"/><rect x="${x}" y="${baseline-chosenHeight}" width="${w}" height="${chosenHeight}" fill="#16788c"/></g>`;});
-   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution of ${esc(a.label)}; ${observations} recorded ${d.multiple?'values':'ASOs'}">${bars.join('')}<line x1="0" y1="49" x2="360" y2="49" stroke="#cbd5da"/><text x="0" y="61">${esc(format(d.low,a.unit))}</text><text x="360" y="61" text-anchor="end">${esc(format(d.high,a.unit))}</text></svg><p class="report-sub">${observations.toLocaleString()} ${d.multiple?'recorded values':'ASOs with values'} · ${missing.toLocaleString()} unavailable${d.multiple?'. Each ASO can contribute several values.':''}</p>`;
+   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Distribution of ${esc(a.label)}; ${observations} recorded ${d.multiple?'values':noun}">${bars.join('')}<line x1="0" y1="49" x2="360" y2="49" stroke="#cbd5da"/><text x="0" y="61">${esc(format(d.low,a.unit))}</text><text x="360" y="61" text-anchor="end">${esc(format(d.high,a.unit))}</text></svg><p class="report-sub">${observations.toLocaleString()} ${d.multiple?'recorded values':noun+' with values'} · ${missing.toLocaleString()} unavailable${d.multiple?'. Each ASO can contribute several values.':''}</p>`;
   }
   const counts=new Map();population.forEach(r=>{const v=[...new Set(known(a,r).map(String))];if(!v.length)missing++;v.forEach(value=>counts.set(value,(counts.get(value)||0)+1));});
   const entries=[...counts].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));maximum=entries.reduce((max,e)=>Math.max(max,e[1]),1);
@@ -171,7 +175,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   selectionDescription();
  }
  function selectionDescription(){const a=catalog.get(q('attribute-options').value);q('attribute-picker-description').textContent=a?a.description:'';root.querySelector('[data-attribute-action=choose]').disabled=!a;}
- function open(mode){pickerMode=mode;q('attribute-picker-title').textContent=mode==='color'?'Color by an attribute':'Add an attribute filter';q('attribute-search').value='';options();dialog.showModal();q('attribute-search').focus();}
+ function open(mode){pickerMode=mode;const title=mode==='color'?'Color by an attribute':'Add an attribute filter';q('attribute-picker-title').textContent=title;dialog.setAttribute('aria-label',title);root.querySelector('[data-attribute-action=choose]').textContent=mode==='color'?'Color ASOs':'Add filter';q('attribute-search').value='';options();dialog.showModal();q('attribute-search').focus();}
  function filterMarkup(a,f){
   const d=domain(a),step=d.low===d.high||d.integer&&!(a.low===0&&a.high===1)?1:(d.high-d.low)/500;
   const numeric=a.kind==='number'?`<div class="report-range-fields"><label>Minimum${a.unit?' ('+esc(a.unit)+')':''}<input type="number" step="any" ${d.exists?'':'disabled'} data-filter-input="low" value="${f.low}" aria-label="Minimum ${esc(a.label)}"></label><label>Maximum${a.unit?' ('+esc(a.unit)+')':''}<input type="number" step="any" ${d.exists?'':'disabled'} data-filter-input="high" value="${f.high}" aria-label="Maximum ${esc(a.label)}"></label></div><div class="report-range-sliders"><label>Lower bound<input type="range" data-filter-input="low-slider" min="${d.low}" max="${d.high===d.low?d.low+1:d.high}" step="${step}" value="${f.low}" ${!d.exists||d.low===d.high?'disabled':''} aria-label="Lower bound for ${esc(a.label)}"></label><label>Upper bound<input type="range" data-filter-input="high-slider" min="${d.low}" max="${d.high===d.low?d.low+1:d.high}" step="${step}" value="${f.high}" ${!d.exists||d.low===d.high?'disabled':''} aria-label="Upper bound for ${esc(a.label)}"></label></div>`:
@@ -196,9 +200,10 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   q('attribute-color-histogram').hidden=!!a&&filters.has(a.id);
   q('attribute-quick').innerHTML=[...catalog.values()].filter(a=>(a.id==='oligoai'||a.id==='effect'||a.id.startsWith('uniqueness')||a.id==='phastcons')&&canColor(a)).map(a=>`<button type="button" class="report-button" data-attribute-action="quick-color" data-attribute-id="${a.id}" aria-pressed="${a.id===colorId}" title="${esc(a.label)}">${a.id==='oligoai'?'OligoAI':a.id==='effect'?'Splicing':a.id==='phastcons'?'Conservation':'Uniqueness'}</button>`).join('');
   if(quickFocus)q('attribute-quick').querySelector(`[data-attribute-id="${quickFocus}"]`)?.focus({preventScroll:true});
-  q('attribute-summary').textContent=filters.size?`${visible.length.toLocaleString()} of ${base.length.toLocaleString()} ASO records match ${filters.size===1?'this filter':'all '+filters.size+' filters'}. ${filters.size>1?'Each distribution shows ASOs that pass the other filters.':'The distribution shows ASOs before this filter.'}`:'Add filters to choose ranges or categories. The plot and table show the same matching ASOs.';
+  const count=moleculeCount(visible),total=moleculeCount(scopeRows());
+  q('attribute-summary').textContent=`${count.toLocaleString()} of ${total.toLocaleString()} ASOs match.`+(valid()?'':' Finish editing the highlighted range.')+(filters.size>1?' Each distribution shows the results that pass the other filters.':'');
   root.querySelector('[data-attribute-action=clear]').hidden=!filters.size;
-  root.querySelector('[data-action=filtered-csv]').disabled=!visible.length;
+  root.querySelector('[data-action=filtered-csv]').disabled=!visible.length||!valid();
   for(const [id,f] of filters){
    const a=catalog.get(id),card=q('attribute-filters').querySelector(`[data-filter-id="${id}"]`),population=base.filter(r=>matches(r,id));
    card.querySelector('[data-filter-part=histogram]').innerHTML=histogram(a,population,f);
@@ -248,8 +253,8 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   if(action==='choose'){const id=q('attribute-options').value;dialog.close();if(pickerMode==='color'){colorId=id;changed();}else add(id);}
   if(action==='quick-color'){colorId=id;changed();}
   if(action==='filter-color')add(colorId);
-  if(action==='clear'){clear();changed();}
-  if(action==='remove'){filters.delete(id);q('attribute-filters').querySelector(`[data-filter-id="${id}"]`).remove();changed();}
+  if(action==='clear'){clear();changed();root.querySelector('[data-attribute-action=add]').focus({preventScroll:true});}
+  if(action==='remove'){filters.delete(id);q('attribute-filters').querySelector(`[data-filter-id="${id}"]`).remove();changed();root.querySelector('[data-attribute-action=add]').focus({preventScroll:true});}
  });
  root.addEventListener('input',event=>{
   const input=event.target,card=input.closest('[data-filter-id]');if(!card)return;
@@ -261,12 +266,24 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
   else if(key==='text')f.text=input.value;
   else if(key==='category-search')f.categorySearch=input.value;
   else {
-   const name=key.startsWith('low')?'low':'high',value=Number(input.value);
-   if(!input.value||!Number.isFinite(value)){card.querySelector('[data-filter-part=error]').textContent='Enter a finite number.';return;}
-   const other=name==='low'?'high':'low';
-   if(key.endsWith('slider')){f[name]=value;if(f.low>f.high)f[other]=value;}
-   else {const low=name==='low'?value:f.low,high=name==='high'?value:f.high;if(low>high){card.querySelector('[data-filter-part=error]').textContent='Minimum must be at most maximum.';return;}f[name]=value;}
-   card.querySelector('[data-filter-part=error]').textContent='';
+   const lowInput=card.querySelector('[data-filter-input=low]'),highInput=card.querySelector('[data-filter-input=high]');
+   const error=card.querySelector('[data-filter-part=error]');
+   error.id=q('attribute-filters').closest('.report-explorer').querySelector('[data-role=basket]').id+'-'+id+'-error';
+   [lowInput,highInput].forEach(el=>el.setAttribute('aria-describedby',error.id));
+   function invalid(message){
+    f.error=message;error.textContent=message+' The plot still uses '+format(f.low,a.unit)+'–'+format(f.high,a.unit)+'.';
+    [lowInput,highInput].forEach(el=>el.setAttribute('aria-invalid','true'));changed();
+   }
+   if(key.endsWith('slider')){
+    const name=key.startsWith('low')?'low':'high',other=name==='low'?'high':'low';
+    f[name]=Number(input.value);if(f.low>f.high)f[other]=f[name];
+   }else{
+    const low=Number(lowInput.value),high=Number(highInput.value);
+    if(!lowInput.value||!highInput.value||!Number.isFinite(low)||!Number.isFinite(high)){invalid('Enter a number for both limits.');return;}
+    if(low>high){invalid('Minimum must be less than or equal to maximum.');return;}
+    f.low=low;f.high=high;
+   }
+   f.error='';error.textContent='';[lowInput,highInput].forEach(el=>el.removeAttribute('aria-invalid'));
    for(const bound of ['low','high']){card.querySelector(`[data-filter-input=${bound}]`).value=f[bound];card.querySelector(`[data-filter-input=${bound}-slider]`).value=f[bound];}
   }
   changed();
@@ -275,7 +292,7 @@ function setupAttributes({root,rows,attributes,scopeRows,baseRows,activityFor,ch
  q('attribute-options').addEventListener('dblclick',()=>root.querySelector('[data-attribute-action=choose]').click());
  dialog.addEventListener('keydown',event=>{if(event.key==='Enter'&&['INPUT','SELECT'].includes(event.target.tagName)){event.preventDefault();root.querySelector('[data-attribute-action=choose]').click();}});
  const exportAttributes=()=>[...new Set([colorId,...filters.keys()])].map(id=>catalog.get(id)).filter(Boolean);
- return {matches,render,refresh,clear,color,describe,legend,values,known,
+ return {matches,render,refresh,clear,color,describe,legend,values,known,valid,
   tableAttributes:()=>exportAttributes().filter(a=>!['oligoai','effect','gc','native_rank'].includes(a.id)),
   sortValue:(id,row)=>{const a=catalog.get(id);return !a||!known(a,row).length?null:a.kind==='number'?numeric(a,row):categoryLabel(a,categoryKey(a,row));},
   cell:(a,row)=>{const v=known(a,row),missing=values(a,row).length-v.length;return v.length?(a.kind==='number'?v.slice(0,5).map(x=>format(x,a.unit)).join(' / ')+(v.length>5?' · '+(v.length-5)+' more values':''):categoryLabel(a,categoryKey(a,row)))+(missing?' · '+missing+' unavailable':''):'Unavailable';},

@@ -1,3 +1,4 @@
+from aso_agents.model_defaults import DEFAULT_SMALL_MODEL
 import json
 import hashlib
 import os
@@ -482,7 +483,7 @@ _census_selector_agent = Agent(
         "Output JSON: {\"organism\": \"...\", \"tissue\": \"...\", \"cell_types\": [\"...\", ...]}"
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 
@@ -500,7 +501,7 @@ _dataset_selector_agent = Agent(
         "Output JSON only: {\"dataset_id\": \"<ID FROM LIST>\"}."
     ),
     tools=[],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
 
 
@@ -2151,5 +2152,5 @@ off_target_expression_agent = Agent(
         "Return only the tool output JSON."
     ),
     tools=[annotate_off_target_expression],
-    model="gpt-5-mini-2025-08-07",
+    model=DEFAULT_SMALL_MODEL,
 )
