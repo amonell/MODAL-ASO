@@ -131,6 +131,7 @@ def common_attributes(row, record):
         'phastcons': phastcons, 'phylop': phylop,
         'isoform_selectivity': score if kind in selective else None,
         'isoform_coverage': score if kind=='gene_wide' else _number(source, 'isoform_coverage_fraction'),
+        'target_group_coverage': _number(source, 'target_group_coverage_fraction'),
         'native_rank': record['native_rank'], 'length':len(record['aso']),
         'off_target_counts': counts,
         'off_target_total': total,
@@ -142,11 +143,12 @@ COMMON = [
     ('effect', 'Splice prediction', 'Predicted support for the requested splicing direction at this target.', '', None, None, 'higher'),
     ('phastcons', 'Conservation · phastCons', 'Average conservation across the binding site. Higher values indicate stronger evolutionary conservation.', '', 0, 1, 'higher'),
     ('phylop', 'Conservation · phyloP', 'Average phyloP across the binding site. Positive values indicate slower evolution; negative values indicate faster evolution.', '', None, None, 'higher'),
-    ('isoform_selectivity', 'Uniqueness · target isoform', 'Saved selectivity for the requested isoform. Higher values indicate more selective targeting; matches to protected isoforms carry the recorded penalty.', '', 0, 1, 'higher'),
+    ('isoform_selectivity', 'Target selectivity', 'Preference for the requested isoform or transcript group in the saved sequence matches. Higher values indicate stronger target preference; protected and unresolved matches retain their recorded penalties.', '', 0, 1, 'higher'),
     ('isoform_coverage', 'Isoform coverage', 'Fraction of the loaded transcript catalog containing the binding site.', '', 0, 1, 'higher'),
+    ('target_group_coverage', 'Target group coverage', 'Fraction of resolved target-group transcripts containing the binding site. Transcripts with unresolved membership are recorded separately.', '', 0, 1, 'higher'),
     ('gc', 'GC content', 'Percentage of G and C bases in the ASO.', '%', 0, 100, 'higher'),
     ('length', 'ASO length', 'Length of the synthesized ASO.', 'nt', None, None, 'higher'),
-    ('native_rank', 'Analysis rank', 'Rank from the saved analysis within this target and approach.', '', None, None, 'lower'),
+    ('native_rank', 'Analysis rank', 'Original candidate order within this target and approach. The saved selection criteria describe its basis.', '', None, None, 'lower'),
 ]
 
 

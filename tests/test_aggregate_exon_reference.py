@@ -30,6 +30,14 @@ def _catalog(monkeypatch, *, annotated=True, exon_count=6):
                       "contains_coding": True} for i in range(1, exon_count + 1)],
     })
     monkeypatch.setattr(intake, "_generate_splice_strategy_analysis", lambda *_, **__: None)
+    from aso_agents import exon_nomenclature_context
+    def verified_names(goal):
+        # This suite isolates reference selection. Source verification and
+        # unresolved-feature clarification have separate lifecycle coverage.
+        for entry in goal['isoform_transcripts'].values():
+            entry.setdefault('metadata', {})['exon_nomenclature_resolutions'] = {
+                '4': {'status': 'verified_alternate_mapping', 'resolved_transcript_ordinal': 4}}
+    monkeypatch.setattr(exon_nomenclature_context, 'annotate_goal_exon_nomenclature', verified_names)
     def no_class_matching(*_, **__):
         raise AssertionError("An aggregate biological class must not be matched to a representative transcript.")
     monkeypatch.setattr(intake, "auto_match_isoform_transcript", no_class_matching)

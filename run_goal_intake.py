@@ -2322,9 +2322,13 @@ def _normalize_splice_aggregate_class(
                 label = number if number is not None else value.strip() if isinstance(value, str) else None
                 if label and label not in exon_values:
                     exon_values.append(label)
-        if not exon_values:
+        explicit_index = source.get('exon_index', objective.get('exon_index'))
+        if type(explicit_index) is int and explicit_index > 0:
+            normalized['exon_index'] = explicit_index
+        if not exon_values and 'exon_index' not in normalized:
             return {}
-        normalized["exon_label"] = exon_values[0]
+        if exon_values:
+            normalized["exon_label"] = exon_values[0]
         if len(exon_values) > 1:
             normalized["exon_labels"] = exon_values
         presence = _normalize_aggregate_presence(
@@ -3731,7 +3735,6 @@ def _region_constraint_exon_label(entry: Dict[str, Any]) -> Optional[int]:
             "target_exon",
             "exon",
             "exon_number",
-            "exon_index",
             "target_exon_label",
         ):
             exon_label = _coerce_standard_exon_constraint_label(container.get(key))
@@ -4013,6 +4016,9 @@ def _splice_relative_window_from_mapping(entry: Dict[str, Any]) -> Optional[Dict
             keys=("exon_label", "junction_exon_label", "target_exon", "exon", "exon_number"),
         )
     )
+    exon_index = _nested_dict_value(window, anchor, motif_entry, entry, keys=('exon_index',))
+    if type(exon_index) is not int or exon_index < 1:
+        exon_index = None
     transcript_id = str(
         _nested_dict_value(
             window,
@@ -4130,17 +4136,20 @@ def _splice_relative_window_from_mapping(entry: Dict[str, Any]) -> Optional[Dict
             rel_start = -(exon_upstream_nt - 1)
             rel_end = intron_downstream_nt or 0
 
-    if not site or exon_label is None or rel_start is None or rel_end is None:
+    if not site or (exon_label is None and exon_index is None) or rel_start is None or rel_end is None:
         return None
     if rel_start > rel_end:
         rel_start, rel_end = rel_end, rel_start
 
     normalized = {
-        "exon_label": exon_label,
         "anchor_site": site,
         "relative_start_nt": int(rel_start),
         "relative_end_nt": int(rel_end),
     }
+    if exon_label is not None:
+        normalized['exon_label'] = exon_label
+    if exon_index is not None:
+        normalized['exon_index'] = exon_index
     if transcript_id:
         normalized["reference_transcript_id"] = transcript_id
     if (
@@ -4331,6 +4340,8 @@ def _normalize_region_constraints(
                 entry = deepcopy(entry)
                 entry["splice_relative_window"]["exon_label"] = resolved[0]
         norm: Dict[str, Any] = {}
+        if type(entry.get('exon_index')) is int and entry['exon_index'] > 0:
+            norm['exon_index'] = entry['exon_index']
         constraint_id = str(entry.get("constraint_id") or entry.get("id") or f"constraint_{idx:02d}").strip()
         norm["constraint_id"] = constraint_id
         label = str(entry.get("label") or entry.get("name") or entry.get("constraint_name") or constraint_id).strip()
@@ -4527,11 +4538,11 @@ def _normalize_region_constraints(
                 overlap_requirement = overlap_requirement or (
                     "any_overlap" if splice_relative_window.get("feature_name") else "full_containment"
                 )
-            elif _is_exon_region_constraint_hint(source_type_hint) or exon_label is not None:
+            elif _is_exon_region_constraint_hint(source_type_hint) or exon_label is not None or norm.get('exon_index'):
                 source_type = "exon"
                 if exon_label is not None:
                     norm["exon_label"] = exon_label
-                else:
+                elif not norm.get('exon_index'):
                     source_type = ""
                 for key in (
                     "transcript_id",
@@ -13522,6 +13533,10 @@ def _resolve_authoritative_transcript_exon_ordinal(
     requested_exon_label: int,
     structured_goal: Optional[Dict[str, Any]] = None,
 ) -> int:
+    from aso_agents.exon_identity_clarification import execution_exon_identity
+    identity = execution_exon_identity(transcript_entry, requested_exon_label)
+    if identity:
+        return identity['resolved_transcript_ordinal']
     from aso_agents.curated_exon_nomenclature import VERIFIED_NOMENCLATURE_STATUSES, verified_mapping_for_entry
     from aso_agents.design_event_consistency import (
         ExonConversionConflict, record_event_binding, structural_exon_resolution,
@@ -16409,13 +16424,20 @@ def _resolve_gapmer_uniqueness_context(
     structured_goal: Dict[str, Any],
     iso_label_primary: Optional[str],
 ) -> Dict[str, Any]:
+    from aso_agents.gapmer_target_groups import group_objectives, objective_roles
+    aggregate_objectives = group_objectives(structured_goal)
+    has_target_group = any('target' in objective_roles(obj) for _, obj in aggregate_objectives)
     target_label = _resolve_uniqueness_target_label(structured_goal, iso_label_primary)
+    if has_target_group:
+        target_label = None
     beneficial_labels: List[str] = []
     pathogenic_labels: List[str] = []
     objectives = structured_goal.get("splice_isoform_objectives")
     if isinstance(objectives, list):
         for objective in objectives:
             if not isinstance(objective, dict):
+                continue
+            if objective.get('objective_scope') == 'aggregate_class' or objective.get('aggregate_class'):
                 continue
             isoform_label = str(
                 objective.get("isoform_label")
@@ -16437,7 +16459,7 @@ def _resolve_gapmer_uniqueness_context(
             if direction == "decrease" or role == "pathogenic":
                 pathogenic_labels.append(isoform_label)
 
-    if not target_label and iso_label_primary and iso_label_primary in pathogenic_labels:
+    if not has_target_group and not target_label and iso_label_primary and iso_label_primary in pathogenic_labels:
         target_label = iso_label_primary
 
     beneficial_labels.extend(preserved_catalog_labels(structured_goal, structured_goal.get("isoform_transcripts") or structured_goal.get("all_transcripts_full") or {}))
@@ -16449,12 +16471,15 @@ def _resolve_gapmer_uniqueness_context(
         mode = "pathogenic_preferred"
     elif target_labels:
         mode = "target_isoform_specific"
+    if has_target_group:
+        mode = "target_group_specific"
     return {
         "mode": mode,
         "target_labels": target_labels,
         "beneficial_labels": beneficial_labels,
         "pathogenic_labels": pathogenic_labels,
         "target_label": target_label,
+        "has_target_group": has_target_group,
     }
 
 
@@ -16493,6 +16518,8 @@ def _gapmer_uniqueness_sort_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
         total_val = int(total_hits) if total_hits is not None else 9999
     except Exception:
         total_val = 9999
+    if row.get('isoform_ranking_status') == 'unresolved_group_sequence_and_risk_only':
+        total_val = 0
     try:
         gc_val = float(gc) if gc is not None else 0.0
     except Exception:
@@ -16591,6 +16618,7 @@ def _gapmer_uniqueness_sort_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
         "structure_status": structure_rank,
         "isoform_class": class_rank,
         "isoform_score": -score_val,
+        "target_group_coverage": -float(row.get("target_group_coverage_fraction") or 0),
         "beneficial_hits": beneficial_val,
         "other_isoform_hits": other_val,
         "total_isoform_hits": total_val,
@@ -16635,6 +16663,11 @@ def _annotate_gapmer_selection_ranks(tiles_json_path: str) -> Dict[str, Any]:
             "isoform_hit_count": row.get("isoform_hit_count"),
             "isoform_catalog_size": row.get("isoform_catalog_size"),
             "isoform_coverage_fraction": row.get("isoform_coverage_fraction"),
+            "target_group_coverage_fraction": row.get("target_group_coverage_fraction"),
+            "target_isoform_catalog_size": row.get("target_isoform_catalog_size"),
+            "unclassified_isoform_match_count": row.get("unclassified_isoform_match_count"),
+            "isoform_group_definitions": row.get("isoform_group_definitions"),
+            "isoform_ranking_status": row.get("isoform_ranking_status"),
             "gc_fraction": row.get("GC") if row.get("GC") is not None else row.get("gc_fraction"),
             "phastcons": row.get("Phastcon"),
             "phylop": row.get("PhyloP"),
@@ -21811,7 +21844,10 @@ def _build_exon_constraint_rows(
     iso_label: str,
     transcript_entry: Dict[str, Any],
 ) -> Tuple[List[List[Any]], List[List[Any]], Dict[str, Any]]:
-    exon_label = _coerce_standard_exon_constraint_label(constraint.get("exon_label"))
+    from aso_agents.exon_identity_clarification import execution_exon_identity
+    identity = execution_exon_identity(transcript_entry or {}, constraint.get('exon_label'))
+    exon_label = (constraint.get('exon_index') or (identity or {}).get('resolved_transcript_ordinal')
+                  or _coerce_standard_exon_constraint_label(constraint.get("exon_label")))
     fallback_label = f"exon_{exon_label}" if exon_label else "exon_region"
     label = str(constraint.get("label") or fallback_label).strip()
     if exon_label is None or not isinstance(transcript_entry, dict):
@@ -22042,6 +22078,16 @@ def _resolve_splice_relative_effective_exon(
     requested_exon_label: int,
     requested_site: str,
 ) -> Tuple[int, Dict[str, Any]]:
+    from aso_agents.exon_identity_clarification import execution_exon_identity
+    identity = execution_exon_identity(transcript_entry, requested_exon_label)
+    explicit_index = constraint.get('exon_index') or (constraint.get('splice_relative_window') or {}).get('exon_index')
+    if type(explicit_index) is int and explicit_index > 0:
+        return explicit_index, {'source': 'explicit_transcript_ordinal', 'requested_exon_label': requested_exon_label,
+                                'resolved_exon_label': explicit_index}
+    if identity:
+        return identity['resolved_transcript_ordinal'], {'source': identity['status'],
+            'requested_exon_label': requested_exon_label,
+            'resolved_exon_label': identity['resolved_transcript_ordinal']}
     from aso_agents.curated_exon_nomenclature import VERIFIED_NOMENCLATURE_STATUSES
     metadata: Dict[str, Any] = {
         "source": "transcript_exon_index",
@@ -22195,7 +22241,7 @@ def _build_splice_relative_window_rows(
     exon_label = _coerce_standard_exon_constraint_label(
         window.get("exon_label")
         if window.get("exon_label") is not None
-        else constraint.get("exon_label")
+        else constraint.get("exon_label", window.get('exon_index', constraint.get('exon_index')))
     )
     site = _normalize_splice_anchor_site(window.get("anchor_site") or window.get("splice_site") or constraint.get("anchor_site"))
     rel_start = _coerce_relative_offset(window.get("relative_start_nt"))
@@ -28337,6 +28383,7 @@ def _postprocess_gapmer_tiles(
         pathogenic_isoform_labels=uniqueness_context.get("pathogenic_labels"),
         transcript_catalog={label: cdna_source[label] for label in cdna_map if label in cdna_source},
         resolved_transcripts=isoform_transcripts,
+        structured_goal=structured_goal,
     )
     if uniq_path:
         gapmer_results["scored_tiles_path"] = uniq_path
@@ -28450,6 +28497,7 @@ def _annotate_gapmer_uniqueness(
     output_name: str = "gapmer_scored_uniqueness.json",
     transcript_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
     resolved_transcripts: Optional[Dict[str, Dict[str, Any]]] = None,
+    structured_goal: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Add isoform uniqueness annotations to a tiles JSON, return new path."""
     if not tiles_json_path or not os.path.exists(tiles_json_path):
@@ -28471,16 +28519,56 @@ def _annotate_gapmer_uniqueness(
     pathogenic_set = {str(label).strip() for label in (pathogenic_isoform_labels or []) if str(label).strip()}
     target_set = {str(target_isoform_label).strip()} if str(target_isoform_label or "").strip() else set()
     role_resolution = None
-    if transcript_catalog is not None:
+    group_resolution = None
+    from aso_agents.gapmer_target_groups import group_objectives, objective_roles
+    if transcript_catalog is not None or (structured_goal and group_objectives(structured_goal)):
+        transcript_catalog = transcript_catalog or {}
         from aso_agents.gapmer_selectivity import resolve_uniqueness_roles
+        requested_targets = target_isoform_label
+        if structured_goal and any('target' in objective_roles(obj) for _, obj in group_objectives(structured_goal)):
+            # Legacy/direct callers may still pass the numbering reference.
+            # Only independently declared single-RNA outcomes supplement a group.
+            requested_targets = _resolve_gapmer_uniqueness_context(structured_goal, None)['pathogenic_labels']
         role_resolution = resolve_uniqueness_roles(
-            target_isoform_label, beneficial_isoform_labels, pathogenic_isoform_labels,
+            requested_targets, beneficial_isoform_labels, pathogenic_isoform_labels,
             transcript_catalog, resolved_transcripts or {},
         )
+        if structured_goal is not None:
+            from aso_agents.gapmer_target_groups import resolve_groups, apply_group_roles
+            group_resolution = resolve_groups(structured_goal, transcript_catalog, resolved_transcripts or {})
+            role_resolution = apply_group_roles(role_resolution, group_resolution)
         target_set = set(role_resolution['target']['catalog_labels'])
         beneficial_set = set(role_resolution['beneficial']['catalog_labels'])
         pathogenic_set = set(role_resolution['pathogenic']['catalog_labels'])
     roles_resolved = role_resolution is None or role_resolution['status'] == 'resolved'
+    from aso_agents.gapmer_target_groups import group_summary
+    group_definitions = group_summary(group_resolution)
+    target_groups = [g for g in (group_resolution or {}).get('groups', []) if 'target' in g['roles']]
+    unknown_members = set().union(*(set(g['unknown']) for g in (group_resolution or {}).get('groups', [])))
+    unknown_members -= target_set | beneficial_set | pathogenic_set
+    unknown_beneficial = set().union(*(set(g['unknown']) for g in (group_resolution or {}).get('groups', []) if 'beneficial' in g['roles']))
+    unknown_beneficial -= beneficial_set
+    catalog_labels = set(transcript_catalog or {})
+    row_role_resolution = role_resolution
+    if group_resolution:
+        tiles['isoform_group_resolution'] = group_resolution
+        tiles['isoform_role_resolution'] = role_resolution
+        row_role_resolution = deepcopy(role_resolution)
+        for role in ('target', 'beneficial', 'pathogenic'):
+            record = row_role_resolution[role]
+            if record.get('group_requests'):
+                record['catalog_label_count'] = len(record.pop('catalog_labels'))
+        if group_resolution['status'] != 'resolved' or not roles_resolved:
+            from aso_agents.runtime_warnings import emit_warning
+            reasons = '; '.join(dict.fromkeys(g['reason'] for g in group_resolution['groups'] if g.get('reason')))
+            if role_resolution.get('conflicting_target_and_beneficial_labels'):
+                reasons = 'The requested target and protected groups overlap.'
+            emit_warning(
+                'Transcript-group ranking: ' + (reasons or 'Some catalog transcripts have unresolved group membership.')
+                + (' Selectivity is unavailable; the analysis order uses the remaining sequence and risk evidence.'
+                   if not roles_resolved else ' Selectivity is a conservative lower bound; unknown memberships remain explicit.'),
+                category='Isoform ranking',
+            )
 
     def role_resolved(role):
         return has_index and (role_resolution is None or role_resolution[role]['status'] == 'resolved')
@@ -28501,6 +28589,7 @@ def _annotate_gapmer_uniqueness(
             continue
         k = len(seq)
         k_index = isoform_kmers_by_len.get(k) or {}
+        has_index = bool(k_index)
         uniq_labels = set()
         uniq_labels.update(k_index.get(seq, set()))
         uniq_count = len(uniq_labels)
@@ -28510,16 +28599,26 @@ def _annotate_gapmer_uniqueness(
         other_hits = sorted(
             label for label in uniq_labels
             if label not in target_set and label not in beneficial_set and label not in pathogenic_set
+            and label not in unknown_members
         )
-        if not roles_resolved:
+        unclassified_hits = sorted((uniq_labels & unknown_members) | (
+            uniq_labels - catalog_labels if group_resolution else set()))
+        if not has_index:
+            score = None
+            uniqueness_class = None
+        elif not roles_resolved:
             score = None
             uniqueness_class = "unresolved_role_identity"
         elif target_set:
             if target_hits:
                 if beneficial_set:
-                    weighted_total = len(target_hits) + len(other_hits) + (4 * len(beneficial_hits))
+                    weighted_total = len(target_hits) + len(other_hits) + len(unclassified_hits) + (4 * len(beneficial_hits))
+                    if group_resolution:
+                        # A member of an unresolved beneficial group might be
+                        # protected. Use the same conservative penalty until known.
+                        weighted_total += 3 * len(uniq_labels & unknown_beneficial)
                     score = (float(len(target_hits)) / float(weighted_total)) if weighted_total > 0 else None
-                    uniqueness_class = "target_only" if not beneficial_hits and not other_hits else (
+                    uniqueness_class = "target_only" if not beneficial_hits and not other_hits and not unclassified_hits and not (uniq_labels & unknown_beneficial) else (
                         "target_without_beneficial" if not beneficial_hits else "target_shared_with_beneficial"
                     )
                 else:
@@ -28551,7 +28650,17 @@ def _annotate_gapmer_uniqueness(
         row["other_isoform_matches"] = other_hits if has_index and roles_resolved else None
         row["isoform_uniqueness_class"] = uniqueness_class if has_index else None
         if role_resolution is not None:
-            row["isoform_role_resolution"] = deepcopy(role_resolution)
+            row["isoform_role_resolution"] = row_role_resolution
+        if group_resolution:
+            row['isoform_group_definitions'] = group_definitions
+            row['target_isoform_catalog_size'] = len(target_set) if role_resolved('target') else None
+            row['target_group_coverage_fraction'] = (
+                len(target_hits) / len(target_set) if target_groups and roles_resolved and role_resolved('target') and target_set else None)
+            row['unclassified_isoform_matches'] = unclassified_hits if has_index else None
+            row['unclassified_isoform_match_count'] = len(unclassified_hits) if has_index else None
+            row['isoform_ranking_status'] = ('sequence_matches_unavailable' if not has_index
+                else 'group_selectivity_lower_bound' if roles_resolved and group_resolution['status'] == 'partial'
+                else 'group_selectivity' if roles_resolved else 'unresolved_group_sequence_and_risk_only')
         updated_rows.append(row)
 
     updated_rows.sort(key=_gapmer_uniqueness_sort_key)
@@ -28570,6 +28679,10 @@ def _annotate_gapmer_uniqueness(
     columns["isoform_uniqueness_class"] = "string"
     if role_resolution is not None:
         columns["isoform_role_resolution"] = "object"
+    if group_resolution:
+        columns.update(isoform_group_definitions='object', target_isoform_catalog_size='number',
+                       target_group_coverage_fraction='number', unclassified_isoform_matches='object',
+                       unclassified_isoform_match_count='number', isoform_ranking_status='string')
     tiles["rows"] = updated_rows
     tiles.setdefault("schema", {})["columns"] = columns
 
@@ -30978,6 +31091,10 @@ def _resolve_isoform_transcripts(
         and existing_isoforms
         and all(ref["resolution_status"] == "resolved" for ref in preservation_reference_context(structured_goal, existing_isoforms))
     ):
+        from aso_agents.exon_nomenclature_context import prepare_goal_exon_nomenclature
+        prepare_goal_exon_nomenclature(structured_goal)
+        from aso_agents.exon_identity_clarification import require_resolved_exon_identities
+        require_resolved_exon_identities(structured_goal)
         splice_plan, splice_comparisons = _compute_splice_site_plan(
             isoform_objectives,
             existing_isoforms,
@@ -31010,6 +31127,10 @@ def _resolve_isoform_transcripts(
     if not resolution_objectives:
         if isinstance(existing_isoforms, dict) and existing_isoforms:
             _apply_explicit_exon_overrides(structured_goal, existing_isoforms)
+            from aso_agents.exon_nomenclature_context import prepare_goal_exon_nomenclature
+            prepare_goal_exon_nomenclature(structured_goal)
+            from aso_agents.exon_identity_clarification import require_resolved_exon_identities
+            require_resolved_exon_identities(structured_goal)
             skip_splice_strategy = _should_skip_splice_strategy(structured_goal)
             splice_plan: List[Dict[str, Any]] = []
             splice_comparisons: List[Dict[str, Any]] = []
@@ -32113,6 +32234,10 @@ def _resolve_isoform_transcripts(
 
     _ensure_explicit_splice_target_context(structured_goal, final_payload)
     _apply_explicit_exon_overrides(structured_goal, isoform_transcripts)
+    from aso_agents.exon_nomenclature_context import prepare_goal_exon_nomenclature
+    prepare_goal_exon_nomenclature(structured_goal)
+    from aso_agents.exon_identity_clarification import require_resolved_exon_identities
+    require_resolved_exon_identities(structured_goal)
     skip_splice_strategy = _should_skip_splice_strategy(structured_goal)
     splice_plan: List[Dict[str, Any]] = []
     splice_comparisons: List[Dict[str, Any]] = []

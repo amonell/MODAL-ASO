@@ -4,6 +4,7 @@ import pytest
 
 import run_goal_intake as intake
 from aso_agents.pipeline_tools import _derive_exploratory_steric_programs, _program_isoform_identity_aliases
+from aso_agents.exon_identity_clarification import ExonIdentityClarification
 
 
 def _setup(monkeypatch, *, annotated=True):
@@ -39,6 +40,13 @@ def _setup(monkeypatch, *, annotated=True):
     monkeypatch.setattr(intake, "_fetch_transcript_structure", structure)
     monkeypatch.setattr(intake, "_generate_splice_strategy_analysis", lambda *_, **__: None)
     monkeypatch.setattr(intake, "_cached_authoritative_exon_nomenclature_mapping", lambda *_, **__: {"status": "ordinal_default"})
+    from aso_agents import exon_nomenclature_context
+    def verified_names(goal):
+        for entry in goal['isoform_transcripts'].values():
+            if entry.get('transcript_id') == canonical:
+                entry.setdefault('metadata', {})['exon_nomenclature_resolutions'] = {
+                    '4': {'status': 'verified_alternate_mapping', 'resolved_transcript_ordinal': 4}}
+    monkeypatch.setattr(exon_nomenclature_context, 'annotate_goal_exon_nomenclature', verified_names)
     return goal, canonical
 
 
@@ -65,8 +73,9 @@ def test_default_context_does_not_override_a_restricted_reference(restriction, m
         goal["transcript_policy"] = "user_locked"
     if restriction == "explicit_reference":
         goal["splice_isoform_objectives"][0]["transcript_id"] = "ENST00000000999"
-    result = intake._resolve_isoform_transcripts(goal, deepcopy(goal), allow_interactive=False)
-    assert canonical not in result["isoform_transcripts"]
+    with pytest.raises(ExonIdentityClarification):
+        intake._resolve_isoform_transcripts(goal, deepcopy(goal), allow_interactive=False)
+    assert canonical not in goal["isoform_transcripts"]
     assert not goal.get("default_exon_context_reference")
 
 

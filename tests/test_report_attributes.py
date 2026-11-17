@@ -69,7 +69,7 @@ def test_gene_wide_coverage_and_isoform_selectivity_have_separate_attributes():
                             row(isoform_uniqueness_score=0, isoform_uniqueness_class='non_target'),
                             row(isoform_uniqueness_score=1, isoform_uniqueness_class='unresolved_role_identity')])
     assert attribute(data, 'Isoform coverage')['values'] == [.8, None, None, None]
-    assert attribute(data, 'Uniqueness · target isoform')['values'] == [None, .5, 0, None]
+    assert attribute(data, 'Target selectivity')['values'] == [None, .5, 0, None]
 
 
 @pytest.mark.parametrize('bad', [dict(off_target_search_status='failed'), dict(off_target_mapping_capped=True),
