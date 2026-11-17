@@ -3,6 +3,7 @@ import csv
 from copy import deepcopy
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -104,7 +105,10 @@ class RecommendationBrowserTest(unittest.TestCase):
             exported = list(csv.DictReader(io.StringIO(saved.read_text())))
             expected = list(dict.fromkeys((r['aso'], r['chemistry']['notation']) for r in data['records']))
             self.assertEqual(list(dict.fromkeys((r['antisense_5to3'], r['ordering_notation']) for r in exported)), expected)
-            self.assertEqual(len(exported), 8)  # Includes both recorded bindings for the first molecule.
+            self.assertEqual(len(exported), 7)
+            evidence = [json.loads(row['context_evidence_json']) for row in exported]
+            self.assertEqual(sum(len(contexts) for contexts in evidence), 8)
+            self.assertEqual(len(evidence[0]), 2)  # Both bindings travel with the selected molecule.
             basket.locator('summary').click()
 
             for viewport in ({'width': 1280, 'height': 900}, {'width': 390, 'height': 844}, {'width': 844, 'height': 390}):

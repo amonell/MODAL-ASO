@@ -27,6 +27,23 @@ def test_regions_follow_every_binding_interval_and_leave_inputs_unchanged():
     assert result == {'regions': [[1, 37], [989, 1122]], 'rows': rows}
 
 
+def test_requested_regulatory_sites_extend_map_and_tracks_stay_bounded():
+    rows = [{'intervals': [{'start': 100, 'end': 119}]}]
+    annotations = [{'kind': 'rbp', 'label': 'RBP '+str(i), 'start': 500+i, 'end': 519+i,
+                    'evidence': 'eCLIP peak'} for i in range(1000)]
+    annotations.append({'kind': 'mirna', 'label': 'miRNA', 'start': 90, 'end': 97, 'evidence': 'Predicted site'})
+    expression = '(()=>{const rows='+json.dumps(rows)+',sites='+json.dumps(annotations)+';'
+    expression += 'const regions=bindingRegions(rows,sites),axes=bindingAxes(regions,800,16,16);'
+    expression += 'return {regions,tracks:bindingAnnotationTracks(sites,axes)};})()'
+    result = javascript(expression)
+    assert result['regions'] == [[78, 131], [488, 1530]]
+    assert len(result['tracks']) == 2
+    assert len(result['tracks'][0]['entries']) == 1000
+    for track in result['tracks']:
+        for entry in track['entries']:
+            assert entry['width'] > 0 and entry['x'] + entry['width'] <= 784.001
+
+
 @pytest.mark.parametrize('width', [320, 600, 1200])
 def test_crowded_site_labels_fit_without_overlap_and_prioritize_the_target(width):
     result = javascript('bindingLabels(' + json.dumps([

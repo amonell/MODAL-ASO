@@ -333,7 +333,8 @@ def write_assessment_artifacts(pool, selected, goal, directory, *, review=None):
     minimum = goal.get("candidate_minimum")
     shortfall = max(0,minimum-len(records)) if type(minimum) is int else 0
     shortlist = {"version":VERSION,"status":("no_recommended_candidates" if not shortlisted and pool and review.get("status") == "completed"
-        else "no_eligible_candidates" if not shortlisted else "insufficient_eligible_candidates" if shortfall else "ready"),
+        else "no_eligible_candidates" if not shortlisted else "insufficient_eligible_candidates" if shortfall
+        else "provisional" if review.get('status') in {'pending', 'unavailable', 'skipped'} else "ready"),
         "review": review,
         "ranking_use":{"off_target":"Comparable search scopes, count units and tissue evidence only",
             "motifs":"Only applicable or explicit user flags affect ordering; published flags never imply universal toxicity",

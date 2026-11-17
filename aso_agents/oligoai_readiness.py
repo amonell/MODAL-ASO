@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import subprocess
+import sys
 
 from .paths import oligoai_root, save_settings
 
@@ -60,6 +61,52 @@ def register_existing(root):
     save_settings({"oligoai_root": result["root"]})
     return {**result, "registered": True,
             "next_step": "Run modal-aso doctor --require-model oligoai in the environment that will execute the request."}
+
+
+def _install_for_run(root: Path, log_path: Path) -> None:
+    """Use the existing pinned installer, keeping its output off the live timer."""
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]),
+               PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1")
+    env.pop("PYTHONHOME", None)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w") as log:
+        subprocess.run(
+            [sys.executable, "-m", "aso_agents.oligoai_runtime", "--root", str(root)],
+            env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+            check=True,
+        )
+
+
+def ensure_installation_for_prediction(root, directory):
+    """Offer setup when uncached, eligible predictions need missing assets."""
+    result = inspect_installation(root)
+    if result["status"] == "installed":
+        return result
+    from .runtime_warnings import emit_progress, emit_warning, request_model_installation
+
+    root = Path(root).expanduser().resolve()
+    if not request_model_installation("OligoAI", str(root), result["detail"]):
+        raise OligoAIUnavailable(result["detail"])
+    log_path = Path(directory) / "installation.log"
+    emit_progress("Installing OligoAI for gapmer efficacy predictions.")
+    try:
+        _install_for_run(root, log_path)
+        result = inspect_installation(root)
+        if result["status"] != "installed":
+            raise RuntimeError(result["detail"])
+    except Exception as exc:
+        detail = str(exc)
+        if isinstance(exc, subprocess.CalledProcessError) and log_path.is_file():
+            lines = log_path.read_text(errors="replace").strip().splitlines()
+            if lines:
+                detail = lines[-1]
+        message = (f"OligoAI installation failed: {detail}. "
+                   f"Continuing without gapmer efficacy predictions. Installation log: {log_path}. "
+                   "Retry setup with modal-aso setup --features oligoai.")
+        emit_warning(message, category="OligoAI")
+        raise OligoAIUnavailable(message) from exc
+    emit_progress("OligoAI is ready. Predicting gapmer efficacy.")
+    return result
 
 
 def require_oligoai():

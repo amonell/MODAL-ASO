@@ -1,15 +1,34 @@
 """Geometry for readable offline binding maps, independent of the design type."""
 
 BINDING_MAP_SCRIPT = r'''
-function bindingRegions(rows){
+function bindingRegions(rows,annotations=[]){
  // Recorded safeguards can be far from any ASO. Only binding intervals set
- // the map extent; the complete site catalog remains available separately.
- const intervals=rows.flatMap(r=>r.intervals.map(p=>[Math.max(1,p.start-12),p.end+12])).sort((a,b)=>a[0]-b[0]);
+ // the map extent, together with requested regulatory regions. Distant
+ // safeguards remain in their separate catalog rather than shrinking the map.
+ const intervals=[...rows.flatMap(r=>r.intervals),...annotations]
+  .map(p=>[Math.max(1,p.start-12),p.end+12]).sort((a,b)=>a[0]-b[0]);
  const regions=[];
  for(const interval of intervals){const last=regions.at(-1);
   if(last&&interval[0]<=last[1]+70)last[1]=Math.max(last[1],interval[1]);else regions.push(interval.slice());
  }
  return regions;
+}
+const bindingFeatureColors={utr5:'#83b7cb',cds:'#386777',utr3:'#e7ae58',noncoding:'#b9b0cf',unknown:'#c9d6dc'};
+const bindingSiteColors={rbp:'#7857a8',mirna:'#be526f'};
+function bindingAnnotationTracks(sites,axes){
+ // Two bounded tracks, independent of candidate count. Overlapping source
+ // intervals retain exact geometry and remain individually readable in the
+ // evidence table and pointer details; they do not create unbounded lanes.
+ return ['rbp','mirna'].map(kind=>{
+  const entries=sites.filter(s=>s.kind===kind).flatMap(site=>axes.flatMap(a=>{
+   const lo=Math.max(site.start,a.a),hi=Math.min(site.end,a.b);
+   return hi<lo?[]:[{site,x:a.x+(lo-a.a)/(a.b-a.a+1)*a.width,width:(hi-lo+1)/(a.b-a.a+1)*a.width}];
+  }));
+  const labels=[...new Set(entries.map(e=>e.site.label))],evidence=[...new Set(entries.map(e=>e.site.evidence))];
+  const prefix=kind==='rbp'?'RBP':'miRNA';
+  return {kind,entries,color:bindingSiteColors[kind],label:prefix+' · '+
+   (labels.length===1?labels[0]:labels.length+' targets')+(evidence.length===1?' · '+evidence[0]:'')};
+ }).filter(track=>track.entries.length);
 }
 function bindingAxes(regions,width,left,right,gap=36){
  gap=Math.min(gap,(width-left-right)/Math.max(1,regions.length)/4);

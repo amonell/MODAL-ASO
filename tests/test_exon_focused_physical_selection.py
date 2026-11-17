@@ -4,9 +4,9 @@ from aso_agents.pipeline_tools import (_annotate_requested_exon_proximity,
 
 def _goal():
     return {'design_programs': [{'program_id': 'program-a', 'focus_exons_only': True,
-             'transcript_id': 'ENST000001.1', 'exon_label': 6,
+             'transcript_id': 'ENST000001.1', 'exon_index': 6,
              'anchor_site_records': [{'chrom': 'chr1', 'position': 500, 'site_kind': 'donor'}]}],
-            'isoform_transcripts': {'ENST000001.1': {'exons_tx': [
+            'isoform_transcripts': {'ENST000001.1': {'transcript_id': 'ENST000001.1', 'chrom': 'chr1', 'exons_tx': [
                 {'index': 6, 'start': 500, 'end': 570, 'seq_region_name': 'chr1'},
                 {'index': 7, 'start': 800, 'end': 870, 'seq_region_name': 'chr1'}]}}}
 

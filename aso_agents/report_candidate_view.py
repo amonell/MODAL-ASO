@@ -80,7 +80,7 @@ def panel_check_records(section, sections):
     Ambiguous, reordered, partial or repeated panels retain separate tables.
     """
     panels = section_tables(section)
-    checks = [table for item in sections if item['heading'].casefold() == 'recommended shortlist'
+    checks = [table for item in sections if item['heading'].casefold() in {'recommended shortlist', 'provisional panel'}
               for table in section_tables(item)]
     if len(panels) != 1 or len(checks) != 1:
         return []

@@ -234,6 +234,7 @@ CANONICAL_GOAL_COLLECTION_FIELDS = {
             "end",
             "execution_policy",
             "exon_label",
+            "exon_index",
             "exon_labels",
             "flanks",
             "focus_exons_only",
@@ -303,6 +304,7 @@ CANONICAL_GOAL_COLLECTION_FIELDS = {
             "desired_abundance",
             "desired_effect",
             "exon_label",
+            "exon_index",
             "exon_labels",
             "isoform_label",
             "junction_changes",
@@ -367,6 +369,8 @@ _EVALUATION_SPLICE_RELATIVE_WINDOW_SCHEMA["properties"]["exon_index"] = {
     "type": "integer", "minimum": 1,
     "description": "Explicit one-based transcript annotation exon ordinal, distinct from the biological exon_label.",
 }
+_SPLICE_RELATIVE_WINDOW_SCHEMA['properties']['exon_index'] = deepcopy(
+    _EVALUATION_SPLICE_RELATIVE_WINDOW_SCHEMA['properties']['exon_index'])
 _EVALUATION_SPLICE_RELATIVE_WINDOW_SCHEMA["description"] = (
     "Evaluation feature interval relative to a transcript exon splice boundary. "
     "Identify the anchor with reference_transcript_id and exon_index or exon_label. "
@@ -589,6 +593,8 @@ _AGGREGATE_CLASS_SCHEMA = _closed_object(
             "enum": ["exon_presence", "role", "residual_other_isoforms"],
         },
         "exon_label": deepcopy(_STRING_OR_INTEGER_SCHEMA),
+        "exon_index": {"type": "integer", "minimum": 1,
+                       "description": "Transcript-order exon explicitly identified by the user; preserve the requested biological label separately."},
         "presence": {"type": "string", "enum": ["included", "excluded"]},
         "role": {
             "type": "string",
@@ -600,6 +606,8 @@ _AGGREGATE_CLASS_SCHEMA = _closed_object(
 _EXPLICIT_SPLICE_TARGET_SCHEMA = _closed_object(
     {
         "chrom": {"type": "string"},
+        "genome_build": {"type": "string"},
+        "reference_transcript_id": {"type": "string"},
         "start": {
             "type": "integer",
             "minimum": 1,
@@ -631,6 +639,7 @@ _SITE_DIRECTION_HINT_SCHEMA = _closed_object(
         "site_hint": {"type": "string"},
         "desired_delta": {"type": "string", "enum": ["increase", "decrease"]},
         "exon_label": deepcopy(_STRING_OR_INTEGER_SCHEMA),
+        "exon_index": {"type": "integer", "minimum": 1},
         "notes": {"type": "string"},
     }
 )
@@ -653,6 +662,7 @@ CANONICAL_REGION_CONSTRAINT_FIELDS = frozenset(
         "coordinate_convention",
         "coordinate_space",
         "exon_label",
+        "exon_index",
         "exon_numbering_transcript_id",
         "feature_name",
         "gene_symbol",
@@ -699,6 +709,7 @@ _REGION_CONSTRAINT_SCHEMA = {
         "coordinate_convention": {"type": "string"},
         "coordinate_space": {"type": "string", "enum": ["genomic", "cdna"], "description": "Origin of the supplied interval numbers. Mature-RNA/transcript positions are cdna even when a genome assembly is named. Preserve this origin independently of zero/one-based indexing."},
         "exon_label": {"type": ["string", "integer"]},
+        "exon_index": {"type": "integer", "minimum": 1},
         "exon_numbering_transcript_id": {"type": "string"},
         "feature_name": {"type": "string", "enum": ["start_codon", "cds"]},
         "gene_symbol": {"type": "string"},
@@ -1182,7 +1193,7 @@ CANONICAL_GOAL_FIELD_SEMANTICS = {
     "target_scope": "Whether targeting is isoform-specific or gene-wide.",
     "transcript_lock": "An explicitly user-locked transcript and its provenance.",
     "transcript_policy": "Whether transcript selection is user-locked or delegated to the platform.",
-    "aggregate_class": "Named aggregate isoform class addressed by an isoform objective.",
+    "aggregate_class": "Typed membership definition for a group of isoforms. A reference accession locates the defining feature and must not replace the group with one transcript.",
     "chrom": "Chromosome or contig for a genomic target.",
     "coordinate_convention": "Coordinate indexing and interval-boundary convention supplied by the user or source.",
     "coordinate_space": "Whether target coordinates are genomic or transcript cDNA coordinates.",
@@ -1583,6 +1594,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- When the user asks to spare, preserve, protect, or avoid changing a named gene, transcript, or isoform, add one preservation_targets item per protected entity. Set action='preserve', set preservation_target_type to exactly 'gene', 'transcript', or 'isoform', and store its identity in gene_symbol, transcript_id, or isoform_label. Do not represent a preservation constraint as increase/decrease, and do not leave it only in objective, label, notes, assumptions, or request prose.\n"
     "- Use patient_variant for a user-supplied variant that defines the patient, disease, or target sequence context, whether or not the requested ASO must discriminate between alleles. Preserve the supplied notation without inventing an accession; downstream authoritative resolution qualifies a bare or gene-qualified cDNA coordinate against an explicit reference accession when available or a source-backed canonical transcript otherwise. The presence of patient_variant alone does not imply allele-specific targeting. Add constraints.allele_specific only when request or clarification evidence explicitly requires selecting a target allele while avoiding a non-target allele; in that case, preserve target_allele, non_target_allele, and require_variant_overlap there.\n"
     "- Treat exon_label, exon_labels, and requested_exon_label as request-nomenclature fields. Preserve the exact biological label or ordered labels stated by the user; they are not storage for a resolver's structural transcript-exon index. Public annotation, declared artifacts, and resolved coordinates may map a requested label to a different internal exon index for execution, but they must not renumber the request-facing fields. Keep the requested label in the canonical goal and let explicit target coordinates or downstream resolution metadata carry the structural mapping. Change request nomenclature only when the user request or a later user clarification explicitly supplies the replacement label.\n"
+    "- When the user clarifies a physical exon, preserve the original exon_label. Record an explicitly confirmed transcript-order number as exon_index in the relevant program, evaluation target, region constraint or aggregate_class, together with its reference transcript. A biological exon number alone never supplies exon_index. For a complete genomic exon interval, use explicit_splice_targets with exon_label, reference_transcript_id, chrom, start, end and genome_build. Binding windows remain region_constraints. If a requested feature remains unresolved after public lookup, ask the user to identify its physical exon before design or recommendation; never choose an annotation-order fallback.\n"
     "- For either gapmer or steric programs, distinguish isoform identity from required ASO binding location. An exon-included or exon-skipped description identifies an isoform outcome; it does not require binding within that exon or the same ordinal on another transcript. Preserve the typed isoform/transcript outcome and use targeting_policy='default_exploratory' unless the user separately requires a binding region. For an explicit exon, feature, interval or junction binding requirement, use targeting_policy='explicit_user_region' and preserve its typed location/constraints. Do not manufacture exon-body containment from an isoform name.\n"
     "- A requested splice product defined by an alternative acceptor or donor has its own specific_isoform objective with isoform_label, reference_accession for the parent template, and junction_changes for the changed boundaries. Preserve genomic motif intervals as coordinate_role='splice_dinucleotide' with start/end and the supplied coordinate_convention; preserve an explicitly supplied exon-edge base as coordinate_role='exon_boundary' with position. Omit junction_changes[*].strand when the user has not supplied it: the host resolves orientation from the verified parent reference, checks any supplied strand against it, converts motif coordinates to exonic boundaries, and derives the complete exon span. Transcript strand does not require an intake clarification or source-retrieval step. Do not assign the parent transcript_id to this product or resolve the product to an unchanged public transcript. Bind a program for that product through its isoform_label; keep the parent on transcript_lock. An aggregate exon-included/excluded class remains aggregate_class even when a transcript_id locates its exon.\n"
     "- An exon-to-exon junction named by its two endpoint exons must preserve both ordered exon labels at design_programs[*].exon_labels and as distinct evaluation_targets items with numeric exon_label values. Never collapse a junction pair into one endpoint or encode the pair as a compound exon_label string.\n"
@@ -1590,6 +1602,7 @@ CANONICAL_DESIGN_GOAL_INSTRUCTIONS = (
     "- For a coupled multi-species design, species is one anchor organism used for primary reference resolution, while species_targets and cross_species_requirement.species preserve the complete requested organism set. The anchor must be one member of that set. Never concatenate, join, or invent a composite species name. Do not split a coupled conservation objective into separate tasks merely to represent its organisms.\n"
     "- Distinguish missing user intent from source-resolvable execution facts. When the request supplies a biological target and organism plus a reference-selection policy or resolvable scope, preserve that scope and let downstream authoritative resolution obtain the accession, annotation, sequence, and coordinates. Use transcript_policy='agent_choice' when the evidence delegates reference selection. Do not ask the user to provide public-reference identifiers, sequences, or coordinates merely because they are absent from request evidence. Clarify only when a material user-specific choice remains ambiguous or no supplied identity can be resolved.\n"
     "- Use isoform_scope_source='user_specified' when the isoform scope is explicitly supplied by the user, 'resolver_inferred' when it comes from transcript resolution, and 'default_exon_splice_context' for an exon splice objective without a separately stated isoform-abundance outcome, including when the exon is located using a user-specified reference transcript. Use no other value and omit this optional field when its provenance is unsupported.\n"
+    "- For knockdown or preservation of all transcripts containing or excluding an exon, use objective_scope='aggregate_class' and aggregate_class={basis:'exon_presence', exon_label:<requested name>, presence:'included'|'excluded'}. This applies to gapmers as well as splice designs. Preserve the class through transcript clarification: an accession supplied to identify its exon is only the numbering reference, never a substitute specific_transcript or specific_isoform objective. Do not infer class membership from a biological nickname. Keep unknown membership explicit until the defining feature is verified.\n"
     "- Canonical biological genomic coordinates in evaluation_targets, explicit_splice_targets, and design_program target fields are one-based and inclusive, matching genomic coordinates presented in ordinary user requests and transcript annotations. Preserve the supplied biological start and end there. BED conversion is scoped only to region_constraints[*].intervals_bed0_half_open: for a one-based inclusive interval [s,e], that row is [s-1,e). Never copy a BED0 start back into a biological target object. The synthesis pass and every semantic audit pass must treat a one-base start discrepancy between these representations as a contract error and repair the biological target from request evidence.\n"
     "- explicit_splice_targets describes complete exon spans: its boundaries can replace or insert an exon in a constructed transcript model. Omit it for ordinary annotated splice-site targeting unless the evidence explicitly supplies the complete exon span. Keep annotated exon/site identity in evaluation_targets and ASO enumeration windows, junction flanks, and required overlap footprints in region_constraints. A window around an exon boundary is not the exon itself; never copy such a window into explicit_splice_targets or classify it as target_type='exon'. Preserve each interval's stated role in synthesis and every semantic audit.\n"
     "- For explicitly supplied genomic intervals, preserve one labeled entry per interval in evaluation_targets. Coordinates in a source describe target identity or context; they do not by themselves prove that the user requested an executable overlap filter. Create a region_constraints entry only when request or clarification evidence explicitly makes the interval an execution constraint and supports the entry's required overlap semantics. For an exact splice_relative_window requested for ASO tiling, the declared platform default is full_containment when the window itself is the target and any_overlap when the window represents a separately named embedded feature; an explicit supported user policy always overrides that default. When an explicit genomic-row constraint is supported, use source_type='explicit_rows', coordinate_space='genomic', and intervals_bed0_half_open containing the corresponding converted chrom/start/end/strand rows; preserve an explicitly supplied genome build, coordinate convention, aso_overlap_requirement, and minimum_overlap_bp. Otherwise omit the optional region_constraints entry while retaining the interval as target identity/context. Do not put chrom, strand, genome-build, overlap, or GC aliases inside design_programs.\n"

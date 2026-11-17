@@ -162,7 +162,7 @@ def _run(argv):
             os.environ["ASO_RUNS_DIR"] = str(output_root)
     from .cli_progress import TerminalProgress
     is_help = any(flag in remainder for flag in ("--help", "-h"))
-    startup = TerminalProgress(sys.stdout)
+    startup = TerminalProgress(sys.stdout, animate="--raw-cli" not in remainder)
     if not is_help:
         startup.write("Starting MODAL-ASO...\n")
     with (nullcontext() if is_help else startup.running("Preparing the runtime")):

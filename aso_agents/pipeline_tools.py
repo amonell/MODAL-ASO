@@ -1996,6 +1996,7 @@ def _run_agentic_pipeline_to_terminal(
         agentic_result = run_agentic_pipeline(
             user_request=user_request,
             skip_router=bool(flags.get("skip_router", False)),
+            skip_shortlist=bool(flags.get("skip_shortlist", False)),
             skip_ensembl_check=bool(flags.get("skip_ensembl_check", False)),
             router_max_steps=int(flags.get("router_max_steps") or 25),
             router_log_tool_calls=bool(flags.get("router_log_tool_calls", False)),
@@ -17681,6 +17682,10 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
     from .input_file_roles import (
         declared_candidate_files, with_file_role_schema, apply_file_role_checks,
     )
+    from .task_scope_review import (
+        declared_task_scopes, with_task_scope_schema, apply_task_scope_checks,
+        has_scope_revision, scope_evidence_errors,
+    )
     evidence_sources = _declared_evidence_sources_from_prompt(prompt)
     span_map = _evidence_span_map(evidence_sources)
     schema = _schema_with_allowed_evidence_refs(
@@ -17690,6 +17695,22 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
     )
     files = declared_candidate_files(prompt)
     schema = with_file_role_schema(schema, files)
+    tasks = declared_task_scopes(prompt)
+    schema = with_task_scope_schema(schema, tasks)
+
+    def review_contract_errors(payload):
+        # Scope discrepancies are compiled into ordinary issues after citation
+        # materialization, like input-role discrepancies. They may be the sole
+        # reason for requesting a revision.
+        normalized = deepcopy(payload)
+        if (has_scope_revision(normalized, tasks)
+                and normalized.get("status") == "revise" and not normalized.get("issues")):
+            normalized["status"] = "valid"
+        errors = _request_graph_review_contract_errors(normalized, schema)
+        if not errors:
+            errors.extend(scope_evidence_errors(normalized, evidence_sources, span_map))
+        return errors
+
     agent = _agent_with_strict_output_schema(
         request_graph_review_agent,
         schema_name="aso_request_graph_review_evidence_bound",
@@ -17700,15 +17721,13 @@ async def _run_request_graph_review_agent_once(prompt: str) -> Dict[str, Any]:
         prompt=prompt,
         schema=schema,
         error_prefix="request_graph_review_agent",
-        contract_validator=lambda payload: _request_graph_review_contract_errors(
-            payload,
-            schema,
-        ),
+        contract_validator=review_contract_errors,
     )
     if str(reviewed.get("error") or "").strip():
         return reviewed
     materialized = _materialize_evidence_span_ids(reviewed, span_map)
     materialized = apply_file_role_checks(materialized, files)
+    materialized = apply_task_scope_checks(materialized, tasks)
     errors = _request_graph_review_contract_errors(materialized)
     if errors:
         return {
@@ -18493,63 +18512,45 @@ async def _run_verified_request_workbench_agent_once(
             if str(planned.get("error") or "").strip():
                 return planned
             continue
-        review_prompt = _request_graph_review_prompt(decision_evidence, envelope)
-        review = await _run_request_graph_review_agent_once(review_prompt)
-        if str(review.get("error") or "").strip():
-            return review
-        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
-        if evidence_errors:
+        # An adjudicator can reject a no-op issue, but that does not discharge
+        # the independent coverage pass. Both reviews must accept every plan.
+        for review_index, review_prompt in enumerate((
+            _request_graph_review_prompt(decision_evidence, envelope),
+            _request_graph_operation_coverage_review_prompt(decision_evidence, envelope),
+        )):
             review = await _run_request_graph_review_agent_once(
-                _request_graph_review_retry_prompt(
-                    review_prompt,
-                    review,
-                    evidence_errors,
-                )
+                review_prompt,
             )
-            if str(review.get("error") or "").strip():
-                return review
-            evidence_errors = _request_graph_review_evidence_errors(
-                review,
-                decision_evidence,
-            )
-            if evidence_errors:
-                return {
-                    "error": "request_graph_review_unverified_evidence",
-                    "reason": "; ".join(evidence_errors),
-                }
-        if str(review.get("status") or "").strip().lower() == "valid":
-            review_prompt = _request_graph_operation_coverage_review_prompt(
-                decision_evidence,
-                envelope,
-            )
-            review = await _run_request_graph_review_agent_once(review_prompt)
             if str(review.get("error") or "").strip():
                 return review
             evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
+            if evidence_errors and review_index == 0:
+                review = await _run_request_graph_review_agent_once(
+                    _request_graph_review_retry_prompt(review_prompt, review, evidence_errors)
+                )
+                if str(review.get("error") or "").strip():
+                    return review
+                evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
             if evidence_errors:
                 return {
                     "error": "request_graph_review_unverified_evidence",
                     "reason": "; ".join(evidence_errors),
                 }
-            if str(review.get("status") or "").strip().lower() == "valid":
-                if planned_status != "ready":
-                    return planned
-                return await _finalize_verified_request_plan(
-                    decision_evidence,
-                    planned,
+            if str(review.get("status") or "").strip().lower() != "valid":
+                review = await _run_request_graph_review_adjudicator_once(
+                    _request_graph_review_adjudication_prompt(review_prompt, review)
                 )
-        review = await _run_request_graph_review_adjudicator_once(
-            _request_graph_review_adjudication_prompt(review_prompt, review)
-        )
-        if str(review.get("error") or "").strip():
-            return review
-        evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
-        if evidence_errors:
-            return {
-                "error": "request_graph_review_unverified_evidence",
-                "reason": "; ".join(evidence_errors),
-            }
-        if str(review.get("status") or "").strip().lower() == "valid":
+                if str(review.get("error") or "").strip():
+                    return review
+                evidence_errors = _request_graph_review_evidence_errors(review, decision_evidence)
+                if evidence_errors:
+                    return {
+                        "error": "request_graph_review_unverified_evidence",
+                        "reason": "; ".join(evidence_errors),
+                    }
+                if str(review.get("status") or "").strip().lower() != "valid":
+                    break
+        else:
             if planned_status != "ready":
                 return planned
             return await _finalize_verified_request_plan(
@@ -28753,23 +28754,18 @@ def _annotate_requested_exon_proximity(rows: List[Dict[str, Any]], structured_go
     transcripts = structured_goal.get("isoform_transcripts") or {}
     if not isinstance(programs, list) or not isinstance(transcripts, dict):
         return
+    from .exon_nomenclature_context import resolved_exon_requests
+    identities = resolved_exon_requests(structured_goal)
     scoped = {}
     for program in programs:
         if not isinstance(program, dict) or not program.get("focus_exons_only"):
             continue
-        transcript_id = str(program.get("transcript_id") or "").strip()
-        transcript = transcripts.get(transcript_id)
-        if not isinstance(transcript, dict):
-            transcript = next((item for key, item in transcripts.items()
-                               if str(key).split('.')[0] == transcript_id.split('.')[0]
-                               and isinstance(item, dict)), None)
-        if not isinstance(transcript, dict):
-            continue
-        labels = program.get("exon_labels") or [program.get("exon_label")]
-        labels = {_optional_int(value) for value in labels}
-        labels.discard(None)
-        exons = [exon for exon in transcript.get("exons_tx") or []
-                 if isinstance(exon, dict) and _optional_int(exon.get("index")) in labels]
+        exons = [{'start': feature['start'], 'end': feature['end'],
+                  'seq_region_name': feature.get('chrom')}
+                 for feature in identities
+                 if feature.get('program_id') == program.get('program_id')
+                 and feature['status'] in {'verified_biological_label', 'explicit_transcript_ordinal',
+                                          'explicit_feature_coordinates', 'verified_structural_event'}]
         if not exons:
             continue
         anchors = [record for record in program.get("anchor_site_records") or []
@@ -29105,6 +29101,8 @@ def _compact_candidate_row_for_ranking(row: Dict[str, Any]) -> Dict[str, Any]:
     kept["recorded_scientific_fields"] = {key: deepcopy(row[key]) for key in (
         "role_assignments",
         "isoform_uniqueness_score", "isoform_uniqueness_class", "isoform_coverage_fraction",
+        "isoform_group_definitions", "isoform_ranking_status", "target_isoform_catalog_size",
+        "target_group_coverage_fraction", "unclassified_isoform_match_count", "unclassified_isoform_matches",
         "isoform_hit_count", "isoform_total", "isoform_uniqueness_target_hits", "isoform_uniqueness_beneficial_hits",
         "off_target_gene_count", "off_target_exact_count_unit", "off_target_count_scope", "off_target_count_status",
         "selection_rank", "selection_score_components", "knockdown_proxy_rank", "knockdown_proxy_score_components",
@@ -29264,6 +29262,11 @@ def _compact_existing_aso_evaluation_for_response(payload: Dict[str, Any]) -> Di
                 _first_measured_value(row, "Off_target_expression_weighted_risk", "off_target_expression_weighted_risk")
             ),
             "isoform_uniqueness_score": row.get("isoform_uniqueness_score"),
+            "isoform_group_definitions": row.get("isoform_group_definitions"),
+            "isoform_ranking_status": row.get("isoform_ranking_status"),
+            "target_isoform_catalog_size": row.get("target_isoform_catalog_size"),
+            "target_group_coverage_fraction": row.get("target_group_coverage_fraction"),
+            "unclassified_isoform_match_count": row.get("unclassified_isoform_match_count"),
             "isoform_uniqueness_count": row.get("isoform_uniqueness_count"),
             "isoform_hit_count": _first_measured_value(row, "isoform_hit_count", "isoform_uniqueness_count"),
             "isoform_uniqueness_class": row.get("isoform_uniqueness_class"),
@@ -29825,6 +29828,14 @@ def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations
     context = _goal_payload_context(run_dir)
     structured_goal = context.get("structured_goal") if isinstance(context.get("structured_goal"), dict) else {}
     final_payload = context.get("final_payload") if isinstance(context.get("final_payload"), dict) else {}
+    if review_recommendations:
+        # Resumed runs can arrive here without passing through reference resolution.
+        # Publish identity evidence before selection; offline export reuses it.
+        from .exon_nomenclature_context import prepare_goal_exon_nomenclature
+        prepare_goal_exon_nomenclature(structured_goal)
+        from .exon_identity_clarification import require_resolved_exon_identities
+        require_resolved_exon_identities(structured_goal)
+        _save_goal_payload(run_dir, context.get('payload') or {}, structured_goal, final_payload)
     candidate_rows = _collect_generated_candidate_rows(run_dir, structured_goal=structured_goal)
     branches = _build_branch_outcomes_for_report(structured_goal, final_payload)
     completed_empty = bool(branches) and all(
@@ -29893,6 +29904,8 @@ def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations
     else:
         eligible_rows = list(normalized_rows)
     _annotate_requested_exon_proximity(eligible_rows, structured_goal)
+    from .exon_nomenclature_context import annotate_candidate_exon_identity
+    annotate_candidate_exon_identity(eligible_rows, structured_goal)
     from .chemical_identity import attest_candidate_rows
     from .candidate_assessment import assess_candidates, write_assessment_artifacts
     assessment_pool = assess_candidates(attest_candidate_rows(eligible_rows, structured_goal), structured_goal)
@@ -29912,7 +29925,8 @@ def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations
             rows, goal, directory=generated_set_path.parent,
             region_status=global_region_filter["status"],
             persisted=gapmer_results.get("candidate_selection")),
-        allow_model_calls=review_recommendations, retry_failed=retry_recommendations)
+        allow_model_calls=review_recommendations, retry_failed=retry_recommendations,
+        skip_shortlist=(final_payload.get("execution_options") or {}).get("skip_shortlist") is True)
     persisted_total_count = persisted_required_filter.get("total_count")
     unfiltered_row_count = int(
         persisted_total_count
@@ -33540,6 +33554,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
         declared["requested_design_workbooks"] = [{"path": path, "task_id": bindings[Path(path)][0]}
                                                    for path in source_bound_workbooks]
     (directory / "declared_inputs.json").write_text(json.dumps(declared, indent=2))
+    from .analysis_process import analysis_timeout_seconds
+    execution_timeout = analysis_timeout_seconds()
     result = execute_analysis_program(
         directory=directory,
         payload={"operation": "render_requested_outputs", "task_type": "sandbox_analysis",
@@ -33547,7 +33563,8 @@ def _materialize_requested_final_outputs(state: Dict[str, Any], run_dir: str) ->
                  "declared_inputs": declared, "execution_root": str(directory),
                  "source_bound_design_workbooks": source_bound_workbooks,
                  "native_export_sources": native_sources,
-                 "resource_limits": {"timeout_seconds": None}, "require_tabular_report_views": True},
+                 "resource_limits": {"timeout_seconds": execution_timeout}, "require_tabular_report_views": True},
+        timeout_seconds=execution_timeout,
         generate=_run_sandbox_analysis_sync, required_outputs=pending,
         review_program=_run_analysis_contract_review_sync,
         first_review_repair=True,
@@ -37369,6 +37386,15 @@ _PROVIDED_ASO_SCORED_TILE_FIELDS: Tuple[str, ...] = (
     "other_isoform_matches",
     "isoform_uniqueness_class",
     "isoform_role_resolution",
+    "isoform_group_definitions",
+    "isoform_ranking_status",
+    "target_isoform_catalog_size",
+    "target_group_coverage_fraction",
+    "unclassified_isoform_match_count",
+    "unclassified_isoform_matches",
+    "isoform_catalog_size",
+    "isoform_coverage_fraction",
+    "isoform_score_definition",
     "selection_rank",
     "selection_score_components",
 )
@@ -37628,7 +37654,9 @@ def _merge_scored_tiles_into_provided_asos(
             continue
         for field in _PROVIDED_ASO_SCORED_TILE_FIELDS:
             if (scored.get(field) not in (None, "", [], {}) or
-                    field in {"off_target_incomplete_reasons", "off_target_reference_coverage"} and field in scored):
+                    (field in {"off_target_incomplete_reasons", "off_target_reference_coverage"}
+                     or field.startswith(('isoform_', 'target_isoform_', 'target_group_', 'beneficial_isoform_',
+                                          'pathogenic_isoform_', 'other_isoform_', 'unclassified_isoform_'))) and field in scored):
                 entry[field] = deepcopy(scored[field])
         if scored.get("off_target_count_status") in {"incomplete", "unavailable", "not_run"}:
             for field in ("off_target_gene_count", "Off_target_exact_count", "Times_mapped_off_target_genes",
@@ -37660,6 +37688,11 @@ def _merge_scored_tiles_into_provided_asos(
                 "status": "pass",
                 "reason_code": "provided_aso_isoform_uniqueness",
             }
+        if scored.get('isoform_ranking_status') in {'unresolved_group_sequence_and_risk_only', 'sequence_matches_unavailable'}:
+            stage_results['uniqueness_scoring'] = {
+                'status': 'unavailable', 'reason_code': scored['isoform_ranking_status']}
+        elif scored.get('isoform_ranking_status') == 'group_selectivity_lower_bound':
+            stage_results['uniqueness_scoring']['reason_code'] = 'provided_aso_group_selectivity_lower_bound'
         if scored.get("selection_rank") is not None:
             stage_results["ranking"] = {
                 "status": "pass",
@@ -37886,6 +37919,7 @@ def _score_provided_asos_with_existing_pipeline(
                                     or (eval_goal.get('isoform_transcripts') or {}).get(label) or {}
                                     for label in cdna_map},
                 resolved_transcripts=eval_goal.get('isoform_transcripts') or {},
+                structured_goal=eval_goal,
             )
             if uniq_path:
                 scored_path = str(uniq_path)
@@ -43051,6 +43085,7 @@ def initialize_run_state(
     request: str,
     skip_router: bool = False,
     skip_ensembl_check: bool = False,
+    skip_shortlist: bool = False,
     router_max_steps: int = 25,
     router_log_tool_calls: bool = False,
     router_debug_dir: str = "",
@@ -43096,6 +43131,7 @@ def initialize_run_state(
         "request": request_text,
         "flags": {
             "skip_router": bool(skip_router),
+            "skip_shortlist": bool(skip_shortlist),
             "skip_ensembl_check": bool(skip_ensembl_check),
             "router_max_steps": int(router_max_steps),
             "router_log_tool_calls": bool(router_log_tool_calls),
@@ -44676,6 +44712,7 @@ def tool_execute_design_task(state_path: str) -> Dict[str, Any]:
         init_result = initialize_run_state(
             request=scoped_request,
             skip_router=bool(flags.get("skip_router", False)),
+            skip_shortlist=bool(flags.get("skip_shortlist", False)),
             skip_ensembl_check=bool(flags.get("skip_ensembl_check", False)),
             router_max_steps=int(flags.get("router_max_steps") or 25),
             router_log_tool_calls=bool(flags.get("router_log_tool_calls", False)),
@@ -45974,8 +46011,11 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
                         f"the generated analysis reports {field}=0. Read the declared "
                         "completed_design_candidates rows or their source_json_path using its actual schema."
                     )
+    from .analysis_process import analysis_timeout_seconds
+    execution_timeout = analysis_timeout_seconds()
     execution = execute_analysis_program(
         directory=sandbox_dir,
+        timeout_seconds=execution_timeout,
         payload={
             "task_type": str(prepared["task"].get("task_type") or "sandbox_analysis"),
             "request_text": analysis_request_text,
@@ -45984,7 +46024,7 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
             "request_envelope": response_request_envelope,
             "declared_inputs": declared_inputs,
             "execution_root": str(sandbox_dir),
-            "resource_limits": {"timeout_seconds": None},
+            "resource_limits": {"timeout_seconds": execution_timeout},
             "require_tabular_report_views": True,
         },
         generate=_run_sandbox_analysis_sync,
@@ -46016,7 +46056,7 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
         "stderr_path": str(stderr_path),
         "sandbox_result_path": str(result_path),
         "sandbox_summary_path": str(summary_path),
-        "resource_limits": {"timeout_seconds": None},
+        "resource_limits": {"timeout_seconds": execution_timeout},
         "exit_code": exit_code,
         "execution_attempts": execution["attempts"],
         "requested_outputs": [str(path) for path in requested_paths],
@@ -46963,6 +47003,9 @@ def tool_resolve_isoforms_and_sites(
             user_evidence_text="\n".join(verified_user_evidence),
         )
     except Exception as exc:
+        from .exon_identity_clarification import ExonIdentityClarification
+        if isinstance(exc, ExonIdentityClarification):
+            return _request_exon_identity_clarification(state_path, run_dir, payload, structured_goal, final_payload, exc)
         from .design_event_consistency import ExonConversionConflict
         if isinstance(exc, ExonConversionConflict):
             _save_goal_payload(run_dir, payload, structured_goal, final_payload)
@@ -48328,6 +48371,11 @@ def tool_materialize_region_constraints(
                 final_payload["design_programs"] = deepcopy(structured_goal.get("design_programs"))
                 _save_goal_payload(run_dir, payload, structured_goal, final_payload)
 
+    if structured_goal.get("isoform_transcripts"):
+        clarification = _prepare_exon_identity_for_execution(state_path, run_dir, payload, structured_goal, final_payload)
+        if clarification:
+            return clarification
+
     existing_summary = (
         (structured_goal.get("materialized_region_constraints") or {}).get("summary")
         if isinstance(structured_goal.get("materialized_region_constraints"), dict)
@@ -49606,6 +49654,10 @@ def tool_build_gapmer_regions(
                 "isoform_resolution_error": isoform_resolution_error or None,
             },
         )
+
+    clarification = _prepare_exon_identity_for_execution(state_path, run_dir, payload, structured_goal, final_payload)
+    if clarification:
+        return clarification
 
     all_transcripts_full = structured_goal.get("all_transcripts_full")
     if not isinstance(all_transcripts_full, dict) or not all_transcripts_full:
@@ -54542,7 +54594,7 @@ def _score_gapmer_tiles_json(
     except ValueError as exc:
         return {"error": str(exc)}
     target_label_for_uniqueness = str(uniqueness_context.get("target_label") or "").strip()
-    if not target_label_for_uniqueness:
+    if not target_label_for_uniqueness and not uniqueness_context.get('has_target_group'):
         target_label_for_uniqueness = (
             resolve_uniqueness_target(structured_goal, iso_label_primary)
             if callable(resolve_uniqueness_target)
@@ -54557,6 +54609,7 @@ def _score_gapmer_tiles_json(
         pathogenic_isoform_labels=uniqueness_context.get("pathogenic_labels"),
         transcript_catalog={label: cdna_source[label] for label in cdna_map if label in cdna_source},
         resolved_transcripts=isoform_transcripts,
+        structured_goal=structured_goal,
     )
     if not uniqueness_path:
         return {"error": "gapmer_uniqueness_annotation_failed"}
@@ -56301,6 +56354,42 @@ def tool_apply_gapmer_constraints(
     )
 
 
+def _request_exon_identity_clarification(state_path, run_dir, payload, structured_goal, final_payload, exc):
+    _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+    # Register the execution blocker before deriving the next action. Otherwise
+    # a generic intake question can replace this question and its restart stage.
+    state = _load_state(state_path)
+    state['pending_questions'] = list(exc.questions)
+    state['status'] = 'needs_user_input'
+    state['phase'] = 'awaiting_clarification'
+    _apply_clarification_request_to_state(state, {
+        'kind': 'goal_intake', 'restart_stage': 'intake', 'questions': exc.questions, 'reason': exc.reason,
+        'context': 'The reference lookup could not identify every requested physical exon.',
+        'why_this_matters': 'The exon location determines which sequences are designed, evaluated and recommended.',
+        'recommendation': 'Provide the exon coordinates and assembly, or explicitly identify its transcript-order number.',
+    })
+    _save_state(state_path, state, snapshot_reason='exon_identity_clarification_pending')
+    return request_clarification(
+        state_path=state_path, questions=exc.questions, reason=exc.reason,
+        clarification_kind="goal_intake", restart_stage="intake",
+        context="The reference lookup could not identify every requested physical exon.",
+        why_this_matters="The exon location determines which sequences are designed, evaluated and recommended.",
+        recommendation="Provide the exon coordinates and assembly, or explicitly identify its transcript-order number.",
+    )
+
+
+def _prepare_exon_identity_for_execution(state_path, run_dir, payload, structured_goal, final_payload):
+    from .exon_nomenclature_context import prepare_goal_exon_nomenclature
+    from .exon_identity_clarification import ExonIdentityClarification, require_resolved_exon_identities
+    prepare_goal_exon_nomenclature(structured_goal)
+    try:
+        require_resolved_exon_identities(structured_goal)
+    except ExonIdentityClarification as exc:
+        return _request_exon_identity_clarification(state_path, run_dir, payload, structured_goal, final_payload, exc)
+    _save_goal_payload(run_dir, payload, structured_goal, final_payload)
+    return None
+
+
 @function_tool
 def tool_build_report_payload(
     state_path: str,
@@ -56327,6 +56416,12 @@ def tool_build_report_payload(
     payload = context["payload"]
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
+    clarification = _prepare_exon_identity_for_execution(state_path, run_dir, payload, structured_goal, final_payload)
+    if clarification:
+        return clarification
+    if (state.get("flags") or {}).get("skip_shortlist") is True:
+        final_payload.setdefault("execution_options", {})["skip_shortlist"] = True
+    _save_goal_payload(run_dir, payload, structured_goal, final_payload)
     existing_payload = final_payload.get("report_payload") if isinstance(final_payload.get("report_payload"), dict) else {}
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True,
                                                            retry_recommendations=force_stage)
@@ -56417,6 +56512,9 @@ def tool_write_markdown_report(
     payload = context["payload"]
     final_payload = context["final_payload"]
     structured_goal = context["structured_goal"]
+    if (state.get("flags") or {}).get("skip_shortlist") is True:
+        final_payload.setdefault("execution_options", {})["skip_shortlist"] = True
+        _save_goal_payload(run_dir, payload, structured_goal, final_payload)
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir, review_recommendations=True)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)
@@ -56777,6 +56875,12 @@ def tool_persist_run_outputs(
             details={"run_dir": run_dir},
         )
 
+    # Native persistence normalizes and enriches a copy of the goal. Reload it
+    # so later artifact publication cannot overwrite its exon-source evidence.
+    persisted_context = _load_goal_context_from_run_dir(run_dir)
+    payload = persisted_context['payload']
+    structured_goal = persisted_context['structured_goal']
+    final_payload = persisted_context['final_payload']
     generated_artifacts = _emit_v2_generated_design_artifacts(run_dir)
     if generated_artifacts:
         _publish_generated_artifacts(structured_goal, final_payload, generated_artifacts)

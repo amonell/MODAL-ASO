@@ -154,6 +154,7 @@ HEADING_LABELS = {
     "original intervals and assembly conversion evidence": "Requested regions and genome coordinates",
     "translation-start evidence for the selected panel": "Binding near the start codon",
     "recommended shortlist": "Selection checks for each ASO",
+    "provisional panel": "Provisional ASOs and their checks",
     "source search evidence": "Binding-site datasets",
     "protected-transcript sequence discrimination": "Matches to the isoform to preserve",
 }
@@ -201,6 +202,7 @@ EVIDENCE_HEADINGS = {
     "assumptions": "Conditions and input interpretations used in this analysis.",
     "suggested follow-up": "The report's proposed next steps, with their original scope and qualifications.",
     "recommended shortlist": "Selection order, off-target checks and sequence features to review.",
+    "provisional panel": "Saved ASOs awaiting a completed recommendation review.",
     "translation-start evidence for the selected panel": "Where each ASO binds relative to the start of the coding sequence.",
     "protected-transcript sequence discrimination": "Sequence matches and mismatches in the transcript the design aims to preserve.",
 }
@@ -579,7 +581,7 @@ def _group_design_evidence(evidence, sections):
     """Keep one path to the panel, its rationale, and the wider search."""
     if not any(sections[item[0]]['heading'].casefold() == 'selected physical panel' for item in evidence):
         return evidence
-    rationale = {'practical interpretation', 'physical chemistry', 'recommended shortlist',
+    rationale = {'practical interpretation', 'physical chemistry', 'recommended shortlist', 'provisional panel',
                  'predicted splice-response candidate sets', 'oligoai gapmer efficacy prediction',
                  'translation-start evidence for the selected panel', 'protected-transcript sequence discrimination'}
     alternatives = {'top normal-ranking candidates', 'top allele-specific candidates',
@@ -871,8 +873,10 @@ def basic_document(title, markdown, report_dir=None, *, candidate_data=None):
     if candidate_data is None and report_dir:
         from .report_explorer_data import project_analysis
         candidate_data = project_analysis(report_dir)
+    from .report_filter_history import project_filter_history
+    history = project_filter_history(report_dir)
     body = readable_markdown_html(markdown, report_dir, header_title=display_title,
-                                  explorer=explorer_html(candidate_data))
+                                  explorer=explorer_html(candidate_data, filter_history=history))
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             '<title>' + html.escape(display_title) + '</title><style>' + READER_CSS + '</style></head><body>'
@@ -937,7 +941,7 @@ def design_results(payload):
     """
     from .report_tables import page_large_tables
     from .report_explorer import explorer_html
-    explorer = explorer_html(payload.get('candidate_explorer'))
+    explorer = explorer_html(payload.get('candidate_explorer'), filter_history=payload.get('filter_history'))
     saved = payload.get('results_html') or ''
     markdown = (payload.get('overview') or {}).get('report_markdown') or ''
     if not markdown:

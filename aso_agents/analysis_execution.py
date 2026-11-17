@@ -232,7 +232,7 @@ def _computed_report_tables(result: dict, directory: Path, root: Path, source_ta
 
 def execute_analysis_program(
     *, directory: Path, payload: dict, generate: Callable[[dict], dict],
-    required_outputs: list[Path], timeout_seconds: int | None = None, max_attempts: int = 3,
+    required_outputs: list[Path], timeout_seconds: float | None = None, max_attempts: int = 3,
     readonly_outputs: list[Path] | None = None,
     source_tables: list[Path] | None = None,
     validate_result: Callable[[dict], None] | None = None,
@@ -247,6 +247,10 @@ def execute_analysis_program(
     repair permits one additional attempt if earlier execution failures delay
     the first actionable content review until the regular attempt limit.
     """
+    from .analysis_process import analysis_timeout_seconds, run_program
+    timeout_seconds = analysis_timeout_seconds(timeout_seconds)
+    payload = {**payload, 'resource_limits': {
+        **(payload.get('resource_limits') or {}), 'timeout_seconds': timeout_seconds}}
     directory = directory.resolve()
     required_outputs = [path.resolve() for path in required_outputs]
     readonly_outputs = [path.resolve() for path in (readonly_outputs or [])]
@@ -394,9 +398,15 @@ def execute_analysis_program(
                 # Fresh files prove this execution created its observations;
                 # the stable path also survives small generated-code repairs.
                 computed_root.mkdir()
-            process = subprocess.run([sys.executable, str(Path(__file__).with_name("analysis_runtime.py")),
-                str(code_path.resolve()), str(diagnostic_path.resolve())], cwd=directory,
-                capture_output=True, text=True, timeout=timeout_seconds)
+            (local / 'execution.json').write_text(json.dumps({
+                'attempt': attempt, 'status': 'running', 'timeout_seconds': timeout_seconds,
+                'program_path': str(local / 'generated_code.py'),
+                'required_outputs': [str(p) for p in required_outputs],
+                'previous_output_archives': archived_outputs,
+            }, indent=2))
+            process = run_program([sys.executable, str(Path(__file__).with_name("analysis_runtime.py")),
+                str(code_path.resolve()), str(diagnostic_path.resolve())], directory=directory,
+                timeout=timeout_seconds, stdout_path=local / 'stdout.log', stderr_path=local / 'stderr.log')
             stdout, stderr, exit_code = process.stdout, process.stderr, process.returncode
             if exit_code:
                 raise ValueError(f'Analysis program exited {exit_code}: {stderr[-6000:]}')
@@ -511,6 +521,8 @@ def execute_analysis_program(
         diagnostic_path = local / "runtime_error.json"
         diagnostics = json.loads(diagnostic_path.read_text()) if diagnostic_path.is_file() else {}
         receipt = {'attempt':attempt, 'exit_code':exit_code, 'error':error,
+                   'status': 'completed' if error is None else 'timed_out' if exit_code == 124 else 'failed',
+                   'timeout_seconds': timeout_seconds,
                    'code_sha256': hashlib.sha256(code.encode()).hexdigest(),
                    'program_path': str(local / 'generated_code.py'),
                    'plan_path': str(local / 'plan.json'),
@@ -560,6 +572,10 @@ def execute_analysis_program(
             return {'ok':True, 'plan':plan, 'result':result, 'summary':summary,
                     'exit_code':0, 'attempts':attempts}
         errors.append(error)
+        if exit_code == 124:
+            return {'ok': False, 'plan': plan, 'result': {}, 'summary': '', 'exit_code': 124,
+                    'error': error, 'error_code': 'analysis_timeout', 'attempts': attempts,
+                    'resource_limits': payload['resource_limits']}
         if code:
             last_program = {'previous_code': code, 'previous_plan': plan, 'error': error,
                             'runtime_diagnostics': diagnostics}

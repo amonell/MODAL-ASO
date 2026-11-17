@@ -1,0 +1,1889 @@
+{
+  "provenance": {
+    "run": "goal_1794901163_MAPT",
+    "source_sha256": {
+      "artifacts/intake/structured_goal.json": "0c05a661b250197f482a8ea29bebe8e55bdc66426a8b2b274ccb818015c2eabd",
+      "artifacts/candidates/gapmer_scored_uniqueness.json": "ceaede1188b018cbd3408eb7ea7e6a16897432fc2c9654d5a476e11883fb4ca9"
+    },
+    "feature_source": "https://www.ncbi.nlm.nih.gov/clinvar/RCV000015313.31/",
+    "note": "Reduced frozen inputs: catalog exon geometry and three saved sequence-match records. Complete exon coordinates identify conventional exon 10; its reference annotation order is 9."
+  },
+  "catalog": {
+    "ENST00000262410": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000262410",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 10,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000262410",
+        "versioned_id": "ENST00000262410.10"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894554,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45982866,
+          "end": 45983930
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45989878,
+          "end": 45990075
+        },
+        {
+          "index": 8,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 9,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 10,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 11,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 12,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 13,
+          "start": 46023956,
+          "end": 46028334
+        }
+      ]
+    },
+    "ENST00000351559": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000351559",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 10,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000351559",
+        "versioned_id": "ENST00000351559.10"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894554,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45974385,
+          "end": 45974471
+        },
+        {
+          "index": 5,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 8,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 9,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 10,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 11,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 12,
+          "start": 46023956,
+          "end": 46028334
+        }
+      ]
+    },
+    "ENST00000446361": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000446361",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 7,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000446361",
+        "versioned_id": "ENST00000446361.7"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894674,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 5,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 6,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 7,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 8,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 9,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 10,
+          "start": 46023956,
+          "end": 46028334
+        }
+      ]
+    },
+    "ENST00000703923": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703923",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703923",
+        "versioned_id": "ENST00000703923.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894527,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 5,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 6,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 7,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 8,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 9,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 10,
+          "start": 46023956,
+          "end": 46025701
+        },
+        {
+          "index": 11,
+          "start": 46025849,
+          "end": 46025873
+        }
+      ]
+    },
+    "ENST00000703924": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703924",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703924",
+        "versioned_id": "ENST00000703924.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894527,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 7,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 8,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 9,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 10,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 11,
+          "start": 46023956,
+          "end": 46025701
+        },
+        {
+          "index": 12,
+          "start": 46025849,
+          "end": 46025873
+        }
+      ]
+    },
+    "ENST00000680542": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000680542",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000680542",
+        "versioned_id": "ENST00000680542.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894663,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45961605,
+          "end": 45961757
+        },
+        {
+          "index": 3,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 4,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 5,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 8,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 9,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 10,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 11,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 12,
+          "start": 46023956,
+          "end": 46025701
+        },
+        {
+          "index": 13,
+          "start": 46025849,
+          "end": 46025873
+        }
+      ]
+    },
+    "ENST00000703978": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703978",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703978",
+        "versioned_id": "ENST00000703978.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894666,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45974385,
+          "end": 45974471
+        },
+        {
+          "index": 5,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 8,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 9,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 10,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 11,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 12,
+          "start": 46023956,
+          "end": 46025701
+        },
+        {
+          "index": 13,
+          "start": 46025849,
+          "end": 46025873
+        }
+      ]
+    },
+    "ENST00000703922": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703922",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703922",
+        "versioned_id": "ENST00000703922.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894527,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 7,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 8,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 9,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 10,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 11,
+          "start": 46023956,
+          "end": 46024646
+        },
+        {
+          "index": 12,
+          "start": 46025091,
+          "end": 46025257
+        }
+      ]
+    },
+    "ENST00000680674": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000680674",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000680674",
+        "versioned_id": "ENST00000680674.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894527,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 5,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 6,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 7,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 8,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 9,
+          "start": 46017474,
+          "end": 46017596
+        },
+        {
+          "index": 10,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 11,
+          "start": 46023956,
+          "end": 46024655
+        }
+      ]
+    },
+    "ENST00000420682": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000420682",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 7,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000420682",
+        "versioned_id": "ENST00000420682.7"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894560,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 7,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 8,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 9,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 10,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 11,
+          "start": 46023956,
+          "end": 46024659
+        }
+      ]
+    },
+    "ENST00000344290": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000344290",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 10,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000344290",
+        "versioned_id": "ENST00000344290.10"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894560,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45982866,
+          "end": 45983930
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 8,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 9,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 10,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 11,
+          "start": 46023956,
+          "end": 46024425
+        }
+      ]
+    },
+    "ENST00000535772": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000535772",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 6,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000535772",
+        "versioned_id": "ENST00000535772.6"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894551,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 7,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 8,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 9,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 10,
+          "start": 46023956,
+          "end": 46024225
+        }
+      ]
+    },
+    "ENST00000334239": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000334239",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 12,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000334239",
+        "versioned_id": "ENST00000334239.12"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894668,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 5,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 6,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 7,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 8,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 9,
+          "start": 46023956,
+          "end": 46024183
+        }
+      ]
+    },
+    "ENST00000570299": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000570299",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 5,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000570299",
+        "versioned_id": "ENST00000570299.5"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894576,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 5,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 6,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 7,
+          "start": 46018618,
+          "end": 46018730
+        }
+      ]
+    },
+    "ENST00000703977": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703977",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703977",
+        "versioned_id": "ENST00000703977.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894663,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 5,
+          "start": 45989878,
+          "end": 45990075
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991579
+        }
+      ]
+    },
+    "ENST00000703975": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703975",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703975",
+        "versioned_id": "ENST00000703975.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894573,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 4,
+          "start": 45987040,
+          "end": 45989572
+        }
+      ]
+    },
+    "ENST00000703976": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703976",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703976",
+        "versioned_id": "ENST00000703976.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894592,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45989553
+        }
+      ]
+    },
+    "ENST00000571311": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000571311",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 5,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000571311",
+        "versioned_id": "ENST00000571311.5"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894566,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 3,
+          "start": 45969165,
+          "end": 45969299
+        },
+        {
+          "index": 4,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 5,
+          "start": 45978375,
+          "end": 45978425
+        }
+      ]
+    },
+    "ENST00000703974": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703974",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703974",
+        "versioned_id": "ENST00000703974.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45894544,
+          "end": 45894686
+        },
+        {
+          "index": 2,
+          "start": 45962321,
+          "end": 45962912
+        }
+      ]
+    },
+    "ENST00000415613": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000415613",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 6,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000415613",
+        "versioned_id": "ENST00000415613.6"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45962338,
+          "end": 45962470
+        },
+        {
+          "index": 2,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 3,
+          "start": 45974385,
+          "end": 45974471
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45983178,
+          "end": 45983930
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45989878,
+          "end": 45990075
+        },
+        {
+          "index": 8,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 9,
+          "start": 45993924,
+          "end": 45993977
+        },
+        {
+          "index": 10,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 11,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 12,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 13,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 14,
+          "start": 46023956,
+          "end": 46024171
+        }
+      ]
+    },
+    "ENST00000431008": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000431008",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 7,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000431008",
+        "versioned_id": "ENST00000431008.7"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45962338,
+          "end": 45962470
+        },
+        {
+          "index": 2,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 3,
+          "start": 45974385,
+          "end": 45974471
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 7,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 8,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 9,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 10,
+          "start": 46023956,
+          "end": 46024171
+        }
+      ]
+    },
+    "ENST00000571987": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000571987",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 5,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000571987",
+        "versioned_id": "ENST00000571987.5"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45962338,
+          "end": 45962470
+        },
+        {
+          "index": 2,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 3,
+          "start": 45974385,
+          "end": 45974471
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45983178,
+          "end": 45983930
+        },
+        {
+          "index": 6,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 7,
+          "start": 45989878,
+          "end": 45990075
+        },
+        {
+          "index": 8,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 9,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 10,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 11,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 12,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 13,
+          "start": 46023956,
+          "end": 46024171
+        }
+      ]
+    },
+    "ENST00000574436": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000574436",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 5,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000574436",
+        "versioned_id": "ENST00000574436.5"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45962338,
+          "end": 45962470
+        },
+        {
+          "index": 2,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 3,
+          "start": 45974385,
+          "end": 45974471
+        },
+        {
+          "index": 4,
+          "start": 45978375,
+          "end": 45978440
+        },
+        {
+          "index": 5,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 6,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 7,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 8,
+          "start": 46010310,
+          "end": 46010402
+        },
+        {
+          "index": 9,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 10,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 11,
+          "start": 46023956,
+          "end": 46024171
+        }
+      ]
+    },
+    "ENST00000703979": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703979",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703979",
+        "versioned_id": "ENST00000703979.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45962321,
+          "end": 45962470
+        },
+        {
+          "index": 2,
+          "start": 45971859,
+          "end": 45971945
+        },
+        {
+          "index": 3,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 4,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 5,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 6,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 7,
+          "start": 46018618,
+          "end": 46018702
+        }
+      ]
+    },
+    "ENST00000576518": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000576518",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000576518",
+        "versioned_id": "ENST00000576518.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45972783,
+          "end": 45978440
+        },
+        {
+          "index": 2,
+          "start": 45987040,
+          "end": 45987095
+        },
+        {
+          "index": 3,
+          "start": 45991460,
+          "end": 45991586
+        },
+        {
+          "index": 4,
+          "start": 45996399,
+          "end": 45996664
+        },
+        {
+          "index": 5,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 6,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 7,
+          "start": 46023956,
+          "end": 46024431
+        }
+      ]
+    },
+    "ENST00000703980": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703980",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703980",
+        "versioned_id": "ENST00000703980.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45996611,
+          "end": 45996664
+        },
+        {
+          "index": 2,
+          "start": 46010316,
+          "end": 46010402
+        },
+        {
+          "index": 3,
+          "start": 46014243,
+          "end": 46014324
+        },
+        {
+          "index": 4,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 5,
+          "start": 46023956,
+          "end": 46024699
+        }
+      ]
+    },
+    "ENST00000703981": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703981",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703981",
+        "versioned_id": "ENST00000703981.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 46010319,
+          "end": 46010402
+        },
+        {
+          "index": 2,
+          "start": 46014243,
+          "end": 46014339
+        },
+        {
+          "index": 3,
+          "start": 46018618,
+          "end": 46018730
+        },
+        {
+          "index": 4,
+          "start": 46023956,
+          "end": 46024655
+        }
+      ]
+    },
+    "ENST00000703982": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000703982",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000703982",
+        "versioned_id": "ENST00000703982.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 46018203,
+          "end": 46018730
+        },
+        {
+          "index": 2,
+          "start": 46023956,
+          "end": 46024655
+        }
+      ]
+    },
+    "ENST00000572440": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000572440",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000572440",
+        "versioned_id": "ENST00000572440.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45975492,
+          "end": 45980506
+        }
+      ]
+    },
+    "ENST00000577017": {
+      "chrom": "chr17",
+      "strand": 1,
+      "transcript_id": "ENST00000577017",
+      "metadata": {
+        "assembly_name": "GRCh38",
+        "version": 1,
+        "species": "homo_sapiens",
+        "gene_symbol": "MAPT",
+        "id": "ENST00000577017",
+        "versioned_id": "ENST00000577017.1"
+      },
+      "exons_tx": [
+        {
+          "index": 1,
+          "start": 45985659,
+          "end": 45985744
+        },
+        {
+          "index": 2,
+          "start": 45987040,
+          "end": 45987095
+        }
+      ]
+    }
+  },
+  "reference": {
+    "chrom": "chr17",
+    "strand": "+",
+    "transcript_id": "ENST00000351559",
+    "metadata": {
+      "assembly_name": "GRCh38",
+      "version": 10,
+      "species": "homo_sapiens",
+      "gene_symbol": "MAPT",
+      "id": "ENST00000351559",
+      "versioned_id": "ENST00000351559.10"
+    },
+    "exons_tx": [
+      {
+        "index": 1,
+        "start": 45894554,
+        "end": 45894686
+      },
+      {
+        "index": 2,
+        "start": 45962321,
+        "end": 45962470
+      },
+      {
+        "index": 3,
+        "start": 45971859,
+        "end": 45971945
+      },
+      {
+        "index": 4,
+        "start": 45974385,
+        "end": 45974471
+      },
+      {
+        "index": 5,
+        "start": 45978375,
+        "end": 45978440
+      },
+      {
+        "index": 6,
+        "start": 45987040,
+        "end": 45987095
+      },
+      {
+        "index": 7,
+        "start": 45991460,
+        "end": 45991586
+      },
+      {
+        "index": 8,
+        "start": 45996399,
+        "end": 45996664
+      },
+      {
+        "index": 9,
+        "start": 46010310,
+        "end": 46010402
+      },
+      {
+        "index": 10,
+        "start": 46014243,
+        "end": 46014324
+      },
+      {
+        "index": 11,
+        "start": 46018618,
+        "end": 46018730
+      },
+      {
+        "index": 12,
+        "start": 46023956,
+        "end": 46028334
+      }
+    ]
+  },
+  "rows": [
+    {
+      "Name": "4R tau_cdna1021-1040",
+      "Sequence": "TGTGGCTCAAAGGATAATAT",
+      "Synthesis": "ATATTATCCTTTGAGCCACA",
+      "IDT": "/52MOErA/*/i2MOErT/*/i2MOErA/*/i2MOErT/*/i2MOErT/*A*T*/iMe-dC/*/iMe-dC/*T*T*T*G*A*G*/i2MOErC/*/i2MOErC/*/i2MOErA/*/i2MOErC/*/32MOErA/",
+      "Genomic_segments": "[{\"chrom\": \"chr17\", \"start\": 46010358, \"end\": 46010377}]",
+      "Genomic_chrom": "chr17",
+      "Genomic_strand": "+",
+      "Genomic_start": 46010358,
+      "Genomic_end": 46010377,
+      "GC": 0.35,
+      "isoform_uniqueness_labels": [
+        "ENST00000262410",
+        "ENST00000351559",
+        "ENST00000415613",
+        "ENST00000420682",
+        "ENST00000446361",
+        "ENST00000571987",
+        "ENST00000574436",
+        "ENST00000680542",
+        "ENST00000680674",
+        "ENST00000703922",
+        "ENST00000703923",
+        "ENST00000703924",
+        "ENST00000703978",
+        "ENST00000703980",
+        "ENST00000703981"
+      ],
+      "isoform_uniqueness_score": 0.06666666666666667
+    },
+    {
+      "Name": "4R tau_cdna1100-1119",
+      "Sequence": "AGGTGACCTCCAAGTGTGGC",
+      "Synthesis": "GCCACACTTGGAGGTCACCT",
+      "IDT": "/52MOErG/*/i2MOErC/*/i2MOErC/*/i2MOErA/*/i2MOErC/*A*/iMe-dC/*T*T*G*G*A*G*G*T*/i2MOErC/*/i2MOErA/*/i2MOErC/*/i2MOErC/*/32MOErT/",
+      "Genomic_segments": "[{\"chrom\": \"chr17\", \"start\": 46014277, \"end\": 46014296}]",
+      "Genomic_chrom": "chr17",
+      "Genomic_strand": "+",
+      "Genomic_start": 46014277,
+      "Genomic_end": 46014296,
+      "GC": 0.6,
+      "isoform_uniqueness_labels": [
+        "ENST00000262410",
+        "ENST00000334239",
+        "ENST00000344290",
+        "ENST00000351559",
+        "ENST00000415613",
+        "ENST00000420682",
+        "ENST00000431008",
+        "ENST00000446361",
+        "ENST00000535772",
+        "ENST00000571987",
+        "ENST00000574436",
+        "ENST00000576518",
+        "ENST00000680542",
+        "ENST00000680674",
+        "ENST00000703922",
+        "ENST00000703923",
+        "ENST00000703924",
+        "ENST00000703978",
+        "ENST00000703979",
+        "ENST00000703980",
+        "ENST00000703981"
+      ],
+      "isoform_uniqueness_score": 0.047619047619047616
+    },
+    {
+      "Name": "4R tau_cdna3358-3377",
+      "Sequence": "GCTTGGATTCACCAGAGTGA",
+      "Synthesis": "TCACTCTGGTGAATCCAAGC",
+      "IDT": "/52MOErT/*/i2MOErC/*/i2MOErA/*/i2MOErC/*/i2MOErT/*/iMe-dC/*T*G*G*T*G*A*A*T*/iMe-dC/*/i2MOErC/*/i2MOErA/*/i2MOErA/*/i2MOErG/*/32MOErC/",
+      "Genomic_segments": "[{\"chrom\": \"chr17\", \"start\": 46026053, \"end\": 46026072}]",
+      "Genomic_chrom": "chr17",
+      "Genomic_strand": "+",
+      "Genomic_start": 46026053,
+      "Genomic_end": 46026072,
+      "GC": 0.5,
+      "isoform_uniqueness_labels": [
+        "ENST00000262410",
+        "ENST00000351559",
+        "ENST00000446361"
+      ],
+      "isoform_uniqueness_score": 0.3333333333333333
+    }
+  ]
+}

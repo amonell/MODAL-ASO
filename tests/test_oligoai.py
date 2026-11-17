@@ -57,7 +57,7 @@ def test_physical_identity_and_every_bond_are_preserved(tmp_path):
     assert float(records[0]["predicted_inhibition_percent"]) == 73.125
 
 
-def test_missing_optional_runtime_is_unavailable_without_changing_candidates(tmp_path, monkeypatch):
+def test_missing_optional_runtime_is_unavailable_without_changing_candidates(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ASO_OLIGOAI_ROOT", str(tmp_path / "not mounted"))
     candidate = row()
     before = deepcopy(candidate)
@@ -68,15 +68,19 @@ def test_missing_optional_runtime_is_unavailable_without_changing_candidates(tmp
     assert "not mounted" in result["candidates"][0]["reason"]
     assert "inference_error" not in result
     assert {k: v for k, v in candidate.items() if k != "oligoai_evaluation"} == before
+    warning = capsys.readouterr().out
+    assert "Continuing without OligoAI efficacy predictions" in warning
+    assert "modal-aso setup --features oligoai" in warning
 
 
-def test_real_predictor_error_is_not_hidden_as_missing_optional_install(tmp_path):
+def test_real_predictor_error_is_not_hidden_as_missing_optional_install(tmp_path, capsys):
     def broken(*_):
         raise RuntimeError("predictor crashed")
     result = evaluate_candidates([row()], {}, tmp_path, references=[reference()], predictor=broken)
     assert result["candidates"][0]["status"] == "error"
     assert "predictor crashed" in result["inference_error"]
     assert "runtime_availability" not in result
+    assert "OligoAI: Gapmer efficacy prediction failed" in capsys.readouterr().out
 
 
 def test_unsupported_ome_is_not_substituted(tmp_path):

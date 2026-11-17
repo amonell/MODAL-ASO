@@ -186,7 +186,8 @@ def exon_label_is_outcome_context(goal, program, resolved, primary):
 def resolve_uniqueness_roles(target, beneficial, pathogenic, catalog, resolved):
     """Keep sequence hits usable even when an auxiliary role cannot be assigned."""
     result = {}
-    for role, labels in (('target', [target] if target else []),
+    targets = list(target) if isinstance(target, (list, tuple)) else [target] if target else []
+    for role, labels in (('target', targets),
                          ('beneficial', beneficial or []), ('pathogenic', pathogenic or [])):
         bindings = []
         for label in dict.fromkeys(labels):

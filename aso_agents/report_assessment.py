@@ -55,7 +55,14 @@ def prediction_note(record):
     parts = [notes[native]] if native in notes else []
     guards = (assessment.get('splice_safeguards') or {}).get('status')
     if guards == 'failed':
-        parts.append('Predicted changes at protected splice sites exceed the specified limits.')
+        reports = (assessment.get('splice_safeguards') or {}).get('reports') or record.get('safeguard_report') or []
+        failed = [g for g in reports if g.get('passes') is False or g.get('status') in {'fail', 'failed'}]
+        if failed and all(g.get('required') is False for g in failed):
+            parts.append('A review-only splice check exceeded its recorded bounds.')
+        elif any(g.get('required') is True for g in failed):
+            parts.append('A required splice check exceeded its recorded bounds.')
+        else:
+            parts.append('Predicted changes at protected splice sites exceed the specified limits.')
     elif guards == 'unmeasured':
         parts.append('Predictions for protected splice sites are unavailable.')
     if any((report.get('review') or {}).get('status') == 'unavailable'
@@ -80,18 +87,20 @@ def render_shortlist_markdown(shortlist, pool_molecule_count, *, include_rationa
         headers.append('Splice safeguards')
     headers += ['Off-target screen', 'Motif flags', 'Reference Tm (°C)', 'Reference ΔG (kcal/mol)']
     review = shortlist.get('review') or {}
+    reviewed = review.get('status') in {None, 'completed'}
     introduction = []
     if include_rationale and review.get('summary'):
         introduction += [review['summary'], '', review.get('size_reason') or '', '']
     for record in records:
         item = record.get('recommendation_review') or {}
-        if include_rationale and item:
+        if include_rationale and item and reviewed:
             introduction += [f"## {record['recommendation_order']}. {record['antisense_5to3']}", '',
                 item['why_chosen'], '', '**Tradeoff:** ' + item['tradeoff'], '',
                 '**Panel role:** ' + item['panel_role'], '']
-    lines = ['# Recommended shortlist' if include_rationale else '## Selection checks', '', *introduction,
+    title = '# Recommended shortlist' if reviewed else '# Provisional panel'
+    lines = [title if include_rationale else '## Selection checks', '', *introduction,
         (f'{len(records)} distinct molecules selected; {pool_molecule_count} in the assessed eligible pool.'
-         if include_rationale else f'Checks for {len(records)} recommended ASO{"s" if len(records) != 1 else ""}.'), '',
+         if include_rationale else f'Checks for {len(records)} {"recommended" if reviewed else "provisional"} ASO{"s" if len(records) != 1 else ""}.'), '',
         'This table gives the selection checks for the ASOs in panel order. Evidence gaps name the checks still missing.', '',
         'Off-targets are other sequences an ASO may also bind.' + (' Splice safeguards check whether predicted changes at protected splice sites stay within the specified limits.' if guarded else ''), '',
         'Motif flags identify short sequence patterns. Each flag names its study context; its relevance depends on the ASO chemistry.', '',
@@ -117,6 +126,16 @@ def render_shortlist_markdown(shortlist, pool_molecule_count, *, include_rationa
                    record.get('reference_tm_c'), record.get('reference_delta_g_kcal_mol')]
         lines.append('| ' + ' | '.join(cell(value) for value in values) + ' |')
     lines.extend(['', 'Tm (melting temperature) and ΔG (binding free energy) describe a perfectly matched, unmodified RNA/DNA duplex at 1 M sodium. These values provide a common sequence reference. The modified ASO’s affinity requires chemistry-specific measurements.'])
+    if guarded:
+        from .report_explorer_data import safeguard_summary
+        details = []
+        for record in records:
+            for check in safeguard_summary(record, {})['details']:
+                details.append(f"- ASO {record.get('recommendation_order')}: {check['text']}" +
+                               (' ' + check['reason'] if check['reason'] else ''))
+        if details:
+            lines.extend(['', '<details><summary>Splice check bounds and simulations</summary>', '',
+                          *details, '', '</details>'])
     if include_rationale:
         lines.extend(['', 'Selection applies the requested filters, then the design ranking, comparable off-target checks and relevant sequence motifs. Requested panel roles take priority. Full CSV/JSON records include the exact statuses, reference conditions and any predicted changes at unannotated splice sites.'])
     if shortlist.get('status') == 'awaiting_size_preference':
