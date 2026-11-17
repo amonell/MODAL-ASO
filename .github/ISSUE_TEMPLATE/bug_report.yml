@@ -27,6 +27,6 @@ body:
     attributes:
       label: Version or commit
       description: Run modal-aso --version. For a development checkout, also include git rev-parse --short HEAD.
-      placeholder: MODAL-ASO 1.0.0
+      placeholder: MODAL-ASO 1.0.1
     validations:
       required: true
