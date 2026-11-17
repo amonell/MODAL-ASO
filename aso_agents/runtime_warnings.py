@@ -19,12 +19,12 @@ def warning_handler(handler: Callable[[dict[str, Any]], None]) -> Iterator[None]
         _handler.reset(token)
 
 
-def emit_warning(message: str) -> None:
+def emit_warning(message: str, *, category: str = "Reference setup") -> None:
     handler = _handler.get()
     if handler is None:
-        print(f"Reference setup: {message}", flush=True)
+        print(f"{category}: {message}", flush=True)
     else:
-        handler({"type": "warning", "message": message})
+        handler({"type": "warning", "message": message, "category": category})
 
 
 def emit_progress(message: str) -> None:
