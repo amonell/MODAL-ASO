@@ -14,6 +14,7 @@ def launch(arguments):
     return subprocess.call([sys.executable, "-m", "streamlit", "run",
                             str(Path(__file__).with_name("app.py")),
                             "--server.address=127.0.0.1", "--server.headless=true", "--browser.gatherUsageStats=false",
+                            "--global.developmentMode=false", "--server.fileWatcherType=none",
                             "--theme.base=light", "--theme.backgroundColor=#F5F8FC",
                             "--theme.secondaryBackgroundColor=#F5F8FC",
                             "--theme.textColor=#253D4B", "--theme.primaryColor=#0FA3BE", *arguments,

@@ -440,6 +440,13 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     # List run outputs; deferred downloads avoid preloading every file.
                     paths = sorted(p for p in root.rglob("*") if p.is_file() and p.resolve().is_relative_to(root)
                                    and not any(part.startswith(".") for part in p.relative_to(root).parts))
+                    if len(paths) > 50:
+                        query = st.text_input("Find a file", key=f"file_query_{root}").strip().casefold()
+                        matching = [p for p in paths if query in str(p.relative_to(root)).casefold()]
+                        pages = max(1, (len(matching) + 49) // 50)
+                        page = st.selectbox("File page", range(1, pages + 1), key=f"file_page_{root}_{query}")
+                        st.caption(f"{len(matching):,} matching files · Up to 50 per page")
+                        paths = matching[(page - 1) * 50:page * 50]
                     for path in paths:
                         relative = str(path.relative_to(root))
                         label, download = st.columns([4, 1])

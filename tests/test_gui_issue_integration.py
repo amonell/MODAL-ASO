@@ -110,3 +110,21 @@ def test_embedded_report_relative_download_works_in_browser(output_server):
             page.frame_locator('iframe').get_by_role('link', name='Download ASOs').click()
         assert Path(download.value.path()).read_text() == 'ASO,score\n1,0.81234567890123\n'
         browser.close()
+
+
+def test_large_file_lists_are_searchable_and_paginated(tmp_path):
+    pytest.importorskip('streamlit')
+    from streamlit.testing.v1 import AppTest
+    for i in range(101):
+        (tmp_path / f'candidate-{i:03}.csv').write_text('ASO,score\n')
+    app = Path(__file__).parents[1] / 'aso_agents/gui/app.py'
+    ui = AppTest.from_file(str(app))
+    ui.session_state['validated'] = Settings('openai', 'test-key')
+    ui.session_state['messages'] = []
+    ui.session_state['result'] = {'status': 'run_complete', 'run_dir': str(tmp_path)}
+    ui.run(timeout=20)
+    assert not ui.exception and len(ui.get('download_button')) == 50
+    ui.selectbox[0].select(3).run()
+    assert not ui.exception and len(ui.get('download_button')) == 1
+    ui.text_input[0].set_value('100.csv').run()
+    assert not ui.exception and len(ui.get('download_button')) == 1

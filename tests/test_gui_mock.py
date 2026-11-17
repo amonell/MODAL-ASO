@@ -90,6 +90,8 @@ class MockGuiTests(TestCase):
         from aso_agents.gui.launcher import launch
         with patch('aso_agents.gui.launcher.subprocess.call', return_value=0) as call:
             launch(['--test', '--server.port=8502'])
+        self.assertIn('--server.fileWatcherType=none', call.call_args.args[0])
+        self.assertIn('--global.developmentMode=false', call.call_args.args[0])
         arguments = call.call_args.args[0]
         self.assertEqual(arguments[-2:], ['--', '--test'])
         self.assertIn('--server.port=8502', arguments)
