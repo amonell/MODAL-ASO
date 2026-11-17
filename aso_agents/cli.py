@@ -203,6 +203,8 @@ def main(argv=None):
         if argv and argv[0] not in {"setup", "doctor", "assets", "--help", "-h", "--version"}:
             return _run(argv[1:] if argv[0] == "run" else argv)
         parser = argparse.ArgumentParser(prog="modal-aso", description='Design and evaluate ASOs. Run: modal-aso "your request"')
+        parser.add_argument("--skip-shortlist", action="store_true",
+                            help="Skip model-based shortlist review; retain analysis, reports and a provisional panel")
         parser.add_argument("--version", action="version", version=f"MODAL-ASO {__version__}")
         sub = parser.add_subparsers(dest="command")
         sub.add_parser("gui", help="Launch the optional local browser interface")
