@@ -121,10 +121,13 @@ selectivity; off-target expression describes recorded expression of matching RNA
 An objective label alone supplies no exon overlap. Read the actual coordinates.
 Keep a requested isoform-specific goal central; isoform counts alone cannot
 identify intended or preserved transcripts. Treat prior ranks as local metadata.
-Choose 1 to promotion_limit local integer IDs in preferred order. Retain useful
+Choose zero to promotion_limit local integer IDs in preferred order. Retain useful
 alternatives for binding regions, programs, roles and spacing. When most candidates
-are equivalent, prefer a few complementary placements. For a weak batch, one
-provisional nominee and the concrete limitation suffice. Full-pool count requirements
+are equivalent, prefer a few complementary placements. Nominate no candidates
+when the batch's actual placement or chemistry conflicts with the requested
+objective; explain the concrete conflict. Research candidates can still be useful
+with unresolved potency or selectivity: missing experimental validation alone
+does not require an empty nomination. Full-pool count requirements
 are enforced later. Leave unchosen candidates unordered; all remain available.
 Return reviewed_count equal to the batch count, nominated_ids and a two-sentence
 summary of the choice and main uncertainty. Return the required JSON object.
@@ -243,7 +246,7 @@ RANK_SCHEMA = _object({'ordered_ids': _array(_text(), uniqueItems=True),
     'preferred_ids': _array(_text(), uniqueItems=True),
     'suggested_size': {'type': 'integer', 'minimum': 0}, 'summary': _text(900)})
 NOMINATE_SCHEMA = _object({'reviewed_count': {'type': 'integer', 'minimum': 1},
-    'nominated_ids': _array({'type': 'integer', 'minimum': 0}, minItems=1, uniqueItems=True),
+    'nominated_ids': _array({'type': 'integer', 'minimum': 0}, uniqueItems=True),
     'summary': _text(650)})
 SELECT_SCHEMA = _object({'reviewed_count': {'type': 'integer', 'minimum': 1},
     'nominated_ids': _array({'type': 'integer', 'minimum': 0}, uniqueItems=True),
@@ -723,7 +726,7 @@ def _nominate(entries, context, directory, configuration):
                 if response['reviewed_count'] != len(batch):
                     errors.append('Review every supplied candidate and report the exact batch count.')
                 if len(response['nominated_ids']) > limit or any(key >= len(batch) for key in response['nominated_ids']):
-                    errors.append('Return 1 to promotion_limit distinct local integer IDs from evidence.ids.')
+                    errors.append('Return zero to promotion_limit distinct local integer IDs from evidence.ids.')
                 return errors
             try:
                 response = _call('nominate', {'goal': context, 'evidence': screening_packet(batch),
@@ -783,6 +786,8 @@ def _nominate(entries, context, directory, configuration):
 def _rank(catalog, context, directory, configuration):
     entries = [entry for entry in catalog.values() if entry['eligible']]
     finalists, remaining, nominations = _nominate(entries, context, directory, configuration)
+    if not finalists:
+        return remaining, 0, nominations
     _progress(directory, f'Comparing {len(finalists):,} shortlist finalists.', phase='comparing', total=len(finalists))
     if nominations:
         # One final comparison chooses a panel. Sorting every unsuccessful

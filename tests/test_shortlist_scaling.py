@@ -224,6 +224,27 @@ def test_fitting_finalists_skip_another_nomination_round(tmp_path, monkeypatch):
     assert review.SCREEN_THRESHOLD < len(finalist_calls[0]['evidence']['ids']) <= review.FINAL_BATCH_MOLECULES
 
 
+def test_incompatible_batches_can_nominate_none_without_losing_coverage(tmp_path, monkeypatch):
+    calls = []
+    def incompatible(kind, payload, schema):
+        calls.append(kind)
+        response, metadata = nomination_model(kind, payload, schema)
+        if kind == 'nominate':
+            response['nominated_ids'] = []
+            response['summary'] = 'The supplied binding sites fall outside the explicitly required target region.'
+        return response, metadata
+    monkeypatch.setattr(review, '_model_call', incompatible)
+    rows = large_pool(129)
+    selected, _, receipt = run(rows, tmp_path)
+    assert selected == [] and receipt['status'] == 'completed'
+    assert receipt['reviewed_molecule_count'] == 129
+    assert set(receipt['ranked_ids']) == {molecule_id(row) for row in rows}
+    assert len(receipt['review_levels']) == 1
+    assert calls.count('nominate') == 3
+    assert 'select' not in calls and 'rank' not in calls
+    assert calls[-2:] == ['explain', 'audit']
+
+
 def test_nomination_outage_stops_after_current_wave(tmp_path, monkeypatch):
     calls = []
     def unavailable(kind, payload, schema):
