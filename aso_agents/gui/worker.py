@@ -10,6 +10,7 @@ class ChatStream(io.TextIOBase):
     """Collect terminal narration into complete chat lines inside the worker."""
     def __init__(self, events, api_key):
         self.events, self.api_key, self.pending = events, api_key, ""
+        self.warning_lines = []
 
     def write(self, text):
         self.pending += text
@@ -19,22 +20,39 @@ class ChatStream(io.TextIOBase):
         return len(text)
 
     def emit(self, line):
-        line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line).strip()
+        raw = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+        line = raw.strip()
+        if self.api_key:
+            line = line.replace(self.api_key, "[redacted]")
+        warning_header = "Pydantic serializer warnings" in line
+        warning_value = "PydanticSerializationUnexpectedValue" in line
+        serializer_source = bool(re.match(r"return self\.__pydantic_serializer__\.(to_python|to_json)\(", line))
+        if warning_header:
+            self.flush_warning()
+        if warning_header or warning_value or serializer_source or (self.warning_lines and (not line or raw[:1].isspace())):
+            self.warning_lines.append(line)
+            if serializer_source:
+                self.flush_warning()
+            return
+        self.flush_warning()
         # The controller reports this same record through result_callback.
         # Its machine-readable terminal export is not a conversational reply.
         if line.startswith(("AGENTIC_RUN_RESULT:", "[TOOL CALL]", "[TOOL RESULT]")):
             return
-        if self.api_key:
-            line = line.replace(self.api_key, "[redacted]")
-        if "PydanticSerializationUnexpectedValue" in line or "Pydantic serializer warnings" in line:
-            self.events.put(("diagnostic", {"type": "SDK serialization warning", "message": line, "traceback": line}))
-            return
         if line:
             self.events.put(("message", line))
+
+    def flush_warning(self):
+        if self.warning_lines:
+            warning = "\n".join(self.warning_lines)
+            self.events.put(("diagnostic", {"type": "SDK serialization warning", "severity": "warning",
+                                          "message": warning, "traceback": warning}))
+            self.warning_lines = []
 
     def finish(self):
         self.emit(self.pending)
         self.pending = ""
+        self.flush_warning()
 
 
 def run(settings, request, events, answers):

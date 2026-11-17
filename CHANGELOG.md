@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add an optional browser GUI with provider setup, chat, report and file panels,
+  responsive scrolling, and offline `--test` previews. Group SDK serialization
+  warnings under optional technical activity. The GUI uses the existing analysis
+  controller and provider transport ([#4](https://github.com/amonell/MODAL-ASO/issues/4)).
+
 - Keep dense ASO binding maps readable with region navigation, spaced rows,
   collision-free labels, expandable splice-site details and optional value plots.
   Every saved ASO and prediction remains available in the table and downloads.

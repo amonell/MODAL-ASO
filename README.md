@@ -114,6 +114,13 @@ uv sync --frozen --extra splice --extra gui
 uv run --frozen --extra splice --extra gui modal-aso gui
 ```
 
+For offline interface testing, run `modal-aso gui --test` (or append `--test`
+to the `uv run ... modal-aso gui` command above). Enter `correctkey` as the
+API key; all other keys fail authentication. This mode uses mock chat updates
+and a frozen PCSK9 run report with shortlist and panel downloads without calling
+an API or running an analysis. Results are clearly labeled as saved previews;
+the original run outputs are never modified.
+
 The two occurrences of `gui` serve different purposes: `--extra gui` includes
 the optional interface dependencies, while `modal-aso gui` launches the browser
 interface. Use the full `uv run` command above each time you start the GUI so

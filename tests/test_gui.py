@@ -208,6 +208,7 @@ def test_sdk_warnings_are_displayed_as_diagnostics_without_serialization_changes
     events = Queue()
     stream = ChatStream(events, "secret-key")
     stream.write("PydanticSerializationUnexpectedValue: secret-key\n")
+    stream.finish()
     kind, details = events.get_nowait()
     assert kind == "diagnostic"
     assert details["type"] == "SDK serialization warning"
@@ -272,9 +273,9 @@ def test_gui_default_model_validation_without_catalog():
     validate(settings(model=DEFAULT_OPENROUTER_MODEL, effort="default"), {}, client, base={})
     assert client.payloads[0]["model"] == DEFAULT_OPENROUTER_MODEL
 
-def test_per_agent_model_defaults_ignore_global_environment_model():
+def test_default_settings_preserve_global_and_per_agent_environment():
     base = {"OPENROUTER_MODEL": "stale/model", "ASO_GOAL_INTAKE_MODEL": "role/model"}
     result = environment_for(settings(model="default", effort="default"), base)
-    assert "OPENROUTER_MODEL" not in result
+    assert result["OPENROUTER_MODEL"] == "stale/model"
     assert result["ASO_GOAL_INTAKE_MODEL"] == "role/model"
     assert base["OPENROUTER_MODEL"] == "stale/model"

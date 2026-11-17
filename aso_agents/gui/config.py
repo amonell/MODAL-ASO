@@ -40,12 +40,8 @@ def environment_for(settings, base=None):
         return env
     if settings.model != "default":
         env["OPENROUTER_MODEL"] = settings.model
-    else:
-        env.pop("OPENROUTER_MODEL", None)
     if settings.effort != "default":
         env["OPENROUTER_REASONING_EFFORT"] = settings.effort
-    else:
-        env.pop("OPENROUTER_REASONING_EFFORT", None)
     if settings.timeout_seconds is not None:
         env["OPENROUTER_TIMEOUT_SECONDS"] = str(settings.timeout_seconds)
     if settings.max_retries is not None:

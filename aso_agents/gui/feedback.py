@@ -24,18 +24,17 @@ def runner_feedback(events, commentary_for_tool=None):
     from agents import Runner
     original = Runner._emit_event
     counts = {}
-    last_commentary = None
+    seen_commentary = set()
 
     def emit(callback, event):
-        nonlocal last_commentary
         try:
             if event.get("type") == "tool_call" and callable(commentary_for_tool):
                 tool = str(event.get("tool") or "")
                 counts[tool] = counts.get(tool, 0) + 1
                 commentary = commentary_for_tool(tool, counts[tool])
-                if commentary and commentary != last_commentary:
+                if commentary and commentary not in seen_commentary:
                     events.put(("message", commentary))
-                    last_commentary = commentary
+                    seen_commentary.add(commentary)
             message = activity_message(event)
             if message:
                 events.put(("activity", message))
