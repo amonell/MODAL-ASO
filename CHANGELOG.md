@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.0.1 — 2026-11-16
+
+Faster shortlist review and improvements to request intake, references and terminal progress.
+
 - Accelerate shortlist review for large libraries with parallel nominations,
   compact candidate tables, shorter model-facing identifiers and bounded
   generation. Retain detailed finalist comparisons, full-evidence rationale
@@ -28,6 +32,11 @@
 - Recover versioned Ensembl transcript lookups from missing-ID HTTP 400 responses
   while requiring the returned reference to establish the requested version.
 - Read compressed local transcript annotations consistently during ID resolution.
+
+The revised shortlist review can change recommendation membership and ordering.
+Every eligible ASO remains available for panel constraints and in the saved
+candidate pool. Two fresh reviews of 4,057 saved MAPT candidates completed in
+4m 50s and 8m 02s, including the final evidence audits.
 
 ## 1.0.0 — 2026-11-12
 
