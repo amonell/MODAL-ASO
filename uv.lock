@@ -1026,7 +1026,7 @@ requires-dist = [
     { name = "torch", specifier = "==2.6.0" },
     { name = "upsetplot", specifier = ">=0.9.0" },
 ]
-provides-extras = ["splice", "dev"]
+provides-extras = ["gui", "splice", "dev"]
 
 [[package]]
 name = "more-itertools"

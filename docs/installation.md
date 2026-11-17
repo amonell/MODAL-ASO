@@ -2,6 +2,12 @@
 
 Python **3.11**. Linux x86-64, WSL2, or Apple silicon macOS.
 
+## Optional browser interface
+
+The development version includes `modal-aso gui --output-dir /path/to/runs`.
+Install the optional source extra with `uv sync --frozen --extra gui --extra splice`.
+See [Local browser interface](gui.md) for setup, progress, clarification and saved outputs.
+
 ## Prerequisites
 
 **Ubuntu / WSL2**

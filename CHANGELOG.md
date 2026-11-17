@@ -6,6 +6,7 @@
 - Bound generated analysis programs to five minutes by default, terminate their process groups, and retain timeout diagnostics. Configure the budget through `ASO_ANALYSIS_TIMEOUT_SECONDS` (#1).
 - Keep provisional ASOs visible when recommendation review is incomplete, with review status and diagnostics carried into reports and terminal completion (#22).
 - Add independent signed junction filters, consistent splice-effect colors, one-row-per-ASO basket exports with all context evidence, readable safeguard details, and searchable filter history. Simplify the default attribute chooser and table while retaining saved ranks and full evidence (#23–#29).
+- Add the optional `modal-aso gui` local browser interface for requests, clarification, progress, stopping/resuming and report downloads. It uses the CLI controller and configuration (#4).
 
 - Keep dense ASO binding maps readable with region navigation, spaced rows,
   collision-free labels, expandable splice-site details and optional value plots.

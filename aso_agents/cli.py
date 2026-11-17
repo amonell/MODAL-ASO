@@ -192,16 +192,33 @@ def _run(argv):
     return 0 if not outcome or outcome.get("status") in {"run_complete", "needs_user_input", "completed"} else 1
 
 
+def _gui(args):
+    _configure(args)
+    from .paths import runs_root
+    from .gui import serve
+    if not 0 <= args.port <= 65535:
+        raise ValueError('Choose a port from 0 to 65535 (0 chooses an available port).')
+    return serve(args.output_dir or runs_root(), port=args.port, open_browser=not args.no_open)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         if sys.platform == "win32" and argv and argv[0] not in {"--help", "-h", "--version"}:
             raise RuntimeError("On Windows, run MODAL-ASO inside WSL2: https://learn.microsoft.com/windows/wsl/install")
-        if argv and argv[0] not in {"setup", "doctor", "assets", "--help", "-h", "--version"}:
+        if argv and argv[0] not in {"setup", "doctor", "assets", "gui", "--help", "-h", "--version"}:
             return _run(argv[1:] if argv[0] == "run" else argv)
         parser = argparse.ArgumentParser(prog="modal-aso", description='Design and evaluate ASOs. Run: modal-aso "your request"')
+        parser.add_argument("--skip-shortlist", action="store_true",
+                            help="Skip model-based shortlist review; retain analysis, reports and a provisional panel")
         parser.add_argument("--version", action="version", version=f"MODAL-ASO {__version__}")
         sub = parser.add_subparsers(dest="command")
+        gui = sub.add_parser('gui', help='Open the optional local browser interface')
+        gui.add_argument('--output-dir', type=Path, help='Directory for runs and saved GUI conversations')
+        gui.add_argument('--data-dir', type=Path)
+        gui.add_argument('--port', type=int, default=8860)
+        gui.add_argument('--no-open', action='store_true', help='Print the local URL without opening a browser')
+        gui.set_defaults(func=_gui)
         setup = sub.add_parser("setup", help="Install reusable tools, references and models")
         setup.add_argument("--data-dir", type=Path, help="Persistent data directory (saved for future sessions)")
         setup.add_argument("--species", nargs="+", choices=["human", "mouse"], default=["human"])

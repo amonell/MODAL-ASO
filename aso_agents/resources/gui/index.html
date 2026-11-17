@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>MODAL-ASO · Workspace</title><link rel="stylesheet" href="/gui.css"><script src="/gui.js" defer></script></head>
+<body><a class="skip" href="#request">Skip to request</a><header><strong>MODAL-ASO</strong><span>Local workspace</span></header>
+<div class="layout"><aside aria-label="Recent runs"><h2>Your runs</h2><button id="new-run" type="button">New request</button><nav id="runs" aria-label="Saved runs"></nav><p class="muted">The latest 50 conversations appear here. All outputs stay in your output folder.</p></aside>
+<main><h1>What would you like to investigate?</h1><p>Describe your ASO design, evaluation or analysis. You can answer follow-up questions as the run progresses.</p>
+<p id="connection" role="status">Connecting to your local installation…</p><p id="error" role="alert" hidden></p>
+<form id="request-form"><label for="request">Your request</label><textarea id="request" name="request" rows="5" required maxlength="100000" placeholder="Describe the target, desired effect and any conditions or reference files."></textarea>
+<details><summary>Run options</summary><label class="check"><input id="skip-shortlist" type="checkbox">Skip recommendation review</label><p class="muted">The report will contain a provisional panel and all candidate evidence.</p></details><button type="submit" id="start">Start run</button></form>
+<section id="run" aria-labelledby="run-title" hidden><h2 id="run-title">Your request</h2><p id="request-copy" class="preserve"></p><div id="conversation"></div>
+<div class="status"><strong id="state" role="status" aria-live="polite"></strong><span id="elapsed"></span><p id="message"></p></div>
+<form id="answers" hidden><div id="question-context"></div><div id="questions"></div><button type="submit">Continue</button></form>
+<p id="completion"></p><p id="limitation"></p><div class="actions"><button id="stop" type="button" hidden>Stop run</button><button id="resume" type="button" hidden>Resume saved state</button></div>
+<section id="outputs" aria-label="Run outputs" hidden><h3>Your outputs</h3><ul id="files"></ul><p id="output-path" class="path"></p></section>
+<details><summary>Progress and local files</summary><ol id="progress"></ol><p id="state-path" class="path"></p><p id="log-path" class="path"></p></details></section>
+</main></div></body></html>

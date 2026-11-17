@@ -42,6 +42,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = []  # The local browser host uses Python's standard library.
 splice = [
     "openspliceai==0.0.7",
     "gdown>=5.2,<6",
