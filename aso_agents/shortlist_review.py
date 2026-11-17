@@ -1029,6 +1029,9 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 if 'aso_' in value:
                     errors.append(field + ': use ASO 1, ASO 2, etc. from complete_panel.panel_order; '
                                   'keep internal aso_ IDs in structured keys and citations only.')
+                problem = _prose_issue(value, summary=field == 'summary', context=context)
+                if problem:
+                    errors.append(field + ': ' + problem)
             for item in recommendations:
                 entry = allowed.get(item['candidate_id'])
                 if entry is None:
@@ -1055,6 +1058,8 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             'binding_geometry': binding_geometry,
             'coordinate_observations': [{'candidate_id': key, 'observations': entry.get('coordinate_observations', [])}
                                         for key, entry in allowed.items() if entry.get('coordinate_observations')]}
+        audit_evidence = {**screening_packet(evidence_entries, include_provenance=True, local_ids=False),
+                          'candidate_overviews': packet['candidate_overviews']}
         if not selected_ids:
             payload['empty_panel_review'] = {
                 'reviewed_molecule_count': len(ranked_ids),
@@ -1072,7 +1077,9 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
         if checkpoint.get('key') == checkpoint_key and checkpoint.get('draft_sha256') == digest(checkpoint.get('draft')):
             draft = deepcopy(checkpoint['draft'])
         elif not checkpoint:
-            draft = _previous_audited_draft(payload, directory, configuration)
+            draft = _previous_audited_draft({**payload, 'evidence': audit_evidence}, directory, configuration)
+            if draft is None:
+                draft = _previous_audited_draft(payload, directory, configuration)
         if draft is not None:
             # Repairs may retain citations from several accepted drafts. Every
             # path is checked again, and the full evidence audit runs below.
@@ -1278,7 +1285,8 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             audit_parts = [ids[start:start + AUDIT_BATCH_MOLECULES]
                            for start in range(0, len(ids), AUDIT_BATCH_MOLECULES)] or [[]]
             def audit_part(index, part):
-                return _call('audit', {**payload, 'selected_ids': part, 'draft': response,
+                return _call('audit', {**payload, 'evidence': audit_evidence,
+                    'selected_ids': part, 'draft': response,
                     'numeric_comparisons': numeric_comparisons,
                     'audit_scope': {'candidate_ids': part, 'include_panel_fields': index == 0}},
                     AUDIT_SCHEMA, lambda value: audit_check(value, part, index == 0), directory, configuration)

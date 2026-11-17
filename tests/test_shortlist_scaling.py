@@ -137,6 +137,8 @@ def test_panel_audits_run_concurrently_with_full_comparison_context(tmp_path, mo
     assert sum(payload['audit_scope']['include_panel_fields'] for payload in audits) == 1
     assert all(len(payload['complete_panel']) == 6 and len(payload['draft']['recommendations']) == 6
                and len(payload['evidence']['ids']) == 6 for payload in audits)
+    expected_facts = {entry['id']: entry['facts'] for entry in evidence_catalog(pool(6)).values()}
+    assert all(expand_packet(payload['evidence']) == expected_facts for payload in audits)
     checkpoint = json.loads(next((tmp_path/'recommendation_review/editorial').glob('*.json')).read_text())
     assert set(checkpoint['audit']['reviewed_ids']) == set(ids)
     assert len(checkpoint['audit']['field_reviews']) == 20
@@ -188,13 +190,17 @@ def test_host_findings_populate_null_audit_observations_without_extra_generation
         calls.append(kind)
         response, metadata = nomination_model(kind, payload, schema)
         if kind == 'explain':
-            response['recommendations'][0]['why_chosen'] = 'A prediction, not a measurement.'
+            response['recommendations'][0]['panel_role'] = 'It is the second ASO in this panel.'
         if kind == 'audit':
             for field in response['field_reviews']:
                 field['evidence_statement'] = None
+            if payload['draft']['recommendations'][0]['panel_role'] == 'It is the second ASO in this panel.':
+                response['quantitative_comparisons'] = [{'candidate_id': payload['selected_ids'][0],
+                    'field': 'panel_role', 'path': '/panel_order', 'order': 'ascending',
+                    'claimed_rank': 2, 'scope_ids': payload['selected_ids']}]
         if kind == 'repair':
             for item in response['recommendations']:
-                item['why_chosen'] = 'This ASO has complete scoped off-target evidence.'
+                item['panel_role'] = 'It is the first ASO in this panel.'
         return response, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})

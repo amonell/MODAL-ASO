@@ -149,20 +149,21 @@ def test_plural_legacy_metric_names_keep_correct_grammar_and_values():
     'Best selection rank (294) among the selected panel.',
     'This ASO has the highest native ranking.',
 ])
-def test_visible_notation_and_contrastive_boilerplate_require_repair(tmp_path, monkeypatch, text):
-    repaired = []
+def test_visible_notation_and_contrastive_boilerplate_are_fixed_before_audit(tmp_path, monkeypatch, text):
+    corrections, calls = [], []
     def wording(kind, payload, schema):
+        calls.append(kind)
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            result['recommendations'][0]['why_chosen'] = text
-        if kind == 'repair':
-            repaired.extend(payload['repair_candidate_ids'])
-            for item in result['recommendations']:
-                item['why_chosen'] = 'This ASO has complete scoped off-target evidence.'
+            if payload.get('corrections_needed'):
+                corrections.append(payload['corrections_needed'])
+            else:
+                result['recommendations'][0]['why_chosen'] = text
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
-    assert receipt['status'] == 'completed' and len(repaired) == 1
+    assert receipt['status'] == 'completed' and len(corrections) == 1
+    assert calls == ['rank', 'explain', 'explain', 'audit']
     assert all(entry['why_chosen'] != text for entry in receipt['recommendations'].values())
     assert review._prose_issue('Target RNA accessibility was not measured.') is None
     assert review._prose_issue('Uses NM_018238.4 with c.1047_1049del.') is None
@@ -181,10 +182,7 @@ def test_summary_keeps_scores_and_relative_offsets_in_candidate_details(tmp_path
     def wording(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            result['summary'] = summary
-        if kind == 'repair':
-            assert payload['repair_panel'] and not payload['repair_candidate_ids']
-            result['summary'] = final_summary
+            result['summary'] = final_summary if payload.get('corrections_needed') else summary
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
@@ -318,11 +316,14 @@ def test_unchanged_repair_gets_actionable_feedback_instead_of_replaying_forever(
     def editing(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            result['recommendations'][0]['why_chosen'] = 'Matches donor@123.'
+            result['recommendations'][0]['why_chosen'] = 'The search covers one mismatch.'
+        if kind == 'audit' and payload['draft']['recommendations'][0]['why_chosen'] == 'The search covers one mismatch.':
+            key = payload['selected_ids'][0]
+            result['issues'] = [{'candidate_id': key, 'problem': 'The recorded search covers two mismatches.'}]
         if kind == 'repair':
             attempts.append(payload.get('corrections_needed'))
             if payload.get('corrections_needed'):
-                result['recommendations'][0]['why_chosen'] = 'Targets the recorded splice donor.'
+                result['recommendations'][0]['why_chosen'] = 'The search covers two mismatches.'
         return result, metadata
     monkeypatch.setattr(review, '_model_call', editing)
     _, _, result = run(pool(), tmp_path, {'candidate_limit': 2})
@@ -462,6 +463,9 @@ def test_repairs_keep_exact_citations_and_audits_keep_complete_evidence(tmp_path
     rows[0]['uncited_future_analysis'] = {'score': 0.12345}
     audit_paths, repair_paths = [], []
     def paths(packet):
+        if 'fields' in packet:
+            return ({path for paths in packet['fields'].values() for path in paths}
+                    | {path for fact in packet['shared_facts'] for path in fact['paths']})
         return {path for fact in packet['facts'] for path in fact['paths'].values()}
     def focused_repair(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
