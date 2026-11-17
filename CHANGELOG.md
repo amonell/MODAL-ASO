@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show the saved original request above design approaches, including reports
+  regenerated from archived request metadata. Keep compiled objectives as the
+  fallback when the original wording is unavailable ([#18](https://github.com/amonell/MODAL-ASO/issues/18)).
+
 ## 1.0.1 — 2026-11-16
 
 Faster shortlist review and improvements to request intake, references and terminal progress.

@@ -345,20 +345,27 @@ def _root_file(root, name):
     return path if path.is_file() and path.resolve().is_relative_to(root) else None
 
 
-def _requested_objective(goal, root):
-    """Keep the requested scope independent of routes and retained candidates."""
+def _requested_objective(goal, root, request=None):
+    """Prefer saved user wording; program and route goals describe the plan."""
+    if isinstance(request, str) and request.strip():
+        # The caller can supply the public request from an archived report when
+        # the projected review directory contains only saved candidate evidence.
+        return request.strip()
+    intake = read_record(_root_file(root, 'goal_intake.json'))
+    request = intake.get('request')
+    if not isinstance(request, str) or not request.strip():
+        path = _root_file(root, 'request.txt')
+        request = path.read_text(encoding='utf-8') if path else None
+    if isinstance(request, str) and request.strip():
+        from .report_presentation import display_request
+        envelope = intake.get('request_envelope') or read_record(_root_file(root, 'request_envelope.json'))
+        return display_request(root, envelope, request.strip())
     programs = [p for p in goal.get('design_programs') or [] if isinstance(p, dict)] or [goal]
-    if not all(isinstance(p.get('objective'), str) and p['objective'].strip() for p in programs):
-        intake = read_record(_root_file(root, 'goal_intake.json'))
-        request = intake.get('request')
-        if isinstance(request, str) and request.strip():
-            from .report_presentation import display_request
-            return display_request(root, intake.get('request_envelope'), request.strip())
     objectives = dict.fromkeys(_objective(p, goal.get('gene_symbol')) for p in programs)
     return '\n\n'.join(objectives)
 
 
-def project_run(run_dir, *, goal=None, kind='design'):
+def project_run(run_dir, *, goal=None, kind='design', request=None):
     """Project every recorded producer; preserve all source data on disk."""
     if not run_dir:
         return None
@@ -569,7 +576,7 @@ def project_run(run_dir, *, goal=None, kind='design'):
     else:
         facts.append({'label':'Chemistry','value':f'{len(all_chemistries)} specifications','note':'The exact chemistry stays attached to each ASO'})
     result = {'version':1,'kind':report_kind,'contexts':contexts,'records':records,'facts':facts,
-              'objective':_requested_objective(goal, root),
+              'objective':_requested_objective(goal, root, request),
               'panel_label':'Recommended panel' if selected.get('records') else 'Selected panel',
               'scope':'Saved scored and assessed candidates; each binding record retains its design group.'}
     review = selected.get('review') or generated.get('recommendation_review') or {}

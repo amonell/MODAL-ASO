@@ -82,6 +82,53 @@ def test_all_requested_programs_remain_visible_even_when_one_has_no_candidates(t
 
 
 @pytest.mark.parametrize('child', [False, True])
+def test_saved_request_takes_precedence_over_complete_compiled_programs(tmp_path, child):
+    root = tmp_path / 'child_runs' / 'task' if child else tmp_path
+    two_routes(root)
+    request = "Design four 20-nt ASOs to increase exon inclusion in human motor neurons. Preserve the productive transcript."
+    label = 'Design the exon-inclusion panel requested for human motor neurons.'
+    save(root, 'artifacts/intake/goal_intake.json', {
+        'request': request, 'request_envelope': {'tasks': [{'label': label}]},
+    })
+    before = {p: p.read_bytes() for p in root.rglob('*.json')}
+    data = project_run(root)
+    assert data['objective'] == (label if child else request)
+    assert GoalText(explorer_html(data)).text == data['objective']
+    assert data['contexts'][0]['objective'].startswith('Decrease use of the acceptor')
+    assert before == {p: p.read_bytes() for p in root.rglob('*.json')}
+
+
+@pytest.mark.parametrize('child', [False, True])
+def test_legacy_request_file_survives_missing_intake_json(tmp_path, child):
+    root = tmp_path / 'child_runs' / 'task' if child else tmp_path
+    two_routes(root)
+    request = 'Design the two requested panels.\nKeep both experimental conditions.'
+    label = 'Design the second panel with its requested conditions.'
+    (root / 'request.txt').write_text(request + '\n')
+    save(root, 'artifacts/intake/request_envelope.json', {'tasks': [{'label': label}]})
+    assert project_run(root)['objective'] == (label if child else request)
+
+
+def test_archived_public_request_can_be_supplied_without_modifying_saved_evidence(tmp_path):
+    two_routes(tmp_path)
+    request = 'Design <candidate> & <control> for the original inclusion experiment.'
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    data = project_run(tmp_path, request=request)
+    assert data['objective'] == request
+    assert GoalText(explorer_html(data)).text == request
+    assert '&lt;candidate&gt;' in explorer_html(data)
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+
+
+def test_full_html_renderer_passes_its_saved_public_request_to_candidate_projection(tmp_path):
+    from aso_agents.html_report import render_goal_intake_html
+    two_routes(tmp_path)
+    request = 'Design four ASOs for the original experiment, including all requested conditions.'
+    document = render_goal_intake_html({'meta': {'run_dir': str(tmp_path), 'user_request': request}})
+    assert GoalText(document).text == request
+
+
+@pytest.mark.parametrize('child', [False, True])
 def test_missing_program_prose_uses_the_saved_request_with_child_task_scope(tmp_path, child):
     root = tmp_path / 'child_runs' / 'task' if child else tmp_path
     goal, _, _ = run_fixture(root)
@@ -109,6 +156,8 @@ def test_browser_switching_approaches_keeps_the_requested_goal_visible(tmp_path)
     if not chrome:
         pytest.skip('A local Chromium browser is required for this interaction check.')
     two_routes(tmp_path)
+    request = 'Design four ASOs for the original biological request and evaluate both junctions.'
+    save(tmp_path, 'artifacts/intake/goal_intake.json', {'request': request})
     data = project_run(tmp_path)
     document = basic_document('Requested objective check', '', candidate_data=data)
     check = '''<script>
@@ -139,7 +188,7 @@ def test_browser_switching_approaches_keeps_the_requested_goal_visible(tmp_path)
         '--disable-background-networking', '--no-first-run', '--user-data-dir=' + str(tmp_path / 'chrome'),
         '--virtual-time-budget=1000', '--dump-dom', path.as_uri()],
         capture_output=True, text=True, env=environment, check=True, timeout=30)
-    assert GoalText(result.stdout).text == OBJECTIVE
+    assert GoalText(result.stdout).text == request
     assert 'data-requested-goal-stable="true"' in result.stdout
     assert 'data-approach-changed="true"' in result.stdout
     assert 'data-candidate-scope-changed="true"' in result.stdout
