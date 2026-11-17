@@ -1022,6 +1022,7 @@ def test_provided_aso_scoring_merges_duplicate_sequences_by_row_index(tmp_path: 
             output_name="provided_aso_scored_uniqueness.json",
             transcript_catalog=None,
             resolved_transcripts=None,
+            structured_goal=None,
         ):
             payload = json.loads(Path(tiles_json_path).read_text(encoding="utf-8"))
             for row in payload["rows"]:
@@ -10205,6 +10206,8 @@ def test_resolve_isoforms_leaves_other_isoform_bucket_unresolved_without_confirm
             },
         ],
     }
+    # This fixture identifies the physical feature by explicit annotation order.
+    goal["exon_index"] = 7
     final_payload = deepcopy(goal)
 
     result = run_goal_intake._resolve_isoform_transcripts(
@@ -10290,6 +10293,8 @@ def test_user_locked_transcript_anchors_aggregate_exon_objective(monkeypatch) ->
             }
         ],
     }
+    # This fixture identifies the physical feature by explicit annotation order.
+    goal["exon_index"] = 4
     final_payload = deepcopy(goal)
 
     result = run_goal_intake._resolve_isoform_transcripts(

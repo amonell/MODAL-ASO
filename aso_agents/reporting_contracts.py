@@ -76,5 +76,8 @@ def exact_gene_count(row: Dict[str, Any]):
 
 ISOFORM_SCORE_DEFINITION = ('isoform_uniqueness_score depends on its class: gene_wide is the fraction of the loaded catalog containing the site; '
     'without a beneficial set, a target-specific class is target matches / all matching isoforms; with a beneficial set it is target matches / (target matches + other matches + 4 * beneficial matches), using the saved role classifications. '
-    'It is not pan-isoform coverage unless class=gene_wide. isoform_coverage_fraction separately reports matching isoforms / catalog size. '
+    'For a typed transcript group, target matches count every structurally resolved member, not just the numbering reference. '
+    'Unclassified matches remain explicit and enter the denominator conservatively (weight 4 when they might be beneficial); this is a selectivity lower bound. '
+    'target_group_coverage_fraction separately reports matched resolved target members / resolved target members in the sequence-backed catalog. '
+    'Unresolved group identity makes selectivity unavailable. It is not pan-isoform coverage unless class=gene_wide. isoform_coverage_fraction separately reports matching isoforms / catalog size. '
     'Same-gene sharing supports broad knockdown but limits isoform-selective knockdown; neither metric measures experimental efficacy.')

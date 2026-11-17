@@ -201,6 +201,11 @@ def test_execution_does_not_infer_splice_effect_from_prose(text):
 
 def test_native_resolver_constructs_product_without_matching_parent_as_outcome(monkeypatch):
     goal = example()
+    # This synthetic geometry test explicitly uses annotation order.
+    goal['exon_index'] = 2
+    goal['design_programs'][0]['exon_index'] = 2
+    goal['splice_isoform_objectives'][0]['exon_index'] = 2
+    goal['splice_isoform_objectives'][1]['aggregate_class']['exon_index'] = 2
     # A legacy normalized class might already carry its reference as a label.
     # Its typed aggregate scope must still prevent a concrete abundance route.
     goal["splice_isoform_objectives"][1]["isoform_label"] = REFERENCE

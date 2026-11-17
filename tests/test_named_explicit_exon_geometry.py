@@ -56,3 +56,9 @@ def test_materialized_named_exon_keeps_one_span_and_actual_boundary_sites(strand
     assert all(s['delta_direction']=='decrease' for s in sites)
     native._materialize_modified_isoforms_for_explicit_targets(goal,{})
     assert len(goal['isoform_transcripts']['TX::explicit_target_model']['exons_tx'])==3
+    # The supplied complete span already answers the physical-identity question,
+    # including for an exon constructed on an explicitly recorded parent RNA.
+    from aso_agents.exon_identity_clarification import require_resolved_exon_identities
+    from aso_agents.exon_nomenclature_context import resolved_exon_requests
+    require_resolved_exon_identities(goal)
+    assert all(r['status'] == 'explicit_feature_coordinates' for r in resolved_exon_requests(goal))

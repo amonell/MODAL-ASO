@@ -159,6 +159,7 @@ def evidence_catalog(pool):
             for item in coordinate_observations(row, geometry))
         entry['overview'].append({'context': context,
             'binding_and_objective': {k: v for k, v in geometry.items() if v is not None},
+            'exon_identity': row.get('exon_identity_evidence'),
             'length': row.get('length'), 'modality': row.get('source_modality'),
             'gc_fraction': row.get('gc_fraction'),
             'evidence_status': assessment.get('recommendation_status'),
@@ -186,12 +187,46 @@ def evidence_catalog(pool):
     return entries
 
 
+def _comparison_entries(entries):
+    """Use checked source-page nominations without replacing original evidence."""
+    result = []
+    for entry in entries:
+        if 'review_facts' not in entry:
+            result.append(entry)
+            continue
+        view = dict(entry)
+        view['facts'] = view.pop('review_facts')
+        # The normalized overview can itself repeat thousands of contexts.
+        # Their original scientific facts were included in the source pages.
+        if len(json.dumps(view['overview'], separators=(',', ':'))) > 8000:
+            view['overview'] = []
+        result.append(view)
+    return result
+
+
+def _paging_scope(entries, ids=None):
+    records = [{'candidate_id': ids[index] if ids is not None else entry['id'],
+        **{key: entry['evidence_review'][key] for key in (
+        'method', 'source_sha256', 'source_fact_count', 'source_fragment_count',
+        'source_pages_reviewed', 'selected_fragment_count')}}
+        for index, entry in enumerate(entries) if entry.get('evidence_review')]
+    overviews = [{'id': ids[index] if ids is not None else entry['id'], 'contexts': entry['overview']}
+                 for index, entry in enumerate(entries) if entry.get('evidence_review') and entry['overview']]
+    return {'source_page_reviews': records, 'source_page_overviews': overviews, 'source_page_interpretation':
+        'Every source page for these molecules was reviewed before comparison. '
+        'The supplied facts are exact source-backed nominations, not the complete source record. '
+        'selected_source_excerpts labels partial strings/arrays with exact source ranges; '
+        'never treat these as a complete measurement or an exhaustive list of matches. '
+        'Omitted facts are not negative findings. Original values remain authoritative for citations.'} if records else {}
+
+
 def compact_packet(entries, *, citation_numbers=False, include_overviews=False):
     """Fact columns use common values and exact per-ASO exceptions.
 
     Paths with identical value vectors are aliases, so nested copies of the
     same measurement occupy one column. Citations use the original paths.
     """
+    entries = _comparison_entries(entries)
     ids = [entry['id'] for entry in entries]
     columns = defaultdict(dict)
     for entry in entries:
@@ -224,7 +259,7 @@ def compact_packet(entries, *, citation_numbers=False, include_overviews=False):
         else:
             fact = {**group, 'values_in_id_order': [values.get(k) for k in ids]}
         facts.append(fact)
-    return {'ids': ids, **({'candidate_overviews': [
+    return {'ids': ids, **_paging_scope(entries), **({'candidate_overviews': [
                 {'id': entry['id'], 'antisense_5to3': entry['identity'][0], 'contexts': entry['overview']}
                 for entry in entries]} if include_overviews else {}), 'facts': facts,
             'reading_guide': 'paths maps short citation IDs to exact saved evidence paths. Cite the short IDs. '
@@ -310,6 +345,7 @@ def screening_packet(entries, *, include_provenance=False, local_ids=True):
     provenance. All measurements, conditions, constraints, chemistry, match
     identities, uncertainty and unrecognized future attributes remain available.
     """
+    entries = _comparison_entries(entries)
     projected = entries if include_provenance else [{**entry, 'facts': _decision_facts(entry)} for entry in entries]
     packet = compact_packet(projected)
     facts = [{'paths': list(fact['paths'].values()),
@@ -377,7 +413,7 @@ def screening_packet(entries, *, include_provenance=False, local_ids=True):
         if label in labels:
             label = min(paths, key=len)
         labels.append(label)
-    return {'ids': ids, 'shared_facts': shared,
+    return {'ids': ids, **_paging_scope(entries, ids), 'shared_facts': shared,
         'fields': dict(zip(labels, columns)),
         'rows': [{'id': key, 'values': {labels[j]: column[i] for j, column in enumerate(values)
                   if str(j) not in availability or i in availability[str(j)]}}
@@ -387,7 +423,9 @@ def screening_packet(entries, *, include_provenance=False, local_ids=True):
             'to equivalent exact source paths. Every candidate also has each shared_facts value '
             'at its listed paths. '
             'A value_ref cell uses the exact shared_values entry. Null and absent fields are missing evidence. '
-            + ('Every original fact and source path is included. ' if include_provenance else
+            + ('Paged molecules carry source-backed nominated facts and explicit excerpts; consult source_page_reviews. '
+               if any(entry.get('evidence_review') for entry in entries) else
+               'Every original fact and source path is included. ' if include_provenance else
                'Technical provenance and duplicate encodings stay in the full catalog for detailed review. ')
             +
             'Read actual binding coordinates and measured effects: a program or transcript label identifies '
@@ -400,6 +438,7 @@ def nested_packet(entries):
     Every leaf retains its exact path and value. Numeric keys are array indices;
     keeping them as keys permits sparse shared trees without inserting nulls.
     """
+    entries = _comparison_entries(entries)
     def tree(facts):
         result = {}
         for pointer, value in facts.items():
@@ -413,7 +452,7 @@ def nested_packet(entries):
     for entry in entries[1:]:
         common = {path: value for path, value in common.items()
                   if path in entry['facts'] and digest(entry['facts'][path]) == digest(value)}
-    return {'ids': [entry['id'] for entry in entries], 'shared_facts': tree(common),
+    return {'ids': [entry['id'] for entry in entries], **_paging_scope(entries), 'shared_facts': tree(common),
         'candidate_facts': [{'id': entry['id'], 'facts': tree({path: value for path, value
             in entry['facts'].items() if path not in common})} for entry in entries],
         'reading_guide': 'Each candidate has ALL shared_facts plus its own facts, merged recursively. '
@@ -428,6 +467,7 @@ def indexed_packet(entries, *, packet=None):
     Prefix collisions preserve both a scalar path and its descendants, which
     can occur when a field is null in one source record and structured in another.
     """
+    entries = _comparison_entries(entries)
     packet = compact_packet(entries) if packet is None else packet
     tree, values = {}, {}
     for index, fact in enumerate(packet['facts'], 1):
@@ -448,7 +488,7 @@ def indexed_packet(entries, *, packet=None):
             child = node.get(parts[-1])
             node[parts[-1]] = ([key, child] if isinstance(child, dict) else
                               [key, child[1]] if isinstance(child, list) else key)
-    return {'ids': packet['ids'], 'path_index': tree, 'fact_values': values,
+    return {'ids': packet['ids'], **_paging_scope(entries), 'path_index': tree, 'fact_values': values,
         'reading_guide': 'path_index mirrors the complete source context tree. Each leaf names a key in '
             'fact_values. A node [value_key, child_fields] preserves both a scalar field and its children '
             'when their source types differ across ASOs. Resolve every path separately. '
@@ -477,6 +517,8 @@ def review_context(goal):
             if k in {'versioned_id', 'species', 'assembly_name', 'is_canonical', 'is_mane_select',
                      'curated_exon_nomenclature', 'exon_nomenclature_resolutions'}}
     result['selected_references'] = references
+    from .exon_nomenclature_context import exon_review_context
+    result['exon_identity'] = exon_review_context(goal)
     return result
 
 

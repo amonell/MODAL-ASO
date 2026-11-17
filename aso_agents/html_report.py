@@ -4130,6 +4130,8 @@ def _resolve_gapmer_uniqueness_context_for_report(
     structured_goal: Dict[str, Any],
     iso_label_primary: Optional[str],
 ) -> Dict[str, Any]:
+    from .gapmer_target_groups import group_objectives, objective_roles
+    has_target_group = any('target' in objective_roles(obj) for _, obj in group_objectives(structured_goal))
     target_label = _resolve_uniqueness_target_label_for_report(structured_goal, iso_label_primary)
     beneficial_labels: List[str] = []
     pathogenic_labels: List[str] = []
@@ -4171,6 +4173,10 @@ def _resolve_gapmer_uniqueness_context_for_report(
         mode = "pathogenic_preferred"
     elif target_labels:
         mode = "target_isoform_specific"
+    if has_target_group:
+        mode = "target_group_specific"
+        target_label = None
+        target_labels = []
     return {
         "mode": mode,
         "target_labels": target_labels,
@@ -4241,7 +4247,12 @@ def _build_gapmer_explanation(
     job_objective = _stringify(first_job.get("objective"), max_len=2000)
     job_note = _first_nonempty_lines(first_job.get("notes"), limit=3)
 
-    if uniqueness_mode == "pathogenic_preferred" and primary_target:
+    if uniqueness_mode == "target_group_specific":
+        summary = (
+            "Gapmer was run to reduce the requested transcript group. "
+            "Its reference transcript locates the defining feature; saved membership evidence determines which RNAs count toward the target."
+        )
+    elif uniqueness_mode == "pathogenic_preferred" and primary_target:
         summary = (
             f"Gapmer was run because {primary_target} was explicitly framed as the isoform to reduce. "
             "That gives the pipeline a direct transcript-lowering branch alongside any steric splice-redirection branch."
