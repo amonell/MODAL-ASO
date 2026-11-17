@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Share original chemistry proposals, compiled linkages and native support rules
+  across chemistry selection and review. Collect missing design inputs together
+  and ask confirmed clarification questions before further graph checks
+  ([#10](https://github.com/amonell/MODAL-ASO/issues/10)).
 - Keep the requested biological goals visible while switching report approaches,
   preserving complete goal text and all requested programs
   ([#8](https://github.com/amonell/MODAL-ASO/issues/8)).

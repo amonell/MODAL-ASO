@@ -1674,7 +1674,7 @@ def test_request_graph_agents_keep_generated_candidate_ranking_inside_design() -
         assert "pre-existing ASO sequences" in text
 
 
-def test_graph_with_retained_clarification_is_still_topology_reviewed(
+def test_graph_with_retained_clarification_is_topology_reviewed_after_answers(
     monkeypatch: Any,
 ) -> None:
     planned = _valid_workbench_payload()
@@ -1712,6 +1712,18 @@ def test_graph_with_retained_clarification_is_still_topology_reviewed(
 
     assert result["status"] == "need_clarification"
     assert result["questions"] == planned["questions"]
+    assert reviews == []
+
+    planned.update(status="ready", questions=[], reason=None)
+
+    async def finalize(_request_evidence: str, current: dict[str, Any]) -> dict[str, Any]:
+        return current
+
+    monkeypatch.setattr(pipeline_tools, "_finalize_verified_request_plan", finalize)
+    result = asyncio.run(
+        pipeline_tools._run_verified_request_workbench_agent_once("request with answered user input")
+    )
+    assert result["status"] == "ready"
     assert len(reviews) == 2
     assert "operation-coverage" in reviews[1]
 

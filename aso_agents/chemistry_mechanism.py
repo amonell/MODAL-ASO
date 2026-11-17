@@ -19,6 +19,18 @@ CHEMISTRY_MECHANISM_SCOPE = (
 )
 
 
+CHEMISTRY_REVIEW_EVIDENCE_SCOPE = (
+    "The selection_proposal is the original recommendation; chemistry is its compiled "
+    "representation. Use native_chemistry_contract to interpret their field names, linkage "
+    "expansion and native support requirements. A documented representation change preserves "
+    "chemical identity. Judge statements about proposal fields against selection_proposal, "
+    "and statements about compiled fields against chemistry. The native minimum DNA-gap "
+    "length is a platform support rule; it supplies no evidence of measured cleavage or "
+    "a universal biological threshold. Continue to flag contradictory chemical identities "
+    "and unsupported biological conclusions.\n"
+)
+
+
 chemistry_mechanism_audit_agent = Agent(
     name="Chemistry Mechanism Consistency Check",
     instructions=(
@@ -28,7 +40,7 @@ chemistry_mechanism_audit_agent = Agent(
         "that do not follow from the supplied evidence. Do not require measured efficacy "
         "for a computational design or invent a sequence, transcript, target annotation, "
         "count, threshold or experimental result. Do not object to well-qualified hypotheses. "
-        + CHEMISTRY_MECHANISM_SCOPE +
+        + CHEMISTRY_MECHANISM_SCOPE + CHEMISTRY_REVIEW_EVIDENCE_SCOPE +
         " Return JSON only: {\"issues\":[{\"claim\":\"exact quotation from the rationale\","
         "\"reason\":\"specific contradiction or missing causal premise\"}]}. "
         "Use an empty issues array when there is no concrete error. A finding must quote "
@@ -47,6 +59,7 @@ chemistry_finding_adjudicator = Agent(
         "Dismiss observations that identify no contradiction, merely request more detail, or reject "
         "properly qualified uncertainty. Evaluate the finding's substance, not its presence in an "
         "issues list. Do not change the recommendation, requested chemistry or scientific goal. "
+        + CHEMISTRY_REVIEW_EVIDENCE_SCOPE +
         "Return one schema-bound decision per finding with its evidence-based reason."
     ), tools=[], model="gpt-5-mini-2025-08-07",
 )
