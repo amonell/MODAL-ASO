@@ -140,7 +140,7 @@ def common_attributes(row, record):
 
 COMMON = [
     ('oligoai', 'OligoAI RNA reduction', 'Predicted RNA reduction using the selected RNA contexts, dose and delivery. Colors and filters use the lowest available prediction for each ASO; incomplete predictions remain unavailable.', '%', 0, 100, 'higher'),
-    ('effect', 'Splice prediction', 'Predicted support for the requested splicing direction at this target.', '', None, None, 'higher'),
+    ('effect', 'Predicted splice effect', 'Mean change in use of the selected junction. Negative values mean reduced use; positive values mean increased use.', '', -1, 1, 'higher'),
     ('phastcons', 'Conservation · phastCons', 'Average conservation across the binding site. Higher values indicate stronger evolutionary conservation.', '', 0, 1, 'higher'),
     ('phylop', 'Conservation · phyloP', 'Average phyloP across the binding site. Positive values indicate slower evolution; negative values indicate faster evolution.', '', None, None, 'higher'),
     ('isoform_selectivity', 'Target selectivity', 'Preference for the requested isoform or transcript group in the saved sequence matches. Higher values indicate stronger target preference; protected and unresolved matches retain their recorded penalties.', '', 0, 1, 'higher'),
@@ -166,7 +166,10 @@ def attach_attribute_catalog(result):
             continue
         attributes.append({'id':key, 'label':label, 'group':'Common attributes', 'kind':'number',
                            'description':description, 'unit':unit, 'low':low, 'high':high, 'direction':direction,
-                           'values':values, **({'dynamic':'oligoai'} if key=='oligoai' else {})})
+                           'values':values, **({'dynamic':'oligoai'} if key=='oligoai' else {}),
+                           **({'quantity':'splice_delta'} if key=='effect' else {})})
+    from .report_junctions import junction_attributes
+    attributes.extend(junction_attributes(records))
     # Uniqueness comparisons retain their mismatch budget and counting unit.
     scopes = sorted({(r.get('off_target_budget'),r.get('off_target_unit')) for r in records
                      if r.get('off_target_complete') and r.get('off_target_budget') in (0,1,2,3)}, key=str)

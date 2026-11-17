@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve exon-defined transcript groups through clarification, scoring and review. Resolve physical exon identity before design, keep partial transcript membership explicit, and report group coverage separately from selectivity (#31). New group-aware runs can rank candidates differently; historical scientific artifacts retain their recorded values.
+- Bound generated analysis programs to five minutes by default, terminate their process groups, and retain timeout diagnostics. Configure the budget through `ASO_ANALYSIS_TIMEOUT_SECONDS` (#1).
+- Keep provisional ASOs visible when recommendation review is incomplete, with review status and diagnostics carried into reports and terminal completion (#22).
+- Add independent signed junction filters, consistent splice-effect colors, one-row-per-ASO basket exports with all context evidence, readable safeguard details, and searchable filter history. Simplify the default attribute chooser and table while retaining saved ranks and full evidence (#23–#29).
+
 - Keep dense ASO binding maps readable with region navigation, spaced rows,
   collision-free labels, expandable splice-site details and optional value plots.
   Every saved ASO and prediction remains available in the table and downloads.

@@ -180,3 +180,46 @@ class BindingMapBrowserTest(unittest.TestCase):
         self.assertIn('Chromosome 1',self.page.locator('[data-role=map-description]').inner_text())
         self.page.locator('[data-role=context]').select_option('all');self.settle()
         self.assertTrue(self.page.locator('[data-role=map-section]').is_hidden())
+
+    def test_utr_and_regulatory_tracks_keep_geometry_hover_and_selection_on_mobile(self):
+        data=project_records([{'antisense_5to3':'ACGT'*4+'AC'+'ACGT'[i%4]+'ACGT'[i//4],
+            'binding_intervals_bed0_half_open':[['chr1',100220+i*2,100240+i*2]]} for i in range(12)])
+        context=data['contexts'][0]
+        context.update(reference_chrom='chr1',reference_strand='+',transcript='TX.1',
+            exons=[{'start':100200,'end':100500,'index':3,'label':'third annotated exon'}],
+            reference_features={'status':'resolved','note':'Saved reference annotation.',
+                'segments':[{'chrom':'chr1','start':100200,'end':100500,'exon_index':3,'kind':'utr3','label':'3′ UTR'}]},
+            regulatory_sites=[
+                {'kind':'rbp','label':'PUM1','chrom':'chr1','start':100225,'end':100240,'strand':'+',
+                 'evidence':'eCLIP peak','source':'K562 · ENCODE'},
+                {'kind':'mirna','label':'miR-test','chrom':'chr1','start':100245,'end':100252,'strand':'+',
+                 'evidence':'Predicted 8mer site','source':'TargetScan'}])
+        self.page.evaluate('''()=>{const p=CanvasRenderingContext2D.prototype,fill=p.fillRect;
+            window.annotationBars=[];p.fillRect=function(x,y,w,h){
+            if(this.canvas.dataset.role==='map'){
+              if(x===0&&y===0)window.annotationBars=[];
+              if(h===10)window.annotationBars.push({x,y,w,h,color:this.fillStyle});
+            }return fill.apply(this,arguments);};}''')
+        self.page.set_content(basic_document('Regulatory tracks','',candidate_data=data));self.settle()
+        for width in [1440,390]:
+            self.page.set_viewport_size({'width':width,'height':1100});self.settle()
+            self.assert_clear_labels()
+            labels=[x['text'] for x in self.page.evaluate('window.mapDrawing.labels')]
+            self.assertTrue(any('3′ UTR' in s for s in labels))
+            self.assertTrue(any('RBP · PUM1' in s for s in labels))
+            self.assertTrue(any('miRNA · miR-test' in s for s in labels))
+            self.assertIn('3′ UTR',self.page.locator('[data-role=map-feature-note]').inner_text())
+            bars=self.page.evaluate('window.annotationBars')
+            self.assertEqual(len(bars),2)
+            self.assertAlmostEqual(bars[0]['w']/bars[1]['w'],2,places=5)  # 16 bp versus 8 bp.
+            canvas=self.page.locator('[data-role=map]')
+            canvas.hover(position={'x':bars[0]['x']+bars[0]['w']/2,'y':bars[0]['y']+5})
+            self.assertIn('K562',self.page.locator('[data-role=map-tip]').inner_text())
+            self.assertIn('100,225–100,240',self.page.locator('[data-role=map-tip]').inner_text())
+            self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth>innerWidth+1'))
+        bar=self.page.evaluate('window.mapDrawing.bars[0]')
+        canvas.click(position={'x':bar['x']+bar['w']/2,'y':bar['y']+3});self.settle()
+        self.assertIn('1 ASO',self.page.locator('[data-role=basket-count]').inner_text())
+        self.page.locator('[data-role=search]').fill('no matching ASO');self.settle()
+        self.assertEqual(len(self.page.evaluate('window.annotationBars')),2)
+        self.assert_clear_labels()

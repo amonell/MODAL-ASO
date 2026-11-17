@@ -76,7 +76,8 @@ def test_jobs_chemistry_and_opposite_objectives_stay_separate(tmp_path):
     data = project_run(tmp_path)
     assert len(data['contexts'])==2
     a,b = [r for r in data['records'] if r['aso']=='ACGT']
-    assert a['molecule']!=b['molecule'] and a['effect']==-b['effect']
+    assert a['molecule']!=b['molecule'] and a['effect']==b['effect']==.2
+    assert {c['direction'] for c in data['contexts']} == {'increase', 'decrease'}
     assert a['panel_rank']==1 and b['panel_rank'] is None
 
 
@@ -194,7 +195,7 @@ def test_safeguard_reason_uses_recorded_review_and_preserves_a_zero_bound():
     guard={'label':'donor@120','passes':False,'max_increase':0,'values':[.08,.03],
            'review':{'status':'reviewed','rationale':'This junction belongs to a protected isoform.'}}
     result=safeguard_summary({'safeguard_report':[guard]},site)
-    assert result['summary']=='Exon 2 donor rose 0.08; limit 0.'
+    assert result['summary']=='Exon 2 donor rose 0.08; limit 0. Enforcement unrecorded.'
     assert result['details'][0]['reason']=='This junction belongs to a protected isoform.'
     guard.update(policy='observe',passes=None)
     guard['review']['rationale']='The paired junction supports the requested exon outcome.'
