@@ -93,14 +93,17 @@ def collect_request_artifacts(runtime, request):
             "scope": "Existing local paths explicitly mentioned by the user. The original request determines each file's role; file presence alone does not make an output destination an input."}
 
 
-def append_request_artifact_evidence(runtime, prompt, request):
+def append_request_artifact_evidence(runtime, prompt, request, *, include_runtime_references=True):
     from .species_config import available_reference_files
     evidence = collect_request_artifacts(runtime, request)
-    references = available_reference_files()
+    references = available_reference_files() if include_runtime_references else []
     if references:
         prompt = str(prompt) + (
             "\n\nConfigured local reference files (presence, not identity verification):\n"
             + json.dumps(references, ensure_ascii=False, indent=2)
+            + "\nThese files describe installed capabilities. They do not select the user's organism, "
+              "reference assembly or biological context. Choose a reference only after the request, "
+              "clarification answers or an explicitly supplied target reference establish that scope."
         )
     if not evidence["entries"]:
         return prompt

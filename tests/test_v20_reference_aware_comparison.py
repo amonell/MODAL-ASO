@@ -63,7 +63,7 @@ def test_mandatory_public_reference_cannot_route_to_self_contained_sandbox(monke
         return proposal
 
     monkeypatch.setattr(pipeline, "_run_request_workbench_agent_once", plan)
-    async def no_clarification(_prompt, proposal):
+    async def no_clarification(_prompt, proposal, *, source_artifacts=None):
         return proposal
     monkeypatch.setattr(pipeline, "_review_request_clarifications_if_needed", no_clarification)
     monkeypatch.setattr(pipeline, "_run_request_graph_review_agent_once", review)
