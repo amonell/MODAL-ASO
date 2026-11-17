@@ -209,6 +209,21 @@ def test_invalid_nominees_are_repaired_before_promotion(tmp_path, monkeypatch):
     assert any('corrections_needed' in attempt for attempt in attempts)
 
 
+def test_fitting_finalists_skip_another_nomination_round(tmp_path, monkeypatch):
+    calls = []
+    def recorded(kind, payload, schema):
+        calls.append((kind, payload))
+        return nomination_model(kind, payload, schema)
+    monkeypatch.setattr(review, '_model_call', recorded)
+    _, _, receipt = run(large_pool(2000), tmp_path, {'candidate_limit': 6})
+    assert receipt['status'] == 'completed'
+    assert receipt['reviewed_molecule_count'] == 2000
+    assert [level['method'] for level in receipt['review_levels']] == ['nomination', 'final_selection']
+    finalist_calls = [payload for kind, payload in calls if kind == 'select']
+    assert len(finalist_calls) == 1
+    assert review.SCREEN_THRESHOLD < len(finalist_calls[0]['evidence']['ids']) <= review.FINAL_BATCH_MOLECULES
+
+
 def test_nomination_outage_stops_after_current_wave(tmp_path, monkeypatch):
     calls = []
     def unavailable(kind, payload, schema):

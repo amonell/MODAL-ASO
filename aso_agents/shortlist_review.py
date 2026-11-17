@@ -29,7 +29,8 @@ MAX_WORKERS = 4
 SCREEN_BATCH_MOLECULES = 64
 SCREEN_PACKET_CHARACTERS = 160000
 FINAL_PACKET_CHARACTERS = 840000
-SCREEN_WORKERS = 16
+FINAL_BATCH_MOLECULES = 256
+SCREEN_WORKERS = 32
 SCREEN_THRESHOLD = 128
 ATTEMPTS = 3
 EDITORIAL_ROUNDS = 6
@@ -703,6 +704,11 @@ def _nominate(entries, context, directory, configuration):
     promote = max(4, min(12, desired))
     levels, remaining_ids = [], []
     while len(entries) > SCREEN_THRESHOLD:
+        # Once the nominees fit a single bounded final comparison, another
+        # nomination round adds latency without adding coverage.
+        if levels and len(entries) <= FINAL_BATCH_MOLECULES and len(json.dumps(
+                screening_packet(entries), separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
+            break
         batches = _batches(entries, packet_builder=screening_packet,
             max_molecules=SCREEN_BATCH_MOLECULES, max_characters=SCREEN_PACKET_CHARACTERS)
         level = len(levels)
