@@ -2,13 +2,6 @@
 
 Python **3.11**. Linux x86-64, WSL2, or Apple silicon macOS.
 
-## Optional browser interface
-
-Install the optional GUI with `uv sync --frozen --extra splice --extra gui`.
-Run `modal-aso gui` to open the local interface, or `modal-aso gui --test` for an offline preview.
-The GUI uses the same CLI controller, reference configuration and analysis outputs.
-Reports retain working relative output links in the Results tab.
-
 ## Prerequisites
 
 **Ubuntu / WSL2**

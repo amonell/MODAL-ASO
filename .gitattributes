@@ -5,5 +5,3 @@
 *.toml text eol=lf
 *.md text eol=lf
 *.png binary
-# Keep saved GUI preview outputs byte-for-byte identical across platforms.
-aso_agents/resources/gui/test_run/** -text -whitespace
