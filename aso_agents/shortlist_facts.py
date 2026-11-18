@@ -75,9 +75,9 @@ def verified_phrases(catalog, ids, geometry):
             anchor_sources = catalog[anchor].get('binding_sources', [])
             if anchor_sources and anchor_sources[0]:
                 refs = [(key, path) for path in sources[0]] + [(anchor, path) for path in anchor_sources[0]]
-                shift = placement['start_shift_nt_in_RNA']
+                shift = placement['start_shift_genomic_bp']
                 if shift:
-                    add(key, f"starts {abs(shift)} nt {placement['start_direction_from_anchor']} of ASO {placement['relative_to_panel_order']} in RNA order", refs)
+                    add(key, f"starts {abs(shift):,} bp {placement['start_direction_from_anchor']} of ASO {placement['relative_to_panel_order']} on the genome", refs)
         # Multiple contexts can contain different searches for one molecule.
         # Leave those original scoped records in the evidence packet.
         if len(entry.get('overview', [])) != 1:

@@ -534,10 +534,13 @@ whole declared target. These derived numbers may be quoted with citations to the
 saved binding coordinates and source_annotations/binding_site_membership. Treat
 panel order and the order of individual numerical metrics independently.
 binding_geometry gives each unambiguous panel placement relative to a named ASO
-on the same chromosome and strand. Its directions already follow RNA orientation;
-negative shifts are upstream and positive shifts downstream. Use this arithmetic
-for positional comparisons. Use /binding_geometry/start_shift_nt_in_RNA or
-/binding_geometry/end_shift_nt_in_RNA in quantitative comparisons. Panel numbering
+on the same chromosome and strand. These shifts measure genomic base pairs, including
+intervening introns. Negative shifts are upstream and positive shifts downstream.
+Use the word genomic or genome when quoting this distance. For spacing on a mature
+RNA, use transcript coordinates from both sites on the same transcript. When only
+their order matters, describe which site lies upstream or downstream.
+Use /binding_geometry/start_shift_genomic_bp or /binding_geometry/end_shift_genomic_bp
+in quantitative comparisons. Panel numbering
 uses /panel_order; its order is separate from genomic or RNA position.
 For evidence_paths and comparison_evidence, cite the supplied original coordinate
 or measurement facts. A derived distance between two ASOs is supported by the
@@ -1531,8 +1534,8 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                             item.update(supported=False, evidence_statement=issue['problem'])
                 return errors
             comparison_paths = {path for item in response['recommendations'] for path in item['evidence_paths']}
-            comparison_paths.update({'/panel_order', '/binding_geometry/start_shift_nt_in_RNA',
-                                     '/binding_geometry/end_shift_nt_in_RNA'})
+            comparison_paths.update({'/panel_order', '/binding_geometry/start_shift_genomic_bp',
+                                     '/binding_geometry/end_shift_genomic_bp'})
             comparison_paths.update('/coordinate_observations/' + str(index) + '/' + field
                 for key in ids for index, observation in enumerate(allowed[key].get('coordinate_observations', []))
                 for field, value in observation.items() if type(value) in (int, float)

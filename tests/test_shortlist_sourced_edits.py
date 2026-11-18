@@ -28,7 +28,8 @@ def test_verified_geometry_and_counts_resolve_to_original_rows(strand, edge):
             'panel_role': 'It ' + relative + '.', 'evidence_paths': [], 'comparison_evidence': []}
     assert render_phrases(item, phrases) == []
     assert item['tradeoff'] == 'The screen found 1 gene with exactly 2 mismatches.'
-    assert '20 nt ' + ('downstream' if strand == '+' else 'upstream') in item['panel_role']
+    direction = 'downstream' if strand == '+' else 'upstream'
+    assert item['panel_role'] == f'It starts 20 bp {direction} of ASO 1 on the genome.'
     assert any(path.endswith('/counts_by_mismatch/2') for path in item['evidence_paths'])
     assert any(path.endswith('/genomic_segments_bed0_half_open') for path in item['evidence_paths'])
     for pointer in item['evidence_paths']:
@@ -37,6 +38,23 @@ def test_verified_geometry_and_counts_resolve_to_original_rows(strand, edge):
     for invalid in (matches, '[[F9999]]', '[[F1', 'F1]]'):
         other = dict(item, candidate_id=ids[0], why_chosen=invalid)
         assert render_phrases(other, phrases)
+
+
+@pytest.mark.parametrize('strand,direction', [('+', 'downstream'), ('-', 'upstream')])
+def test_distance_across_exons_identifies_the_genomic_coordinate_system(strand, direction):
+    rows = pool(2)
+    cdna_starts = (43, 1046) if strand == '+' else (1046, 43)
+    for row, start, cdna_start in zip(rows, (55039590, 55052748), cdna_starts):
+        row.update(strand=strand, site_label=f'cDNA {cdna_start}–{cdna_start + 19}',
+                   binding_intervals_bed0_half_open=[['chr1', start - 1, start + 19]])
+    catalog = evidence_catalog(rows)
+    ids = list(catalog)
+    geometry = panel_binding_geometry(catalog, ids)
+    assert abs(geometry[ids[1]]['start_shift_genomic_bp']) == 13158
+    phrases = verified_phrases(catalog, ids, geometry)
+    relative = next(fact for fact in phrases.values() if 'of ASO 1' in fact['text'])
+    assert relative['text'] == f'starts 13,158 bp {direction} of ASO 1 on the genome'
+    assert {ref['candidate_id'] for ref in relative['sources']} == set(ids)
 
 
 def test_missing_or_incomparable_screening_stays_in_original_evidence():
