@@ -39,6 +39,7 @@ EDITORIAL_ROUNDS = 6
 DEFAULT_OUTPUT_TOKENS = 16384
 MAX_OUTPUT_TOKENS = 32768
 NOMINATION_OUTPUT_TOKENS = 8192
+MIN_SPLIT_NOMINATION_SIZE = 3
 _IMPLEMENTATION_FINGERPRINT = {name: digest((Path(__file__).parent / name).read_text()) for name in (
     'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'shortlist_query.py',
     'shortlist_exploration.py', 'report_attributes.py', 'candidate_presentation.py',
@@ -671,6 +672,9 @@ def _call(kind, payload, schema, check, directory, configuration):
     path = Path(directory) / 'recommendation_review' / 'components' / (key + '.json')
     previous = _read(path)
     previous_errors = []
+    batch_count = (payload.get('review_scope') or {}).get('batch_molecule_count', 0)
+    can_split = kind == 'nominate' and batch_count >= MIN_SPLIT_NOMINATION_SIZE
+    budget = NOMINATION_OUTPUT_TOKENS if kind in {'nominate', 'evidence', 'evidence_audit'} else DEFAULT_OUTPUT_TOKENS
     if (previous.get('key') == key and previous.get('status') == 'accepted'
             and previous.get('response_sha256') == digest(previous.get('response'))):
         previous_errors = _validate(previous['response'], schema, check)
@@ -686,14 +690,18 @@ def _call(kind, payload, schema, check, directory, configuration):
                     response_sha256=digest(candidate), revalidated_previous_attempt=True)
                 write_json(path, previous)
                 return candidate
-        if kind == 'nominate' and any(attempt.get('error_type') == 'ReviewTokenLimit'
-                                      for attempt in previous.get('attempts') or []):
-            raise ReviewBatchTooLarge('nomination_generation_budget_exhausted')
+        if kind == 'nominate':
+            exhausted = [a.get('generation_token_budget') or NOMINATION_OUTPUT_TOKENS
+                         for a in previous.get('attempts') or [] if a.get('error_type') == 'ReviewTokenLimit']
+            if exhausted:
+                if can_split:
+                    raise ReviewBatchTooLarge('nomination_generation_budget_exhausted')
+                # Older receipts stopped at this size. Resume with the next bounded allowance.
+                budget = min(MAX_OUTPUT_TOKENS, max(exhausted) * 2)
     attempts = list(previous.get('attempts') or [])
     errors = previous_errors
     response = previous.get('response') if errors else None
     received_response = bool(errors)
-    budget = NOMINATION_OUTPUT_TOKENS if kind in {'nominate', 'evidence', 'evidence_audit'} else DEFAULT_OUTPUT_TOKENS
     for _ in range(ATTEMPTS):
         started = time.monotonic()
         split_batch = False
@@ -713,7 +721,7 @@ def _call(kind, payload, schema, check, directory, configuration):
             attempts.append({'error_type': type(exc).__name__, 'generation_token_budget': budget})
             errors = ['The preceding response was unavailable or malformed. Return the required JSON.']
             if isinstance(exc, ReviewTokenLimit):
-                split_batch = kind == 'nominate'
+                split_batch = can_split
                 if not split_batch:
                     budget = min(MAX_OUTPUT_TOKENS, budget * 2)
                 errors = ['The previous generation reached its token allowance. Complete the required JSON concisely.']
@@ -872,7 +880,7 @@ def _nominate(entries, context, directory, configuration, *, include_provenance=
                 return [{**response, 'preferred_ids': [batch[i]['id'] for i in response['nominated_ids']],
                         'input_ids': [entry['id'] for entry in batch]}]
             except ReviewBatchTooLarge:
-                if len(batch) <= 2:
+                if len(batch) < MIN_SPLIT_NOMINATION_SIZE:
                     raise
                 middle = len(batch) // 2
                 return review(batch[:middle]) + review(batch[middle:])

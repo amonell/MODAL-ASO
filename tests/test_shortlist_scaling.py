@@ -356,6 +356,31 @@ def test_nomination_token_limit_splits_instead_of_repeating_a_large_generation(t
     assert sizes == []
 
 
+def test_smallest_nomination_can_finish_and_resume_after_generation_limit(tmp_path, monkeypatch):
+    import pytest
+    budgets = []
+    def nominate(kind, payload, schema):
+        budgets.append(payload['_generation_token_budget'])
+        if budgets[-1] == review.NOMINATION_OUTPUT_TOKENS:
+            raise review.ReviewTokenLimit('fixture used its output allowance')
+        return {'reviewed_count': 2, 'nominated_ids': [1], 'summary': 'Includes the required placement.'}, []
+    monkeypatch.setattr(review, '_model_call', nominate)
+    def compare(directory):
+        return review._call('nominate', {'review_scope': {'batch_molecule_count': 2}},
+            review.NOMINATE_SCHEMA, lambda value: [], directory, {})
+    assert compare(tmp_path/'fresh')['nominated_ids'] == [1]
+    assert budgets == [8192, 16384]
+    budgets.clear()
+    with monkeypatch.context() as limited:
+        limited.setattr(review, 'ATTEMPTS', 1)
+        with pytest.raises(review.ReviewUnavailable):
+            compare(tmp_path/'resumed')
+    assert compare(tmp_path/'resumed')['nominated_ids'] == [1]
+    assert budgets == [8192, 16384]
+    assert compare(tmp_path/'resumed')['nominated_ids'] == [1]
+    assert len(budgets) == 2
+
+
 def test_nomination_workers_keep_run_trace_and_preserve_full_pool_for_constraints(tmp_path, monkeypatch):
     from aso_agents.telemetry import evaluation_trace, current_evaluation_trace
     seen = []

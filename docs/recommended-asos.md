@@ -94,6 +94,9 @@ to their provider quota, or configure `ASO_LLM_CALL_RESOURCE` and its correspond
 Large evidence packets share field paths and repeated values while retaining the
 original measurements. Generation that reaches its token allowance receives a
 bounded retry with a larger allowance.
+Large nomination batches can split when a generation exhausts its allowance.
+For the smallest batches, the reviewer increases the allowance within the same
+generation cap. Resuming a saved, exhausted small batch uses the next allowance.
 
 Individual molecule records that exceed the comparison capacity are reviewed in
 bounded source pages. Query-driven review loads these pages for finalists and
