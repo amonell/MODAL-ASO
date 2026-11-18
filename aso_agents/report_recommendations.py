@@ -21,8 +21,13 @@ def recommendations_html(data):
         'id="report-' + esc(data['id']) + '-recommendations" tabindex="-1">',
         '<h2>' + title + '</h2><p>' + esc(review.get('summary')) + '</p>']
     if completed:
-        count = review.get('reviewed_molecule_count', 0)
-        parts.append('<p class="report-sub">' + f'{len(panel):,} recommended from {count:,} ASOs reviewed.</p>')
+        coverage = review.get('review_coverage') or {}
+        if coverage:
+            count = coverage.get('indexed_molecule_count', review.get('eligible_molecule_count', 0))
+            parts.append('<p class="report-sub">' + f'{len(panel):,} recommended from {count:,} eligible ASOs.</p>')
+        else:
+            count = review.get('reviewed_molecule_count', 0)
+            parts.append('<p class="report-sub">' + f'{len(panel):,} recommended from {count:,} ASOs reviewed.</p>')
     if panel:
         parts.append('<ol class="report-recommendation-list">')
         for rank, row in sorted(panel.items())[:8]:
@@ -69,11 +74,40 @@ def recommendations_html(data):
                          'The provisional panel follows the saved ranking and requested selection constraints.</p>')
     if completed:
         reviewer = review.get('reviewer') or {}
-        parts.append('<details><summary>About the recommendation review</summary><p>'
-            + esc(review.get('size_reason')) + '</p><p>'
-            'The model reviewed the eligible ASOs in groups, compared the leading choices, '
-            'and checked each explanation against the saved evidence. Requested counts, regions, '
-            'spacing and explicit ranking priorities were applied during selection.</p><p class="report-sub">'
-            + esc(reviewer.get('model')) + '</p></details>')
+        process = review.get('selection_process') or {}
+        parts.append('<details><summary>How these ASOs were chosen</summary><p>'
+            + esc(review.get('size_reason')) + '</p>')
+        if process:
+            parts.append('<p>' + esc(process.get('summary')) + '</p>')
+            coverage = review.get('review_coverage') or {}
+            labels = [('indexed_molecule_count', 'ASOs included in the library survey'),
+                      ('matched_molecule_count', 'ASOs matching the chosen filters'),
+                      ('compared_molecule_count', 'ASOs individually compared'),
+                      ('fully_reviewed_molecule_count', 'ASOs with complete evidence reviewed')]
+            parts.append('<dl>')
+            for key, label in labels:
+                count = coverage.get(key)
+                if type(count) is int and count >= 0:
+                    parts.append('<dt>' + label + '</dt><dd>' + f'{count:,}' + '</dd>')
+            parts.append('</dl>')
+            steps = process.get('steps') or []
+            if steps:
+                parts.append('<details><summary>Selection criteria and alternatives</summary><ol>')
+                for step in steps:
+                    parts.append('<li><p>' + esc(step.get('rationale')) + '</p>')
+                    counts = []
+                    for key, label in [('matched_count', 'matched'), ('unknown_count', 'had unavailable measurements')]:
+                        count = step.get(key)
+                        if type(count) is int and count >= 0:
+                            counts.append(f'{count:,} ASOs ' + label)
+                    if counts:
+                        parts.append('<p class="report-sub">' + '; '.join(counts) + '.</p>')
+                    parts.append('</li>')
+                parts.append('</ol></details>')
+        else:
+            parts.append('<p>The model reviewed the eligible ASOs in groups, compared the leading choices, '
+                'and checked each explanation against the saved evidence. Requested counts, regions, '
+                'spacing and explicit ranking priorities were applied during selection.</p>')
+        parts.append('<p class="report-sub">' + esc(reviewer.get('model')) + '</p></details>')
     parts.append('</section>')
     return ''.join(parts)
