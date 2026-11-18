@@ -238,3 +238,12 @@ def test_rejected_oversized_result_does_not_create_a_hidden_query_set(monkeypatc
         query(data, [])
     assert set(data.sets) == {'all'}
     assert not data.operations
+
+
+def test_numeric_object_keys_retain_separate_named_mismatch_bins():
+    rows = pool(2)
+    rows[0]['future_match_bins'] = {'0': 0, '1': 9}
+    rows[1]['future_match_bins'] = {'0': 2, '1': 0}
+    data = index(rows)
+    assert field(data, '/future_match_bins/0') != field(data, '/future_match_bins/1')
+    assert query(data, [predicate(data, '/future_match_bins/0', 0, operator='eq')])['candidate_ids'] == [molecule_id(rows[0])]

@@ -43,7 +43,9 @@ def atoms(facts):
                 if item is None or isinstance(item, (str, bool)) or number(item):
                     yield pointer + '/' + str(index), item, numeric_array
         elif value is None or isinstance(value, (str, bool)) or number(value):
-            yield pointer, scalar_value(value, tuple(pointer.split('/'))), False
+            # A terminal numeric key in flattened object facts is a named bin.
+            # Scalar arrays are handled above with their known container type.
+            yield pointer, scalar_value(value, tuple(pointer.split('/'))), pointer.rsplit('/', 1)[-1].isdecimal()
 
 
 def kind(value):

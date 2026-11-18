@@ -1113,7 +1113,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     return False
                 targets.append((observation['target_interval_bed0_half_open'], observation['target_strand']))
             return bool(targets) and all(target == targets[0] for target in targets)
-        def explain_check(response):
+        def explain_check(response, *, check_prose=True):
             recommendations = response['recommendations']
             for field in ('summary', 'size_reason'):
                 response[field] = _metric_labels(response[field])
@@ -1131,7 +1131,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 if 'aso_' in value:
                     errors.append(field + ': use ASO 1, ASO 2, etc. from complete_panel.panel_order; '
                                   'keep internal aso_ IDs in structured keys and citations only.')
-                problem = _prose_issue(value, summary=field == 'summary', context=context)
+                problem = _prose_issue(value, summary=field == 'summary', context=context) if check_prose else None
                 if problem:
                     errors.append(field + ': ' + problem)
             for item in recommendations:
@@ -1188,12 +1188,12 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             saved_schema = deepcopy(EXPLAIN_SCHEMA)
             for field in ('evidence_paths', 'comparison_evidence'):
                 saved_schema['properties']['recommendations']['items']['properties'][field].pop('maxItems', None)
-            if not _validate(draft, saved_schema, explain_check):
+            if not _validate(draft, saved_schema, lambda value: explain_check(value, check_prose=False)):
                 response = draft
         for attempt in range(EDITORIAL_ROUNDS):
             if response is None:
                 response = _call('explain', {**payload, 'review_corrections': []}, EXPLAIN_SCHEMA,
-                                 explain_check, directory, configuration)
+                                 lambda value: explain_check(value, check_prose=False), directory, configuration)
             elif corrections:
                 repair_ids = {issue['candidate_id'] for issue in corrections if issue['candidate_id'] != 'panel'}
                 repair_panel = any(issue['candidate_id'] == 'panel' for issue in corrections)
@@ -1259,6 +1259,26 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 response = merge(patch)
                 # Expand short citation IDs after merging with preserved evidence.
                 explain_check(response)
+            # Local wording checks identify exact fields before the evidence
+            # audit. Reuse the targeted repair mechanism so fixing one sentence
+            # cannot regenerate every candidate and introduce unrelated defects.
+            displayed = [('panel', field, response[field]) for field in ('summary', 'size_reason')]
+            displayed.extend((item['candidate_id'], field, item[field])
+                for item in response['recommendations'] for field in ('why_chosen', 'tradeoff', 'panel_role'))
+            wording = []
+            for key, field, text in displayed:
+                problem = _prose_issue(text, summary=field == 'summary', context=context)
+                if problem:
+                    wording.append({'candidate_id': key, 'field': field, 'supported': False,
+                                    'evidence_statement': problem})
+            if wording:
+                corrections = [{'candidate_id': item['candidate_id'],
+                    'problem': item['field'] + ': ' + item['evidence_statement']} for item in wording]
+                audit = {'issues': corrections, 'field_reviews': wording, 'checks': []}
+                numeric_comparisons = []
+                write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
+                    'draft_sha256': digest(response), 'audit': audit, 'stage': 'wording_repair'})
+                continue
             def audit_check(audit, review_ids=ids, include_panel=True):
                 errors = []
                 # Some reviewers repeat the whole panel in their coverage

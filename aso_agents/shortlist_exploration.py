@@ -147,7 +147,7 @@ def _read(path):
         return {}
 
 
-def _tools(index, records, save, replay=False):
+def _tools(index, records, save):
     from agents import function_tool
     from jsonschema import Draft7Validator
     functions = {'survey_candidates': index.survey, 'filter_candidates': index.filter,
@@ -248,11 +248,14 @@ def _session(phase, payload, index, directory, configuration):
     path = Path(directory)/'recommendation_review'/'exploration'/(key+'.json')
     previous = _read(path)
     records = []
+    reported_operations = 0
     state = {'key': key, 'phase': phase, 'configuration': configuration, 'input': payload,
              'status': 'incomplete', 'operations': records, 'attempts': []}
     def save():
+        nonlocal reported_operations
         write_json(path, state)
-        if records:
+        if len(records) > reported_operations:
+            reported_operations = len(records)
             from .shortlist_review import _progress
             last = records[-1]
             if last['tool'] == 'filter_candidates' and last.get('outcome') != 'error':
@@ -265,6 +268,8 @@ def _session(phase, payload, index, directory, configuration):
     functions = {'survey_candidates': index.survey, 'filter_candidates': index.filter,
                  'compare_candidates': index.compare, 'read_candidate_evidence': index.read_evidence}
     reusable = previous.get('key') == key
+    if reusable:
+        state['attempts'] = list(previous.get('attempts') or [])
     for record in previous.get('operations', []) if reusable else []:
         if record.get('outcome') == 'error':
             records.append(record)

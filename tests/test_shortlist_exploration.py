@@ -221,3 +221,26 @@ def test_contrary_finalist_evidence_reopens_selection_and_can_leave_empty_panel(
     assert len(reopened) == 140 and selected == []
     assert selection['status'] == 'unfulfilled' and selection['selected_count'] == 0
     assert (tmp_path/'recommendation_review/selection_reconsideration.json').exists()
+
+
+def test_incomplete_exploration_resume_retains_attempts_and_reports_each_query_once(tmp_path, monkeypatch):
+    from aso_agents.shortlist_query import CandidateIndex
+    catalog = evidence_catalog(large_pool(50))
+    progress = []
+    monkeypatch.setattr(review, '_progress', lambda *a, **k: progress.append((a, k)))
+    def interrupted(*args):
+        response = querying_model(*args)
+        raise TimeoutError('Fixture interruption after a completed query')
+    monkeypatch.setattr(exploration, '_run_model', interrupted)
+    with pytest.raises(TimeoutError):
+        exploration._session('explore', {'working_limit': 64}, CandidateIndex(catalog), tmp_path,
+            {'screening_reasoning_effort': 'low'})
+    assert len(progress) == 1
+    monkeypatch.setattr(exploration, '_run_model', querying_model)
+    exploration._session('explore', {'working_limit': 64}, CandidateIndex(catalog), tmp_path,
+        {'screening_reasoning_effort': 'low'})
+    receipt = json.loads(next((tmp_path/'recommendation_review/exploration').glob('*.json')).read_text())
+    assert receipt['status'] == 'accepted'
+    assert receipt['attempts'][0]['error_type'] == 'TimeoutError'
+    assert len(receipt['attempts']) == 2
+    assert len(progress) == 2

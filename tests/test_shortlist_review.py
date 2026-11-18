@@ -158,16 +158,20 @@ def test_visible_notation_and_contrastive_boilerplate_are_fixed_before_audit(tmp
         calls.append(kind)
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            if payload.get('corrections_needed'):
-                corrections.append(payload['corrections_needed'])
-            else:
-                result['recommendations'][0]['why_chosen'] = text
+            result['recommendations'][0]['why_chosen'] = text
+        if kind == 'repair':
+            corrections.append(payload['repair_fields'])
+            assert list(payload['repair_fields'].values()) == [['why_chosen']]
+            result['recommendations'][0]['why_chosen'] = 'This ASO has complete scoped off-target evidence.'
+            result['recommendations'][0]['tradeoff'] = 'Unsolicited unrelated rewrite.'
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
     assert receipt['status'] == 'completed' and len(corrections) == 1
-    assert calls == ['rank', 'explain', 'explain', 'audit']
+    assert calls == ['rank', 'explain', 'repair', 'audit']
     assert all(entry['why_chosen'] != text for entry in receipt['recommendations'].values())
+    assert all(entry['tradeoff'] == 'Target RNA accessibility remains unresolved.'
+               for entry in receipt['recommendations'].values())
     assert review._prose_issue('Target RNA accessibility was not measured.') is None
     assert review._prose_issue('Uses NM_018238.4 with c.1047_1049del.') is None
     assert review._prose_issue('Uses NM_018238 as the reference.') is None
@@ -185,7 +189,10 @@ def test_summary_keeps_scores_and_relative_offsets_in_candidate_details(tmp_path
     def wording(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            result['summary'] = final_summary if payload.get('corrections_needed') else summary
+            result['summary'] = summary
+        if kind == 'repair':
+            assert payload['repair_fields'] == {'panel': ['summary']}
+            result['summary'] = final_summary
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
