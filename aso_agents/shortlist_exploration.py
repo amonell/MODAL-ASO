@@ -282,11 +282,12 @@ def _run_model(phase, payload, index, records, save, configuration):
 
 def _session(phase, payload, index, directory, configuration):
     from jsonschema import Draft7Validator
-    from .shortlist_review import RUBRIC
+    from .shortlist_review import RUBRIC, _instructions
     basis = {name: digest((Path(__file__).parent/name).read_text()) for name in
              ('shortlist_exploration.py', 'shortlist_query.py', 'shortlist_evidence.py', 'report_attributes.py')}
     key = digest({'version': VERSION, 'phase': phase, 'payload': payload, 'configuration': configuration,
-                  'implementation': basis, 'rubric': digest(RUBRIC)})
+                  'implementation': basis, 'rubric': digest(RUBRIC),
+                  'membership_instructions': digest(_instructions('membership_confirmation'))})
     path = Path(directory)/'recommendation_review'/'exploration'/(key+'.json')
     previous = _read(path)
     records = []

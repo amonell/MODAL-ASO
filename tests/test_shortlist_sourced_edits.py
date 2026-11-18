@@ -72,6 +72,8 @@ def test_sourced_auditor_edit_rechecks_complete_text_and_replaces_wrong_citation
                     'sources': [{'candidate_id': cid, 'path': path + '2'}],
                     'superseded_sources': [{'candidate_id': cid, 'path': path + '1'}]}]
                 result['checks'][0]['facts_and_citations_match'] = False
+                result['mismatch_count_claims'] = [{'candidate_id': cid, 'source_candidate_id': cid,
+                    'context': 0, 'mismatches': 2, 'count': 2, 'field': 'why_chosen'}]
                 field = next(r for r in result['field_reviews'] if r['candidate_id'] == cid and r['field'] == 'why_chosen')
                 field.update(supported=False, evidence_statement='Use the two-mismatch bin.')
         return result, metadata
@@ -135,3 +137,15 @@ def test_independently_extracted_one_mismatch_claim_cannot_pass_on_a_two_mismatc
         item['comparison_evidence'].extend(finding['sources'])
     assert mismatch_citation_findings(draft, [claim], catalog) == []
     assert mismatch_citation_findings(draft, [{**claim, 'count': 1}], catalog)[0]['selection_impact'] == 'uncertain'
+
+
+def test_large_final_comparison_gets_the_existing_bounded_allowance_on_first_read(tmp_path, monkeypatch):
+    budgets = []
+    def model_call(kind, payload, schema):
+        budgets.append(payload['_generation_token_budget'])
+        return {'count': 1}, []
+    monkeypatch.setattr(review, '_model_call', model_call)
+    schema = review._object({'count': {'type': 'integer'}})
+    for size in (1, review.SCREEN_PACKET_CHARACTERS):
+        review._call('select', {'evidence': {'source': 'a' * size}}, schema, lambda value: [], tmp_path, {})
+    assert budgets == [review.DEFAULT_OUTPUT_TOKENS, review.MAX_OUTPUT_TOKENS]

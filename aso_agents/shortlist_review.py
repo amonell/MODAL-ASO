@@ -724,6 +724,11 @@ def _call(kind, payload, schema, check, directory, configuration):
     batch_count = (payload.get('review_scope') or {}).get('batch_molecule_count', 0)
     can_split = kind == 'nominate' and batch_count >= MIN_SPLIT_NOMINATION_SIZE
     budget = NOMINATION_OUTPUT_TOKENS if kind in {'nominate', 'evidence', 'evidence_audit'} else DEFAULT_OUTPUT_TOKENS
+    if (kind == 'select' and len(json.dumps(payload.get('evidence', {}), separators=(',', ':')))
+            > SCREEN_PACKET_CHARACTERS):
+        # Large finalist comparisons can use the existing maximum on their
+        # first reading, avoiding a full repeat after a truncated generation.
+        budget = MAX_OUTPUT_TOKENS
     if (previous.get('key') == key and previous.get('status') == 'accepted'
             and previous.get('response_sha256') == digest(previous.get('response'))):
         previous_errors = _validate(previous['response'], schema, check)
@@ -1496,7 +1501,19 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                         scoped.append(claim)
                 audit['mismatch_count_claims'] = scoped
                 for issue in mismatch_citation_findings(response, scoped, allowed):
-                    if issue not in audit['issues']:
+                    # An independently proposed wording change can carry the
+                    # original bin citation too. A missing pointer alone does
+                    # not propose a second, competing version of the sentence.
+                    wording_edits = [finding for finding in audit['issues']
+                        if issue['selection_impact'] == finding.get('selection_impact') == 'text_only'
+                        and finding['candidate_id'] == issue['candidate_id'] and finding.get('field') == issue['field']
+                        and finding.get('replacement')]
+                    combined_sources = [list({(ref['candidate_id'], expand_reference(ref['path'])): ref
+                        for ref in (edit.get('sources') or []) + issue['sources']}.values()) for edit in wording_edits]
+                    if wording_edits and all(len(refs) <= 8 for refs in combined_sources):
+                        for edit, refs in zip(wording_edits, combined_sources):
+                            edit['sources'] = refs
+                    elif issue not in audit['issues']:
                         audit['issues'].append(issue)
                     for item in fields:
                         if (item['candidate_id'], item['field']) == (issue['candidate_id'], issue['field']):
