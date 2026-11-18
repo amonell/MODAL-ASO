@@ -74,6 +74,9 @@ def fake_model(monkeypatch):
 
 
 def run(rows, tmp_path, goal=None, **kwargs):
+    # These tests exercise the established exhaustive evidence reviewer.
+    # Query-driven orchestration has separate adversarial integration tests.
+    kwargs.setdefault('review_strategy', 'exhaustive')
     return review.recommend_panel(rows, goal or {}, tmp_path, select_panel=selector(tmp_path),
                                   allow_model_calls=True, **kwargs)
 
@@ -575,11 +578,11 @@ def test_completed_review_reopens_offline_and_evidence_change_invalidates_it(tmp
     rows = pool(); first, _, receipt = run(rows, tmp_path, {'candidate_limit': 2})
     monkeypatch.setattr(review, '_model_call', lambda *a: pytest.fail('Must reuse accepted result'))
     again, _, saved = review.recommend_panel(rows, {'candidate_limit': 2}, tmp_path,
-        select_panel=selector(tmp_path), allow_model_calls=False)
+        select_panel=selector(tmp_path), allow_model_calls=False, review_strategy='exhaustive')
     assert again == first and saved['status'] == 'completed'
     rows[-1]['candidate_assessment']['off_target']['counts_by_mismatch'][0] = 10
     _, _, changed = review.recommend_panel(rows, {'candidate_limit': 2}, tmp_path,
-        select_panel=selector(tmp_path), allow_model_calls=False)
+        select_panel=selector(tmp_path), allow_model_calls=False, review_strategy='exhaustive')
     assert changed['status'] == 'pending'
 
 

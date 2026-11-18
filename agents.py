@@ -71,6 +71,13 @@ def _build_function_schema(func: Callable) -> Dict[str, Any]:
     }
     if doc:
         schema["description"] = doc[:800]
+    explicit = getattr(func, "_tool_parameters_schema", None)
+    if explicit is not None:
+        from jsonschema import Draft7Validator
+        Draft7Validator.check_schema(explicit)
+        if explicit.get('type') != 'object' or set(explicit.get('properties', {})) != set(sig.parameters):
+            raise ValueError('Tool parameters must match the callable signature')
+        schema['parameters'] = copy.deepcopy(explicit)
     return schema
 
 
@@ -179,6 +186,9 @@ def _compact_history_entry(
     incomplete_details = data.get("incomplete_details")
     if incomplete_details:
         response_meta["incomplete_details"] = incomplete_details
+    if isinstance(data.get('usage'), dict):
+        from aso_agents.telemetry import _normalized_usage
+        response_meta['usage'] = _normalized_usage(data)
     return {
         "response": response_meta,
         "parsed": parsed_out,

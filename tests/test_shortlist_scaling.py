@@ -352,7 +352,7 @@ def test_nomination_workers_keep_run_trace_and_preserve_full_pool_for_constraint
         return [next(row for row in ordered if row['selection_rank'] == 1)], {'status': 'complete'}
     with evaluation_trace({'case': 'nomination coverage'}) as trace:
         selected, _, receipt = review.recommend_panel(rows, {'candidate_limit': 1}, tmp_path,
-            select_panel=selector, allow_model_calls=True)
+            select_panel=selector, allow_model_calls=True, review_strategy='exhaustive')
     assert receipt['status'] == 'completed'
     assert selected[0]['selection_rank'] == 1
     assert set(seen) == {trace.trace_id}

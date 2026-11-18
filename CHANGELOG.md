@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Give the shortlist reviewer structured tools to survey, filter and compare large
+  candidate libraries before detailed evidence review. Check omitted alternatives,
+  preserve native panel requirements, and retain every ASO in reports and exports.
+  Record separate survey, comparison and complete-review counts with resumable
+  run-local receipts (#38). Recommendation membership and ordering can change.
 - Add an optional browser GUI with provider setup, chat, report and file panels,
   responsive scrolling, and offline `--test` previews. Group SDK serialization
   warnings under optional technical activity. The GUI uses the existing analysis

@@ -21,7 +21,7 @@ from .shortlist_evidence import (citation, clean, compact_packet, digest,
     evidence_catalog, fact_value, indexed_packet, molecule_id, nested_packet, panel_binding_geometry, review_context,
     screening_packet)
 
-VERSION = 'evidence-reviewed-shortlist/2'
+VERSION = 'evidence-reviewed-shortlist/3'
 MODEL = DEFAULT_MODEL
 MAX_BATCH_MOLECULES = 64
 MAX_PACKET_CHARACTERS = 180000
@@ -39,7 +39,8 @@ DEFAULT_OUTPUT_TOKENS = 16384
 MAX_OUTPUT_TOKENS = 32768
 NOMINATION_OUTPUT_TOKENS = 8192
 _IMPLEMENTATION_FINGERPRINT = {name: digest((Path(__file__).parent / name).read_text()) for name in (
-    'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'candidate_presentation.py',
+    'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'shortlist_query.py',
+    'shortlist_exploration.py', 'report_attributes.py', 'candidate_presentation.py',
     'exon_nomenclature_context.py', 'exon_identity_clarification.py', 'curated_exon_nomenclature.py', 'report_exon_names.py',
     'region_panel_selection.py', 'role_selection.py', 'pipeline_tools.py')}
 
@@ -148,7 +149,8 @@ Return reviewed_count equal to the batch count, nominated_ids and a two-sentence
 summary of the choice and main uncertainty. Return the required JSON object.
 """
 SELECT_INSTRUCTIONS = RUBRIC + """
-This is the final comparison of the nominees from a complete-library review.
+This is the final comparison of the supplied nominees. The review_scope records
+the complete library size and the number of finalists actually supplied here.
 Inspect every supplied finalist, then return nominated_ids in preferred order,
 up to promotion_limit, using the local integer IDs. Focus on choosing a useful
 panel and its alternatives; leave the remaining candidates unordered. Return a
@@ -326,6 +328,10 @@ class IntentReviewUnavailable(ReviewUnavailable):
     """A ranking-criterion review could not finish; stop submitting batches."""
 
 
+class PanelReconsideration(ReviewUnavailable):
+    """A detailed audit found evidence that needs another selection decision."""
+
+
 def _metric_labels(text):
     """Use the report's defined metric name in prose copied from legacy fields.
 
@@ -416,6 +422,16 @@ def _prose_issue(text, *, summary=False, context=None):
 
 
 def _instructions(kind):
+    if kind == 'selection_reconsideration':
+        return RUBRIC + '''
+Decide whether the recorded audit findings require comparing candidate choices
+again. Set reconsider_selection=true when actual placement, chemistry, required
+coverage or material contrary evidence undermines the choice or warrants comparing
+alternatives. Set false when the selected evidence still supports the choice and
+the findings can be resolved by precise wording and disclosure of limitations.
+Use only the supplied findings and goal. Explain the concrete basis briefly.
+Return only reconsider_selection (boolean) and reason (string).
+'''
     if kind in {'evidence', 'evidence_audit'}:
         from .shortlist_paging import INSTRUCTIONS, AUDIT_INSTRUCTIONS as SOURCE_AUDIT_INSTRUCTIONS
         return INSTRUCTIONS if kind == 'evidence' else SOURCE_AUDIT_INSTRUCTIONS
@@ -523,7 +539,7 @@ def _reasoning_effort(kind, config):
     flash = config.name == 'openrouter' and config.resolve_model(MODEL).startswith('deepseek/deepseek-v4.1-flash')
     if kind == 'audit' and flash:
         return 'low'
-    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair'}:
+    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair', 'selection_reconsideration'}:
         return 'low' if flash or kind == 'nominate' else 'medium'
     return 'high'
 
@@ -712,11 +728,11 @@ def _batches(entries, *, include_overviews=False, packet_builder=None, max_molec
     return batches
 
 
-def _page_large_evidence(catalog, context, directory, configuration):
+def _page_large_evidence(catalog, context, directory, configuration, *, minimum_size=None):
     """Keep ordinary reviews unchanged; page large records before comparison."""
     from .shortlist_paging import EvidencePagingError, needs_paging, review_large_entry
     entries = [entry for entry in catalog.values() if entry['eligible']
-               and needs_paging(entry, MAX_PACKET_CHARACTERS // 4)]
+               and needs_paging(entry, minimum_size or MAX_PACKET_CHARACTERS // 4)]
     if not entries:
         return catalog
     _progress(directory, f'Reviewing detailed evidence for {len(entries):,} ASOs in bounded pages.',
@@ -874,13 +890,13 @@ def _nominate(entries, context, directory, configuration):
     return entries, remaining_ids, levels
 
 
-def _rank(catalog, context, directory, configuration):
+def _rank(catalog, context, directory, configuration, *, preselected=False):
     entries = [entry for entry in catalog.values() if entry['eligible']]
     finalists, remaining, nominations = _nominate(entries, context, directory, configuration)
     if not finalists:
         return remaining, 0, nominations
     _progress(directory, f'Comparing {len(finalists):,} shortlist finalists.', phase='comparing', total=len(finalists))
-    if nominations:
+    if nominations or preselected:
         # One final comparison chooses a panel. Sorting every unsuccessful
         # nominee again adds output and retries without helping that decision.
         packet = screening_packet(finalists)
@@ -895,11 +911,23 @@ def _rank(catalog, context, directory, configuration):
                     errors.append('Choose local IDs from evidence.ids within promotion_limit.')
                 if bool(ids) != bool(response['suggested_size']) or response['suggested_size'] > len(entries):
                     errors.append('Use a positive suggested_size for a supported panel, within the complete pool count; otherwise use zero.')
+                preference_issue = _isoform_preference_issue(response['summary'], context)
+                if preference_issue:
+                    try:
+                        intent = _call('ranking_intent', {'goal': context, 'summary': response['summary']},
+                            RANK_INTENT_SCHEMA, lambda _: [], directory, configuration)
+                    except ReviewUnavailable as exc:
+                        raise IntentReviewUnavailable('ranking_criterion_review_unavailable') from exc
+                    if intent['fewer_isoform_matches_used_as_preference']:
+                        errors.append(preference_issue + ' Reconsider nominated_ids across the supplied candidates.')
                 return errors
+            schema = deepcopy(SELECT_SCHEMA)
+            schema['properties']['reviewed_count'] = {'type': 'integer', 'enum': [len(finalists)]}
             response = _call('select', {'goal': context, 'evidence': packet,
-                'review_scope': {'complete_pool_molecule_count': len(entries),
+                'review_scope': {'complete_pool_molecule_count':
+                    (context.get('candidate_review_scope') or {}).get('complete_pool_molecule_count', len(entries)),
                                 'finalist_molecule_count': len(finalists)},
-                'promotion_limit': limit}, SELECT_SCHEMA, check, directory, configuration)
+                'promotion_limit': limit}, schema, check, directory, configuration)
             preferred = [finalists[i]['id'] for i in response['nominated_ids']]
             order = preferred + [entry['id'] for entry in finalists if entry['id'] not in preferred]
             nominations.append({'level': len(nominations), 'method': 'final_selection',
@@ -1023,7 +1051,7 @@ def _rank_detailed(catalog, context, directory, configuration, *, total_molecule
     raise ReviewUnavailable('comparison_depth_exceeded')
 
 
-def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, configuration, *, ranking_review=()):
+def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, configuration, *, ranking_review=(), reconsider=False):
     # A large explicitly requested panel gets bounded explanation/audit batches.
     # All selected identities remain available as a panel outline in each batch.
     result, summaries, size_reasons, checked_notes = {}, [], [], []
@@ -1400,6 +1428,19 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 if len(json.dumps(source_findings, separators=(',', ':'))) > MAX_PACKET_CHARACTERS:
                     raise ReviewUnavailable('source_audit_corrections_exceed_review_capacity')
                 payload['source_page_findings'] = source_findings
+            if reconsider and (source_findings or any(
+                    check.get('biological_interpretation_supported') is False
+                    or check.get('tradeoffs_relevant_to_goal') is False for check in audit['checks'])):
+                decision = _call('selection_reconsideration', {'goal': context,
+                    'draft': response, 'findings': audit['issues'], 'source_findings': source_findings},
+                    _object({'reconsider_selection': {'type': 'boolean'}, 'reason': _text(700)}),
+                    lambda value: [], directory, configuration)
+                if decision['reconsider_selection']:
+                    write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
+                        'draft_sha256': digest(response), 'audit': audit})
+                    raise PanelReconsideration('detailed_evidence_requires_selection_review',
+                        details={'issues': audit['issues'], 'source_findings': source_findings,
+                                 'decision': decision, 'draft_molecule_count': len(response['recommendations'])})
             write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
                                         'draft_sha256': digest(response), 'audit': audit})
             if not audit['issues']:
@@ -1483,8 +1524,73 @@ def _effective_goal(goal, suggested_size):
     return result
 
 
+def _query_rank(catalog, context, goal, eligible, reserve, select_panel, directory, configuration):
+    """Compare a queried subset, then inspect full finalists and native reserves."""
+    from .shortlist_exploration import explore, ExplorationExhausted
+    reserve_ids = list(dict.fromkeys(molecule_id(row) for row in reserve))
+    projection, exploration = explore(catalog, context, directory, configuration, reserve_ids)
+    comparison_context = {**context, 'candidate_review_scope': {
+        'complete_pool_molecule_count': len(exploration['indexed_ids']),
+        'comparison_molecule_count': len(projection),
+        'evidence_scope': 'Exact source excerpts chosen during library exploration; complete source evidence follows for finalists.'}}
+    order, size, levels = _rank(projection, comparison_context, directory, configuration, preselected=True)
+    if not size:
+        raise ExplorationExhausted('An empty subset requires full-library review before an empty recommendation.')
+    detailed_ids = list(dict.fromkeys(order[:max(12, size*3)]+reserve_ids))
+    detailed_catalog, full_order, detailed_levels = dict(catalog), [], []
+    for expansion in range(3):
+        # The narrowed comparison can share repeated source facts across its
+        # finalists. Page only records that cannot fit a full comparison packet;
+        # ordinary finalists reach ranking and audits with every source fact.
+        subset = _page_large_evidence({key: detailed_catalog[key] for key in detailed_ids},
+            context, directory, configuration, minimum_size=MAX_PACKET_CHARACTERS)
+        detailed_catalog.update(subset)
+        detailed_context = {**context, 'candidate_review_scope': {
+            'complete_pool_molecule_count': len(exploration['indexed_ids']),
+            'comparison_molecule_count': len(subset),
+            'evidence_scope': 'Complete source evidence for these finalists and constraint reserves.'}}
+        detailed_order, size, current_levels = _rank(subset, detailed_context, directory,
+            configuration, preselected=True)
+        detailed_levels.extend(current_levels)
+        if not size:
+            raise ExplorationExhausted('The detailed subset requires comparison with the remaining library.')
+        full_order = list(dict.fromkeys(detailed_order+order+exploration['indexed_ids']))
+        positions = {key: index for index, key in enumerate(full_order)}
+        rows = [{**row, '_recommendation_order': positions[molecule_id(row)]} for row in eligible]
+        selected, selection = select_panel(rows, _effective_goal(goal, size))
+        additions = [molecule_id(row) for row in selected if molecule_id(row) not in detailed_ids]
+        if not additions:
+            break
+        detailed_ids = list(dict.fromkeys(detailed_ids+additions))
+        _progress(directory, f'Reviewing {len(additions)} additional ASOs needed for the requested panel.',
+                  phase='expanding_constraints', total=len(detailed_ids))
+    else:
+        raise ExplorationExhausted('Panel constraints require a full-library comparison.')
+    compared_ids = set(exploration['compared_ids']) | set(projection) | set(detailed_ids)
+    query_level = {'level': 0, 'method': 'query_guided', 'input_ids': exploration['indexed_ids'],
+                  'reviews': [], 'exploration': exploration}
+    all_levels = [query_level]+levels+detailed_levels
+    for index, level in enumerate(all_levels):
+        level['level'] = index
+    process = {'summary': f'Recorded attributes narrowed the library to {len(projection):,} ASOs for comparison. '
+        f'The reviewer also examined {len(exploration["challenger_ids"]):,} alternatives outside the filters and read the complete evidence for the leading choices.', 'steps': [
+        {name: operation[name] for name in ('rationale', 'matched_count', 'unknown_count')}
+        for operation in exploration['operations'] if operation['matched_count']
+        and operation['set_id'] in exploration['basis_set_ids']
+        and not _prose_issue(operation['rationale'])
+        and not any(character in operation['rationale'] for character in '{}[]')]}
+    coverage = {'indexed_molecule_count': len(exploration['indexed_ids']),
+        'matched_molecule_count': len(exploration['matched_ids']),
+        'compared_molecule_count': len(compared_ids),
+        'fully_reviewed_molecule_count': len(detailed_ids)}
+    return full_order, size, all_levels, detailed_catalog, {
+        'selection_process': process, 'review_coverage': coverage,
+        'compared_ids': sorted(compared_ids), 'fully_reviewed_ids': detailed_order,
+        'review_strategy': 'query_guided'}
+
+
 def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=False, retry_failed=False,
-                    skip_shortlist=False):
+                    skip_shortlist=False, review_strategy='auto'):
     """Return checked membership, native constraint receipt, and review provenance.
 
     Rendering never starts a model. The report execution stage explicitly enables
@@ -1492,12 +1598,14 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    if review_strategy not in {'auto', 'exhaustive'}:
+        raise ValueError('review_strategy must be auto or exhaustive')
     context = review_context(goal)
     eligible = [deepcopy(row) for row in pool
                 if (row.get('candidate_assessment') or {}).get('selection_eligible') is True]
     identity = digest({'version': VERSION, 'pool': clean(pool), 'goal': context,
         'implementation_basis': 'worker_import_snapshot',
-        'implementation': _IMPLEMENTATION_FINGERPRINT})
+        'implementation': _IMPLEMENTATION_FINGERPRINT, 'review_strategy': review_strategy})
     if skip_shortlist:
         # Skip before reviewer configuration, cached recommendations, evidence
         # paging, ranking and explanation. Native selection still enforces the
@@ -1565,8 +1673,25 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
         from .llm_provider import get_provider_config
         config = get_provider_config(require_credentials=False)
         configuration = _review_configuration(config)
-        catalog = _page_large_evidence(catalog, context, directory, configuration)
-        order, size, levels = _rank(catalog, context, directory, configuration)
+        review_details = {}
+        entries = [entry for entry in catalog.values() if entry['eligible']]
+        use_query = (review_strategy == 'auto' and goal.get('shortlist_size_preference') != 'all_eligible'
+            and (len(entries) > SCREEN_THRESHOLD or len(json.dumps(
+                screening_packet(entries), separators=(',', ':'))) > SCREEN_PACKET_CHARACTERS))
+        if use_query:
+            from .shortlist_exploration import ExplorationExhausted
+            try:
+                order, size, levels, catalog, review_details = _query_rank(catalog, context, goal,
+                    eligible, fallback, select_panel, directory, configuration)
+            except ExplorationExhausted as exc:
+                _progress(directory, 'Expanding the recommendation review to the complete library.',
+                    phase='expanding_library', reason=str(exc), total=len(entries))
+                write_json(directory/'recommendation_review'/'exploration_fallback.json',
+                    {'reason': str(exc), 'strategy': 'exhaustive'})
+                use_query = False
+        if not use_query:
+            catalog = _page_large_evidence(catalog, context, directory, configuration)
+            order, size, levels = _rank(catalog, context, directory, configuration)
         positions = {key: index for index, key in enumerate(order)}
         if set(positions) != {molecule_id(row) for row in eligible}:
             raise ReviewUnavailable('incomplete_molecule_review')
@@ -1582,22 +1707,51 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
             selection['groups'] = [{**group, 'selected_count': 0,
                 'shortfall_count': group.get('minimum') or group.get('candidate_limit') or 0}
                 for group in selection.get('groups') or []]
-        reasons, summary, size_reason = _explain(catalog, ids, order, context, selection,
-                                                directory, configuration, ranking_review=levels)
+        try:
+            reasons, summary, size_reason = _explain(catalog, ids,
+                review_details.get('fully_reviewed_ids', order), context, selection,
+                directory, configuration, ranking_review=levels, reconsider=use_query)
+        except PanelReconsideration as exc:
+            # Reopen selection using the complete library and explicit adverse
+            # evidence. The bounded full reviewer owns the subsequent decision.
+            _progress(directory, 'Reconsidering panel choices using the detailed evidence findings.',
+                      phase='reconsidering', total=len(entries))
+            write_json(directory/'recommendation_review'/'selection_reconsideration.json', exc.details)
+            full_context = {**context, 'selection_review_findings': exc.details}
+            catalog = _page_large_evidence(catalog, full_context, directory, configuration)
+            order, size, levels = _rank(catalog, full_context, directory, configuration)
+            positions = {key: index for index, key in enumerate(order)}
+            ranked_rows = [{**row, '_recommendation_order': positions[molecule_id(row)]} for row in eligible]
+            selected, selection = select_panel(ranked_rows, _effective_goal(goal, size))
+            ids = list(dict.fromkeys(molecule_id(row) for row in selected))
+            if size == 0 and all(not r['preferred_ids'] for r in levels[-1]['reviews']):
+                selected, ids = [], []
+                selection = {**selection, 'status': 'unfulfilled', 'selected_count': 0,
+                             'reason': 'review_found_no_supported_research_panel'}
+                selection['groups'] = [{**group, 'selected_count': 0,
+                    'shortfall_count': group.get('minimum') or group.get('candidate_limit') or 0}
+                    for group in selection.get('groups') or []]
+            reasons, summary, size_reason = _explain(catalog, ids, order, full_context, selection,
+                directory, configuration, ranking_review=levels)
+            review_details, use_query = {}, False
         result = {'version': VERSION, 'reviewer': configuration, 'ranked_ids': order,
             'ordering_scope': 'Recommended alternatives ordered by the reviewer; remaining reviewed candidates retain input order.'
                 if any(level.get('method') == 'nomination' for level in levels) else 'All candidates ranked by the reviewer.',
             'selected_ids': ids, 'suggested_size': size, 'recommendations': reasons,
             'summary': summary, 'size_reason': size_reason,
-            'eligible_molecule_count': len(positions), 'reviewed_molecule_count': len(positions),
-            'reviewed_binding_record_count': len(eligible), 'review_levels': levels,
+            'eligible_molecule_count': len(positions),
+            'reviewed_molecule_count': review_details.get('review_coverage', {}).get('compared_molecule_count', len(positions)),
+            'reviewed_binding_record_count': sum(len(catalog[key]['row_indices']) for key in
+                review_details.get('compared_ids', positions)), 'review_levels': levels,
             'source_evidence_reviews': {key: entry['evidence_review'] for key, entry in catalog.items()
                                        if entry.get('evidence_review')},
-            'selection_constraints': clean(selection), 'pool_sha256': digest(clean(pool))}
+            'selection_constraints': clean(selection), 'pool_sha256': digest(clean(pool)), **review_details}
+        if use_query:
+            result['ordering_scope'] = ('Reviewed alternatives appear first; remaining available ASOs retain their saved order.')
         write_json(path, {'status': 'completed', 'input_sha256': identity, 'result': result,
                           'result_sha256': digest(result)})
         _progress(directory, f'Shortlist review complete: {len(ids)} ASOs recommended after reviewing '
-                  f'{len(positions):,} candidates.', phase='completed', reviewed=len(positions),
+                  f'{result["reviewed_molecule_count"]:,} candidates.', phase='completed', reviewed=result['reviewed_molecule_count'],
                   total=len(positions), recommended=len(ids))
         for row in selected:
             row.pop('_recommendation_order', None)

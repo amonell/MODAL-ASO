@@ -251,7 +251,9 @@ def review_large_entry(entry, context, directory, configuration, call, *, page_l
                 errors.append('Select unique supplied record IDs within selection_limit.')
             return errors
 
-        response = call('evidence', payload, SCHEMA, check, directory, configuration)
+        schema = deepcopy(SCHEMA)
+        schema['properties']['reviewed_count'] = {'type': 'integer', 'enum': [len(records)]}
+        response = call('evidence', payload, schema, check, directory, configuration)
         selected = set(response['selected_ids'])
         receipts.append({'phase': phase, 'input_sha256': digest(payload),
                          'reviewed_count': len(records), 'selected_ids': response['selected_ids']})
@@ -302,7 +304,9 @@ def audit_large_entry(entry, context, draft, directory, configuration, call):
                 if len(set(ids)) != len(ids) or not set(ids) <= set(by_id):
                     errors.append('Cite unique record IDs from this source page for each correction.')
             return errors
-        response = call('evidence_audit', payload, AUDIT_SCHEMA, check, directory, configuration)
+        schema = deepcopy(AUDIT_SCHEMA)
+        schema['properties']['reviewed_count'] = {'type': 'integer', 'enum': [len(page)]}
+        response = call('evidence_audit', payload, schema, check, directory, configuration)
         receipts.append({'input_sha256': digest(payload), 'reviewed_count': len(page),
                          'issue_count': len(response['issues'])})
         for issue in response['issues']:
