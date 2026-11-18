@@ -205,7 +205,8 @@ def test_contrary_finalist_evidence_reopens_selection_and_can_leave_empty_panel(
     def rank(catalog, context, *args, **kwargs):
         if context.get('selection_review_findings'):
             reopened.extend(catalog)
-            return list(catalog), 0, [{'reviews': [{'preferred_ids': []}]}]
+            return list(catalog), 0, [{'reviews': [{'preferred_ids': [],
+                'summary': 'The recorded effects oppose the requested outcome.'}]}]
         return original_rank(catalog, context, *args, **kwargs)
     def explain(*args, **kwargs):
         if kwargs.get('reconsider'):
