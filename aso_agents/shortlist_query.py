@@ -256,7 +256,11 @@ class CandidateIndex:
                 raise ValueError('This attribute has multiple conditions; choose explicit scope_ids from survey.')
             chosen = list(column['scopes'])
         if any(key not in column['scopes'] for key in chosen):
-            raise ValueError('Unknown scope ID for this attribute.')
+            field = predicate['field_id']
+            if len(column['scopes']) == 1:
+                scope = next(iter(column['scopes']))
+                raise ValueError(f'Unknown scope ID for {field}. Its single recorded scope is {scope}.')
+            raise ValueError(f'Unknown scope ID for {field}. Survey this field to choose its saved conditions.')
         # Transcript/species aggregations are explicit. Dose, delivery, units
         # and model settings remain identical within a single comparison.
         comparability = []
@@ -331,7 +335,17 @@ class CandidateIndex:
             raise ValueError('Choose union, intersection or difference.')
         if join not in {'all', 'any'} or context_policy not in {'any', 'all'}:
             raise ValueError('Choose all or any for predicate and context combination.')
-        scopes = [self._scopes(predicate) for predicate in predicates]
+        order_by = order_by or []
+        if len(order_by) > 4:
+            raise ValueError('Use at most four explicit sorting criteria.')
+        scopes, errors = [], []
+        for criterion in [*predicates, *order_by]:
+            try:
+                scopes.append(self._scopes(criterion))
+            except ValueError as exc:
+                errors.append(str(exc))
+        if errors:
+            raise ValueError(' '.join(dict.fromkeys(errors)))
         matched, unknown = [], []
         for key in self.ids:
             if key not in starting:
@@ -363,11 +377,7 @@ class CandidateIndex:
                 matched.append(key)
             if unresolved:
                 unknown.append(key)
-        order_by = order_by or []
-        if len(order_by) > 4:
-            raise ValueError('Use at most four explicit sorting criteria.')
-        for criterion in reversed(order_by):
-            chosen = self._scopes(criterion)
+        for criterion, chosen in zip(reversed(order_by), reversed(scopes[len(predicates):])):
             if criterion['aggregation'] not in {'min', 'max'} or criterion['direction'] not in {'ascending', 'descending'}:
                 raise ValueError('Numeric sorting requires min/max and ascending/descending.')
             column = self.column(criterion['field_id'])

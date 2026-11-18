@@ -264,3 +264,17 @@ def test_comparison_shares_conditions_without_losing_source_association():
             assert observation['value'] == (80 if dose == 10 else 95)
             assert observation['value'] == data.catalog[candidate['id']]['facts'][observation['path']]
             assert 'conditions' not in observation
+
+
+def test_invalid_scopes_identify_all_affected_predicates_and_sorting_fields():
+    rows = pool(2)
+    data = index(rows)
+    length = predicate(data, '/length', 10, scope_ids=['unknown'])
+    rank = predicate(data, '/selection_rank', 1, scope_ids=['unknown'])
+    order = {'field_id': rank['field_id'], 'scope_ids': ['unknown'], 'aggregation': 'min', 'direction': 'ascending'}
+    with pytest.raises(ValueError) as caught:
+        query(data, [length], order_by=[order])
+    for spec in (length, rank):
+        assert spec['field_id'] in str(caught.value)
+        assert next(iter(data.column(spec['field_id'])['scopes'])) in str(caught.value)
+    assert not data.operations

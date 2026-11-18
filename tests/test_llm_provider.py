@@ -1087,3 +1087,73 @@ def test_transport_errors_are_focused_and_redact_underlying_message(
     assert "gpt-5.2-2025-12-11" in message
     assert "openai/gpt-5.2" in message
     assert secret not in message
+
+
+@pytest.mark.parametrize('reason,headers,retries,expected_calls', [
+    ('openrouter_in_flight_budget', {'retry-after': '120'}, None, 2),
+    ('openrouter_in_flight_budget', {'retry-after': '120'}, '1', 2),
+    ('openrouter_in_flight_budget', {'retry-after': '120'}, '0', 1),
+    ('openrouter_in_flight_budget', {'retry-after': '120', 'x-should-retry': 'false'}, None, 1),
+    ('openrouter_in_flight_budget', {'retry-after': '1800'}, None, 1),
+    ('openrouter_in_flight_budget', {}, None, 1),
+    ('insufficient_credits', {'retry-after': '120'}, None, 1),
+])
+def test_openrouter_temporary_reservation_obeys_shared_cooldown_and_retry_limits(
+    monkeypatch, tmp_path, reason, headers, retries, expected_calls,
+):
+    import httpx
+    from openai import APIStatusError
+    calls, pauses, gates = [], [], []
+    class LimitedOpenAI(_FakeOpenAI):
+        def create(self, **kwargs):
+            calls.append(copy.deepcopy(kwargs))
+            if len(calls) == 1:
+                body = {'error': {'code': 402, 'metadata': {'limit_source': reason}}}
+                response = httpx.Response(402, request=httpx.Request('POST', 'https://example.com'),
+                                          headers=headers, json=body)
+                raise APIStatusError('Reservation declined', response=response, body=body['error'])
+            return {'id': 'returned', 'status': 'completed', 'output': []}
+    @contextmanager
+    def admit(resource):
+        gates.append(resource)
+        yield {}
+    monkeypatch.setenv('ASO_RESOURCE_LOCK_ROOT', str(tmp_path))
+    monkeypatch.delenv('ASO_LLM_CALL_RESOURCE', raising=False)
+    if retries is None:
+        monkeypatch.delenv('ASO_LLM_TRANSPORT_RETRIES', raising=False)
+    else:
+        monkeypatch.setenv('ASO_LLM_TRANSPORT_RETRIES', retries)
+    monkeypatch.setattr(llm_provider, 'OpenAI', LimitedOpenAI)
+    monkeypatch.setattr(llm_provider, 'acquire_resource', admit)
+    monkeypatch.setattr(llm_provider, 'defer_resource', lambda resource, delay: pauses.append((resource, delay)))
+    config = llm_provider.get_provider_config({'OPENROUTER_API_KEY': 'reservation-test-key'})
+    payload = {'model': 'modal-default', 'input': []}
+    if expected_calls == 2:
+        assert llm_provider.create_response(payload, config)['id'] == 'returned'
+        gate, delay = pauses[0]
+        assert gate in gates and 'reservation-test-key' not in gate and delay >= 120
+        assert calls[0]['model'] == calls[1]['model']
+    else:
+        with pytest.raises(RuntimeError, match='HTTP 402'):
+            llm_provider.create_response(payload, config)
+        assert not pauses
+    assert len(calls) == expected_calls
+
+
+def test_shared_reservation_wait_affects_only_the_key_with_an_active_cooldown(fake_openai, monkeypatch):
+    checked, acquired = [], []
+    @contextmanager
+    def enter(resource):
+        acquired.append(resource)
+        yield {}
+    def cooldown(resource):
+        checked.append(resource)
+        return 120 if resource == checked[0] else 0
+    monkeypatch.delenv('ASO_LLM_TRANSPORT_RETRIES', raising=False)
+    monkeypatch.delenv('ASO_LLM_CALL_RESOURCE', raising=False)
+    monkeypatch.setattr(llm_provider, 'acquire_resource', enter)
+    monkeypatch.setattr(llm_provider, 'resource_cooldown_seconds', cooldown)
+    for key in ('key-with-cooldown', 'separate-key'):
+        config = llm_provider.get_provider_config({'OPENROUTER_API_KEY': key})
+        llm_provider.create_response({'model': 'modal-default', 'input': []}, config)
+    assert len(set(checked)) == 2 and acquired == checked[:1]

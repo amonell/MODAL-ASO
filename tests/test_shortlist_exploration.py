@@ -438,3 +438,40 @@ def test_duplicate_shortfall_cannot_revive_a_withdrawn_source(tmp_path, monkeypa
     monkeypatch.setattr(review, '_model_call', lambda *args: pytest.fail('A withdrawn source cannot reach confirmation'))
     with pytest.raises(exploration.ExplorationExhausted):
         exploration._session('challenge', payload, index, tmp_path, {})
+
+
+@pytest.mark.parametrize('repairs_query', [True, False])
+def test_failed_replacement_filter_has_one_bounded_tool_repair(tmp_path, monkeypatch, repairs_query):
+    from aso_agents.shortlist_query import CandidateIndex
+    index = CandidateIndex(evidence_catalog(large_pool(140)), [])
+    ids = list(index.ordered_sets['all'])
+    index.ordered_sets['withdrawn'] = ids[:40]
+    index.sets['withdrawn'] = set(ids[:40])
+    field = next(key for key, item in index.fields.items() if item['path'].endswith('/selection_rank'))
+    payload = {'goal': {}, 'outsider_ids': [], 'outsider_evidence': {'ids': []}, 'proposed_ids': ids[:40],
+               'proposed_filter_ids': ['withdrawn'], 'replacement_candidate_limit': 96, 'additional_candidate_limit': 32}
+    attempts = []
+    def reviewer(phase, request, index, records, save, configuration):
+        tool = next(t for t in exploration._tools(index, records, save) if t._tool_name == 'filter_candidates')
+        attempts.append(request['needs_more_queries'])
+        scopes = [] if repairs_query and len(attempts) == 3 else ['invalid_scope']
+        result = tool({'input_sets': ['all'], 'combine': 'union', 'join': 'all', 'context_policy': 'any',
+            'predicates': [{'field_id': field, 'scope_ids': scopes, 'operator': 'gte', 'value': 20,
+                            'aggregation': 'any', 'missing': 'exclude'}], 'order_by': [], 'offset': 0, 'limit': 32,
+            'rationale': 'Compare candidates from an independent query.'})
+        return {'additional_candidate_ids': [], 'additional_query_slices': [] if 'error' in result else [
+                {'set_id': result['set_id'], 'offset': 0, 'take': 32}],
+            'filter_decisions': [{'set_id': 'withdrawn', 'keep': False}], 'attribute_ids': [field],
+            'strategy_supported': True, 'blocking_issues': [], 'caveats': [], 'reviewed_outsider_ids': [],
+            'summary': 'Withdraw the earlier filter and review a replacement set.'}, []
+    monkeypatch.setattr(exploration, '_run_model', reviewer)
+    def run_challenge():
+        return exploration._session('challenge', payload, index, tmp_path, {})
+    if repairs_query:
+        result = run_challenge()
+        assert len(exploration._response_ids(result, index)) == 32
+        assert result['additional_query_slices'][0]['set_id'] != 'withdrawn'
+    else:
+        with pytest.raises(exploration.ExplorationExhausted):
+            run_challenge()
+    assert attempts == [False, True, True]

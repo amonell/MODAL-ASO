@@ -4,7 +4,8 @@
 
 - Count distinct ASOs across overlapping shortlist queries and show the realized
   pool for review. Cite original measurements for target overlap, genomic spacing
-  and mismatch counts. Apply sourced wording corrections and independently check the complete
+  and mismatch counts. Repair invalid replacement filters using recorded conditions.
+  Honor temporary OpenRouter reservation cooldowns. Apply sourced wording corrections and independently check the complete
   revised panel. A reviewer can still reopen selection when evidence affects
   which molecules to recommend. ([#43](https://github.com/amonell/MODAL-ASO/issues/43))
 - Give the shortlist reviewer structured tools to survey, filter and compare large

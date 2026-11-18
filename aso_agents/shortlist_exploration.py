@@ -410,9 +410,9 @@ def _session(phase, payload, index, directory, configuration):
                  previous.get('approved_membership_sha256') == digest(_response_ids(previous['response'], index)))):
         return previous['response']
     correction, previous_decision = [], None
-    repair_first_decision = False
+    allow_final_correction = False
     for attempt in range(3):
-        if attempt == 2 and not repair_first_decision:
+        if attempt == 2 and not allow_final_correction:
             break
         started = time.monotonic()
         request = {**payload, 'corrections': correction,
@@ -465,10 +465,15 @@ def _session(phase, payload, index, directory, configuration):
                 state['approved_membership_sha256'] = digest(members)
             else:
                 correction = ['The reviewer declined this exact comparison membership: ' + approval['reason']]
-        # A truncated first generation has never seen membership validation.
-        # Give the first usable decision one tool-free correction over saved evidence.
-        repair_first_decision = (attempt == 1 and previous_decision is None and bool(correction)
-            and not needs_queries and _can_finalize_from_observations(phase, records))
+        if attempt == 1 and correction:
+            # One last bounded turn can repair a malformed replacement query or
+            # the first usable decision after truncation. The same evidence,
+            # independence and membership checks apply to every attempt.
+            allow_final_correction = ((previous_decision is None and not needs_queries
+                and _can_finalize_from_observations(phase, records)) or
+                (phase == 'challenge' and needs_queries and response.get('strategy_supported')
+                 and any(not item['keep'] for item in response['filter_decisions'])
+                 and any(r['tool'] == 'filter_candidates' and r.get('outcome') == 'error' for r in records)))
         previous_decision = response
         state['attempts'].append({'response': response, 'validation_errors': correction,
             'model_metadata': metadata, 'elapsed_seconds': time.monotonic()-started})
