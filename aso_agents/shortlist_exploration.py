@@ -51,8 +51,9 @@ TOOL_SCHEMAS = {
     'read_candidate_evidence': obj({'candidate_id': TEXT, 'page': INTEGER})}
 SUMMARY = {'type': 'string', 'minLength': 1, 'maxLength': 900}
 FINDINGS = array({'type': 'string', 'maxLength': 600}, 8)
-SLICES = array(obj({'set_id': TEXT, 'offset': INTEGER,
-    'take': {'type': 'integer', 'minimum': 1, 'maximum': 128}}), 16)
+COUNT = {'type': 'integer', 'minimum': 1, 'maximum': 128}
+SLICES = array({'anyOf': [obj({'set_id': TEXT, 'offset': INTEGER, size: COUNT})
+                          for size in ('take', 'fill_to_distinct')]}, 16)
 FINAL_SCHEMA = obj({'candidate_ids': IDS, 'query_slices': SLICES, 'basis_set_ids': array(TEXT, 16),
     'attribute_ids': array(TEXT, 12), 'summary': SUMMARY})
 CHALLENGE_SCHEMA = obj({'additional_candidate_ids': array(TEXT, 32),
@@ -96,6 +97,10 @@ Choose the comparison pool with query_slices: each slice names a returned set_id
 an offset and a take count in its stored sorted order. For example, offset=0 and
 take=48 selects its first 48 members exactly. This avoids copying long ID lists.
 Use candidate_ids for a few individually chosen additions; otherwise use [].
+When combining individuals or overlapping slices, the last slice can use
+fill_to_distinct instead of take. That number is the desired total of distinct
+members in this decision. It fills in the selected set's stored order from offset,
+skipping members already chosen. You will see the exact resulting membership for approval.
 The combined membership must fit working_limit. Aim for
 32 to 64 alternatives when that many match the chosen criteria. This pool supports
 the later final panel; a four-ASO request still benefits from a larger comparison.
@@ -144,6 +149,9 @@ and do not count against that additions limit. working_limit belongs to the init
 comparison proposal, whose final research panel is chosen in a later step.
 Use additional_query_slices to restore members from a stored query without copying
 their IDs; use an empty array when no such additions are needed.
+For a replacement, use fill_to_distinct on the final slice to reach the desired
+number of unique comparison members including your individual picks and earlier
+slices. For additions this count covers only the IDs and slices in this decision.
 Return reviewed_outsider_ids naming every supplied outsider exactly once. strategy_supported
 means the strategy and criteria are defensible after those additions. If assumptions
 remain invalid, set strategy_supported=false with concrete blocking_issues; the full-library reviewer
@@ -318,19 +326,18 @@ def _session(phase, payload, index, directory, configuration):
         except (KeyError, ValueError, TypeError) as exc:
             raise ExplorationExhausted('A saved evidence query could not be replayed.') from exc
     def check(response):
-        nonlocal needs_queries
+        nonlocal needs_queries, minimum_needed
         needs_queries = False
+        minimum_needed = None
         schema = CHALLENGE_SCHEMA if phase == 'challenge' else FINAL_SCHEMA
         errors = [error.message[:250] for error in Draft7Validator(schema).iter_errors(response)]
         if errors:
             return errors
         slices = response.get('query_slices', response.get('additional_query_slices', []))
-        for item in slices:
-            if item['set_id'] not in index.ordered_sets:
-                return ['Each query slice must name a returned query set_id.']
-            if item['offset'] + item['take'] > len(index.ordered_sets[item['set_id']]):
-                return ['Query slices must stay within the stored result count.']
-        ids = set(_response_ids(response, index))
+        try:
+            ids = set(_response_ids(response, index))
+        except ValueError as exc:
+            return [str(exc)]
         for set_id in response.get('basis_set_ids', []):
             if set_id not in index.sets:
                 return ['Return only candidate sets created by your queries.']
@@ -351,6 +358,7 @@ def _session(phase, payload, index, directory, configuration):
                     sizes = [len(index.sets[item['set_id']]) for item in slices]
                     minimum = min(32, max(sizes, default=len(index.ids)), limit)
                     if not slices or len(ids) < minimum:
+                        minimum_needed = minimum
                         errors.append(f'Supply an independent replacement query slice and at least {minimum} comparison candidates, or request full-library review.')
                 if not (set(index.ordered_sets) - excluded - {'all'}):
                     needs_queries = True
@@ -372,6 +380,7 @@ def _session(phase, payload, index, directory, configuration):
             sizes = [len(index.sets[key]) for key in basis if index.sets[key]]
             minimum = min(32, min(sizes, default=len(index.ids)), payload['working_limit'])
             if len(ids) < minimum:
+                minimum_needed = minimum
                 errors.append(f'Return at least {minimum} comparison candidates from query results. The final panel is chosen later.')
         if phase == 'challenge':
             outsiders = set(payload['outsider_ids'])
@@ -392,10 +401,12 @@ def _session(phase, payload, index, directory, configuration):
             if response['strategy_supported'] == bool(response['blocking_issues']):
                 errors.append('strategy_supported must agree with blocking_issues. Put ordinary measurement gaps in caveats.')
         return errors
-    needs_queries = False
+    needs_queries, minimum_needed = False, None
     if (reusable and previous.get('status') == 'accepted'
             and previous.get('response_sha256') == digest(previous.get('response'))
-            and not check(previous['response'])):
+            and not check(previous['response'])
+            and (not _uses_fill(previous['response']) or
+                 previous.get('approved_membership_sha256') == digest(_response_ids(previous['response'], index)))):
         return previous['response']
     correction, previous_decision = [], None
     repair_first_decision = False
@@ -420,7 +431,32 @@ def _session(phase, payload, index, directory, configuration):
                 correction = ['Finish the required JSON using the existing query results. Keep each list and explanation concise.']
                 continue
             raise
+        previous_submission = response
         correction = check(response)
+        candidate = response
+        if len(correction) == 1 and minimum_needed and not needs_queries:
+            candidate = _overlap_repair(response, index, minimum_needed)
+            if candidate is not None:
+                correction = check(candidate)
+        approval = None
+        if not correction and _uses_fill(candidate):
+            from .shortlist_review import _call
+            members = _response_ids(candidate, index)
+            before = _response_ids(response, index)
+            preview = {'goal': payload['goal'], 'phase': phase, 'decision': candidate,
+                'ordered_members': members, 'distinct_count': len(members),
+                'introduced_by_overlap_repair': [key for key in members if key not in before],
+                'queries': [{'set_id': op['set_id'], 'query': op['query'], 'rationale': op['rationale']}
+                    for op in index.operations if op['set_id'] in {
+                        item['set_id'] for item in _slices(candidate)}]}
+            approval = _call('membership_confirmation', preview,
+                obj({'approve': {'type': 'boolean'}, 'reason': SUMMARY}), lambda value: [],
+                directory, configuration)
+            if approval['approve']:
+                response = candidate
+                state['approved_membership_sha256'] = digest(members)
+            else:
+                correction = ['The reviewer declined this exact comparison membership: ' + approval['reason']]
         # A truncated first generation has never seen membership validation.
         # Give the first usable decision one tool-free correction over saved evidence.
         repair_first_decision = (attempt == 1 and previous_decision is None and bool(correction)
@@ -428,6 +464,9 @@ def _session(phase, payload, index, directory, configuration):
         previous_decision = response
         state['attempts'].append({'response': response, 'validation_errors': correction,
             'model_metadata': metadata, 'elapsed_seconds': time.monotonic()-started})
+        if approval is not None:
+            state['attempts'][-1].update(submitted_decision=previous_submission,
+                                          membership_confirmation=approval)
         if not correction:
             state.update(status='accepted', response=response, response_sha256=digest(response))
         save()
@@ -436,11 +475,57 @@ def _session(phase, payload, index, directory, configuration):
     raise ExplorationExhausted('The exploration response could not be validated.')
 
 
+def _slices(response):
+    return response.get('query_slices', response.get('additional_query_slices', []))
+
+
+def _uses_fill(response):
+    return any('fill_to_distinct' in item for item in _slices(response))
+
+
 def _response_ids(response, index):
-    ids = list(response.get('candidate_ids', response.get('additional_candidate_ids', [])))
-    for item in response.get('query_slices', response.get('additional_query_slices', [])):
-        ids.extend(index.ordered_sets[item['set_id']][item['offset']:item['offset']+item['take']])
-    return list(dict.fromkeys(ids))
+    members = dict.fromkeys(response.get('candidate_ids', response.get('additional_candidate_ids', [])))
+    slices = _slices(response)
+    for position, item in enumerate(slices):
+        ordered = index.ordered_sets.get(item['set_id'])
+        if ordered is None:
+            raise ValueError('Each query slice must name a returned query set_id.')
+        offset = item['offset']
+        if 'take' in item:
+            end = offset + item['take']
+            if end > len(ordered):
+                raise ValueError('Query slices must stay within the stored result count.')
+            members.update(dict.fromkeys(ordered[offset:end]))
+            continue
+        target = item['fill_to_distinct']
+        if position != len(slices) - 1 or len(members) > target or offset >= len(ordered):
+            raise ValueError('Use fill_to_distinct only on the final slice, with a valid offset and a total covering all earlier picks.')
+        for candidate in ordered[offset:]:
+            if len(members) == target:
+                break
+            members[candidate] = None
+        if len(members) < target:
+            raise ValueError(f'The chosen slice reached {len(members)} distinct members out of {target} requested. Choose another approved slice or offset.')
+    return list(members)
+
+
+def _overlap_repair(response, index, minimum):
+    """Preview an exact continuation only when overlap accounts for the shortfall."""
+    slices = _slices(response)
+    if not slices or _uses_fill(response):
+        return None
+    individuals = response.get('candidate_ids', response.get('additional_candidate_ids', []))
+    if len(set(individuals)) + sum(item['take'] for item in slices) < minimum:
+        return None
+    candidate = deepcopy(response)
+    last = _slices(candidate)[-1]
+    del last['take']
+    last['fill_to_distinct'] = minimum
+    try:
+        original, filled = _response_ids(response, index), _response_ids(candidate, index)
+    except ValueError:
+        return None
+    return candidate if set(original) < set(filled) else None
 
 
 def _dependent_sets(index, withdrawn):

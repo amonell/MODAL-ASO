@@ -16,6 +16,7 @@ from pathlib import Path
 import time
 
 from .artifact_io import write_json
+from .shortlist_facts import render_phrases, sourced_audit_edit, verified_phrases
 from .candidate_presentation import molecule_key
 from .splice_recommendations import finite_number
 from .shortlist_evidence import (citation, clean, compact_packet, compact_screening_rows, digest,
@@ -42,7 +43,7 @@ NOMINATION_OUTPUT_TOKENS = 8192
 MIN_SPLIT_NOMINATION_SIZE = 3
 _IMPLEMENTATION_FINGERPRINT = {name: digest((Path(__file__).parent / name).read_text()) for name in (
     'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'shortlist_query.py',
-    'shortlist_exploration.py', 'report_attributes.py', 'candidate_presentation.py',
+    'shortlist_exploration.py', 'shortlist_facts.py', 'report_attributes.py', 'candidate_presentation.py',
     'exon_nomenclature_context.py', 'exon_identity_clarification.py', 'curated_exon_nomenclature.py', 'report_exon_names.py',
     'region_panel_selection.py', 'role_selection.py', 'pipeline_tools.py')}
 
@@ -302,6 +303,14 @@ EXPLAIN_SCHEMA = _object({'summary': _text(900), 'size_reason': _text(500),
 AUDIT_CHECKS = ('facts_and_citations_match', 'comparisons_match_scope_and_values',
     'biological_interpretation_supported', 'tradeoffs_relevant_to_goal',
     'uncertainty_visible', 'rationale_specific_and_clear')
+AUDIT_ISSUE = _object({'candidate_id': _text(), 'problem': _text(700),
+    'selection_impact': {'type': 'string', 'enum': ['text_only', 'reconsider', 'uncertain']},
+    'field': {'type': 'string', 'enum': ['summary', 'size_reason', 'why_chosen', 'tradeoff', 'panel_role']},
+    'replacement': {'anyOf': [_text(900), {'type': 'null'}]},
+    'sources': _array(_object({'candidate_id': _text(), 'path': _text()}), maxItems=8),
+    'superseded_sources': _array(_object({'candidate_id': _text(), 'path': _text()}), maxItems=6)})
+# Older findings still trigger review. Only a complete, sourced edit can be applied directly.
+AUDIT_ISSUE['required'] = ['candidate_id', 'problem']
 AUDIT_SCHEMA = _object({'reviewed_ids': _array(_text(), uniqueItems=True),
     'checks': _array(_object({'candidate_id': _text(),
                              **{key: {'type': 'boolean'} for key in AUDIT_CHECKS}})),
@@ -313,7 +322,7 @@ AUDIT_SCHEMA = _object({'reviewed_ids': _array(_text(), uniqueItems=True),
         'path': _text(), 'order': {'type': 'string', 'enum': ['ascending', 'descending', 'absolute_ascending', 'absolute_descending']},
         'claimed_rank': {'type': 'integer', 'minimum': 1},
         'scope_ids': _array(_text(), minItems=1, uniqueItems=True)})),
-    'issues': _array(_object({'candidate_id': _text(), 'problem': _text(700)}))})
+    'issues': _array(AUDIT_ISSUE)})
 PATCH_SCHEMA = _object({'summary': {'anyOf': [_text(900), {'type': 'null'}]},
     'size_reason': {'anyOf': [_text(500), {'type': 'null'}]},
     'recommendations': EXPLAIN_SCHEMA['properties']['recommendations']})
@@ -438,6 +447,12 @@ def _prose_issue(text, *, summary=False, context=None):
 
 
 def _instructions(kind):
+    if kind == 'membership_confirmation':
+        return """Check the exact ordered membership realized by the proposed ASO comparison.
+The query definitions, starting offsets, individual picks, distinct count and any additions
+needed for overlap are supplied. Approve only if the realized comparison follows the
+reviewer's stated criteria for this goal. Decline an unsupported extension or scope.
+This approves a pool for later detailed review. Give one short reason."""
     if kind == 'selection_reconsideration':
         return RUBRIC + '''
 Decide whether the recorded audit findings require comparing candidate choices
@@ -524,6 +539,11 @@ can verify the arithmetic directly and have no original source citation of their
 '''
     if kind in {'explain', 'repair'}:
         instructions += '''
+Use the supplied verified_phrases handles verbatim inside candidate sentences when
+describing matching geometry, position shifts or mismatch counts. Each handle expands
+to the exact displayed phrase and adds its source citations automatically. Choose a
+phrase by candidate_id. Write the biological interpretation, purpose and limitation
+yourself. Panel summary and size_reason use ordinary prose.
 Write for a biologist choosing a first panel. Lead with where the ASO binds and
 why that placement or its recorded prediction serves the requested objective.
 Use a numerical detail only when it helps distinguish the choice. The summary
@@ -548,6 +568,15 @@ list or fact supplies no correction. Preserve already-supported, clear prose.
 '''
     if kind == 'audit':
         instructions += '''
+For each issue give the affected field and selection_impact. Use text_only when
+the same ASO remains justified and a wording or citation change resolves the
+entire issue. Give one publishable replacement sentence preserving supported
+content and exact sources (candidate_id and original path, including the exact
+index for a mismatch bin). List superseded_sources only for erroneous citations
+that no other claim in this entry uses. Use verified_phrases handles in a
+replacement where applicable. For materially contrary evidence, a missing
+selection requirement, or uncertainty about membership, use reconsider or
+uncertain and replacement=null. Every revised draft receives another complete audit.
 The audit_scope assigns candidate IDs and whether to check the panel summary and
 size_reason. Review every claim in those assigned fields against the complete
 supplied evidence, including comparisons with other ASOs. Return reviewed_ids,
@@ -566,7 +595,7 @@ def _reasoning_effort(kind, config):
     flash = config.name == 'openrouter' and config.resolve_model(MODEL).startswith('deepseek/deepseek-v4.1-flash')
     if kind == 'audit' and flash:
         return 'low'
-    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair', 'selection_reconsideration'}:
+    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair', 'selection_reconsideration', 'membership_confirmation'}:
         return 'low' if flash or kind == 'nominate' else 'medium'
     return 'high'
 
@@ -610,6 +639,13 @@ def _model_call(kind, payload, schema):
             return [replace_ids(child) for child in value]
         return _replace_identifiers(value, aliases) if isinstance(value, str) else value
     wire_payload = replace_ids(payload) if kind == 'rank' else payload
+    if kind == 'audit':
+        # New auditors provide a disposition for every finding. Legacy
+        # unclassified findings take the conservative repair path on replay.
+        schema = deepcopy(schema)
+        finding = schema['properties']['issues']['items']
+        finding['required'] = list(finding['properties'])
+        wire_payload = {**wire_payload, 'output_schema': schema}
     if kind in {'select', 'nominate', 'audit'} and 'evidence' in payload:
         wire_payload = {**wire_payload, 'evidence': compact_screening_rows(payload['evidence'])}
     agent = Agent(name='ASO Shortlist ' + kind.title(), instructions=instructions, tools=[],
@@ -1109,6 +1145,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             if len(json.dumps(compact_packet(proposed, include_overviews=True), separators=(',', ':'))) <= MAX_PACKET_CHARACTERS:
                 evidence_entries = proposed
         allowed = {e['id']: e for e in evidence_entries}
+        phrases = verified_phrases(allowed, ids, binding_geometry)
         packet = compact_packet(evidence_entries, citation_numbers=True, include_overviews=True)
         reference_paths = {key: path for fact in packet['facts'] for key, path in fact['paths'].items()}
         def expand_reference(path):
@@ -1153,13 +1190,16 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             return bool(targets) and all(target == targets[0] for target in targets)
         def explain_check(response, *, check_prose=True):
             recommendations = response['recommendations']
+            errors = []
             for field in ('summary', 'size_reason'):
+                if '[[' in response[field] or ']]' in response[field]:
+                    errors.append('Use plain prose for panel fields and verified facts in their own ASO entries.')
                 response[field] = _metric_labels(response[field])
             for item in recommendations:
+                errors.extend(render_phrases(item, phrases))
                 for field in ('why_chosen', 'tradeoff', 'panel_role'):
                     item[field] = _metric_labels(item[field])
             actual = [r['candidate_id'] for r in recommendations]
-            errors = []
             if len(actual) != len(ids) or set(actual) != set(ids):
                 errors.append('Explain each selected ID exactly once.')
             prose = [(key, response[key]) for key in ('summary', 'size_reason')]
@@ -1195,6 +1235,8 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             return errors
         payload = {'goal': context, 'selected_ids': ids, 'complete_panel': outline,
             'selection_contract_result': clean(selection), 'evidence': packet,
+            'verified_phrases': {handle: {'candidate_id': fact['candidate_id'], 'text': fact['text']}
+                                 for handle, fact in phrases.items()},
             'binding_geometry': binding_geometry,
             'coordinate_observations': [{'candidate_id': key, 'observations': entry.get('coordinate_observations', [])}
                                         for key, entry in allowed.items() if entry.get('coordinate_observations')]}
@@ -1230,8 +1272,11 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 response = draft
         for attempt in range(EDITORIAL_ROUNDS):
             if response is None:
+                # Validate the rendered text while retaining the original model
+                # response for schema checks when this component is reopened.
                 response = _call('explain', {**payload, 'review_corrections': []}, EXPLAIN_SCHEMA,
-                                 lambda value: explain_check(value, check_prose=False), directory, configuration)
+                                 lambda value: explain_check(deepcopy(value), check_prose=False), directory, configuration)
+                explain_check(response, check_prose=False)
             elif corrections:
                 repair_ids = {issue['candidate_id'] for issue in corrections if issue['candidate_id'] != 'panel'}
                 repair_panel = any(issue['candidate_id'] == 'panel' for issue in corrections)
@@ -1507,12 +1552,16 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 if len(json.dumps(source_findings, separators=(',', ':'))) > MAX_PACKET_CHARACTERS:
                     raise ReviewUnavailable('source_audit_corrections_exceed_review_capacity')
                 payload['source_page_findings'] = source_findings
-            if reconsider and (source_findings or any(
+            edited = sourced_audit_edit(response, audit, allowed, expand_reference)
+            if edited is not None and explain_check(edited):
+                edited = None
+            classified_finding = any(issue.get('selection_impact') for issue in audit['issues'])
+            if reconsider and edited is None and (source_findings or classified_finding or any(
                     check.get('biological_interpretation_supported') is False
                     or check.get('tradeoffs_relevant_to_goal') is False for check in audit['checks'])):
                 decision = _call('selection_reconsideration', {'goal': context,
                     'draft': response, 'findings': audit['issues'], 'source_findings': source_findings},
-                    _object({'reconsider_selection': {'type': 'boolean'}, 'reason': _text(700)}),
+                    _object({'reconsider_selection': {'type': 'boolean'}, 'reason': _text(1800)}),
                     lambda value: [], directory, configuration)
                 if decision['reconsider_selection']:
                     write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
@@ -1522,6 +1571,11 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                                  'decision': decision, 'draft_molecule_count': len(response['recommendations'])})
             write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
                                         'draft_sha256': digest(response), 'audit': audit})
+            if edited is not None:
+                # The next iteration independently audits the complete rendered
+                # draft and every original source page, including unchanged fields.
+                response, corrections = edited, []
+                continue
             if not audit['issues']:
                 for item in response['recommendations']:
                     entry = catalog[item['candidate_id']]

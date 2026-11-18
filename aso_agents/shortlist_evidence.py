@@ -155,6 +155,8 @@ def evidence_catalog(pool):
         assessment = row.get('candidate_assessment') or {}
         activity = row.get('oligoai_evaluation') or {}
         geometry = export_context(row)
+        from .shortlist_facts import binding_sources
+        entry.setdefault('binding_sources', []).append(binding_sources(row, geometry, context))
         entry['coordinate_observations'].extend({'context': context, **item}
             for item in coordinate_observations(row, geometry))
         entry['overview'].append({'context': context,
