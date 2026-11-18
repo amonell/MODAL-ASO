@@ -134,7 +134,7 @@ reason to favor fewer same-gene isoforms. Record rejection with keep=false even
 when better alternatives can be restored. Describing an invalid filter as a
 caveat cannot remove its influence on membership or the report.
 If you withdraw any set, explicitly build the entire replacement comparison with
-additional_query_slices and additional_candidate_ids, up to working_limit. You
+additional_query_slices and additional_candidate_ids, up to replacement_candidate_limit. You
 can reuse valid recorded sets, or query the original library. Include enough
 alternatives, usually 32 to 64. A withdrawn set and its descendants cannot
 supply replacement slices. The host restores native reserves independently.
@@ -213,7 +213,8 @@ def _run_model(phase, payload, index, records, save, configuration):
     reasoning = {'effort': configuration['screening_reasoning_effort']}
     budget = payload.get('_generation_budget', 8192)
     schema = CHALLENGE_SCHEMA if phase == 'challenge' else FINAL_SCHEMA
-    decision_settings = ModelSettings(reasoning=reasoning, max_output_tokens=budget,
+    decision_settings = ModelSettings(reasoning=reasoning,
+        max_output_tokens=max(16384, budget) if phase == 'challenge' else budget,
         extra_body={'text': {'format': {'type': 'json_schema', 'name': 'shortlist_exploration',
             'strict': True, 'schema': portable_strict_json_schema(schema)}}})
     agent = Agent(name='ASO Library ' + phase.title(), instructions=instructions,
@@ -224,13 +225,16 @@ def _run_model(phase, payload, index, records, save, configuration):
         model_settings=ModelSettings(reasoning=reasoning, max_output_tokens=budget))
     queried = any(record['tool'] == 'filter_candidates' and record.get('outcome') != 'error'
                   for record in records)
-    if payload.get('corrections') and queried and not payload.get('needs_more_queries'):
+    if payload.get('corrections') and not payload.get('needs_more_queries') and (queried or phase == 'challenge'):
         from agents import _RunResult
         result = _RunResult({'error': 'Max tool-calling steps exceeded'})
     else:
+        tool_turns = 4
+        if phase == 'challenge':
+            supplied = set(payload['outsider_evidence'].get('ids', []))
+            tool_turns = 1 if set(payload['outsider_ids']) <= supplied and not payload.get('needs_more_queries') else 2
         result = Runner._run_sync(agent, input=json.dumps({**payload, 'output_schema': schema},
-            ensure_ascii=False, separators=(',', ':')),
-                                 max_steps=2 if phase == 'challenge' else 4)
+            ensure_ascii=False, separators=(',', ':')), max_steps=tool_turns)
     try:
         decoded = json.loads(result.final_output) if isinstance(result.final_output, str) else None
     except ValueError:
@@ -249,9 +253,10 @@ def _run_model(phase, payload, index, records, save, configuration):
             tools=[], model=DEFAULT_MODEL, model_settings=decision_settings)
         available = [{'set_id': item['set_id'], 'rationale': item['rationale'],
             'matched_count': item['matched_count'], 'unknown_count': item['unknown_count'],
-            'candidate_ids': list(index.ordered_sets[item['set_id']])[:payload['working_limit']]}
+            'candidate_id_sample': list(index.ordered_sets[item['set_id']][:8])}
             for item in index.operations]
-        decision = Runner._run_sync(final_agent, input=json.dumps({**payload,
+        decision_input = {key: value for key, value in payload.items() if key != 'resumed_operations'}
+        decision = Runner._run_sync(final_agent, input=json.dumps({**decision_input,
             'available_query_results': available, 'recent_observations': records[-4:],
             'inspected_candidate_ids': sorted(index.compared_ids | index.read_ids)}, separators=(',', ':')),
             max_steps=0)
@@ -309,6 +314,8 @@ def _session(phase, payload, index, directory, configuration):
         except (KeyError, ValueError, TypeError) as exc:
             raise ExplorationExhausted('A saved evidence query could not be replayed.') from exc
     def check(response):
+        nonlocal needs_queries
+        needs_queries = False
         schema = CHALLENGE_SCHEMA if phase == 'challenge' else FINAL_SCHEMA
         errors = [error.message[:250] for error in Draft7Validator(schema).iter_errors(response)]
         if errors:
@@ -335,12 +342,14 @@ def _session(phase, payload, index, directory, configuration):
                 excluded = _dependent_sets(index, withdrawn)
                 if any(item['set_id'] in excluded for item in slices):
                     errors.append('Replace withdrawn filters and their descendants with independent query slices.')
-                additional, limit = ids, payload['working_limit']
+                additional, limit = ids, payload['replacement_candidate_limit']
                 if response['strategy_supported']:
                     sizes = [len(index.sets[item['set_id']]) for item in slices]
                     minimum = min(32, max(sizes, default=len(index.ids)), limit)
                     if not slices or len(ids) < minimum:
                         errors.append(f'Supply an independent replacement query slice and at least {minimum} comparison candidates, or request full-library review.')
+                if not (set(index.ordered_sets) - excluded - {'all'}):
+                    needs_queries = True
         if not ids and phase == 'explore':
             errors.append('Choose a nonempty comparison pool using query_slices or known candidate IDs.')
         unknown = ids-set(index.ids)
@@ -371,23 +380,28 @@ def _session(phase, payload, index, directory, configuration):
                 if record['tool'] == 'read_candidate_evidence' and 'records' in record['result']:
                     inspected.add(record['result']['candidate_id'])
             if not outsiders <= inspected:
+                needs_queries = True
                 errors.append('Retrieve comparison or source evidence for every supplied outsider before approving.')
             if withdrawn and not set(response['additional_candidate_ids']) <= inspected:
+                needs_queries = True
                 errors.append('Inspect individually chosen replacement candidates or select them from independent query slices.')
             if response['strategy_supported'] == bool(response['blocking_issues']):
                 errors.append('strategy_supported must agree with blocking_issues. Put ordinary measurement gaps in caveats.')
         return errors
+    needs_queries = False
     if (reusable and previous.get('status') == 'accepted'
             and previous.get('response_sha256') == digest(previous.get('response'))
             and not check(previous['response'])):
         return previous['response']
-    correction = []
+    correction, previous_decision = [], None
     for attempt in range(2):
         started = time.monotonic()
         request = {**payload, 'corrections': correction,
-                   'needs_more_queries': phase == 'challenge' and bool(correction),
+                   'needs_more_queries': needs_queries,
                    '_generation_budget': 8192 * (attempt+1),
                    'resumed_operations': records[-4:] if records else []}
+        if previous_decision is not None:
+            request['previous_decision'] = previous_decision
         try:
             response, metadata = _run_model(phase, request, index, records, save, configuration)
         except Exception as exc:
@@ -395,9 +409,11 @@ def _session(phase, payload, index, directory, configuration):
                 'details': getattr(exc, 'details', {}), 'elapsed_seconds': time.monotonic()-started})
             save()
             if isinstance(exc, (ExplorationExhausted, json.JSONDecodeError)):
+                needs_queries = phase == 'challenge' and not records
                 correction = ['Finish the required JSON using the existing query results. Keep each list and explanation concise.']
                 continue
             raise
+        previous_decision = response
         correction = check(response)
         state['attempts'].append({'response': response, 'validation_errors': correction,
             'model_metadata': metadata, 'elapsed_seconds': time.monotonic()-started})
@@ -506,6 +522,7 @@ def explore(catalog, context, directory, configuration, reserve_ids):
             outside_evidence = {'candidate_ids': outside,
                 'instruction': 'Use compare_candidates pages to inspect every outsider.'}
         challenge = _session('challenge', {**payload, 'additional_candidate_limit': 32,
+            'replacement_candidate_limit': min(len(index.ids), limit + 32),
             'proposed_filter_ids': basis_ids,
             'proposed_ids': proposed, 'proposal': proposal, 'filters': index.operations,
             'outsider_ids': outside, 'outsider_evidence': outside_evidence}, index, directory, configuration)

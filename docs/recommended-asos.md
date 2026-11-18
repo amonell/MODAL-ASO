@@ -129,7 +129,8 @@ count. This preserves its chosen ordering and avoids copying long candidate-ID
 lists. Final explanation audits use small concurrent batches with the full panel
 as comparison context. Selected source-page audits also run concurrently; every
 original page still receives its assigned check. The independent reviewer can withdraw
-an unsupported filter and replace the comparison from valid queries. The report
+an unsupported filter and replace the comparison from valid queries. The reviewer can request additional evidence and reuses existing query results
+when correcting only membership. Replacements use the same capacity as additions. The report
 lists the filters that supplied the accepted comparison. When the complete
 comparison fits in one ordinary evidence packet, one full review establishes
 the order. Evidence repairs can cite newly identified facts from the original

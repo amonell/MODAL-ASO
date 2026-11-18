@@ -170,6 +170,35 @@ def test_query_provenance_keeps_large_sets_outside_comparison_membership(tmp_pat
     assert len(index.sets[result['basis_set_ids'][0]]) == 200
 
 
+@pytest.mark.parametrize('preloaded,corrections,needs_queries,steps', [
+    (True, [], False, [1, 0]), (False, [], False, [2, 0]),
+    (True, ['Choose a shorter slice.'], False, [0]),
+    (True, ['Inspect missing evidence.'], True, [2, 0])])
+def test_challenger_reuses_observations_for_membership_repairs(monkeypatch, preloaded, corrections, needs_queries, steps):
+    from agents import Runner, _RunResult
+    from aso_agents.shortlist_query import CandidateIndex
+    index = CandidateIndex(evidence_catalog(large_pool(40)))
+    key = index.ids[10]
+    response = {'additional_candidate_ids': [], 'additional_query_slices': [], 'filter_decisions': [],
+                'attribute_ids': [], 'summary': 'Compare the alternative site.', 'strategy_supported': True,
+                'blocking_issues': [], 'caveats': [], 'reviewed_outsider_ids': [key]}
+    calls = []
+    def runner(agent, input, max_steps):
+        calls.append(max_steps)
+        if agent.tools:
+            return _RunResult({'error': 'Max tool-calling steps exceeded'})
+        request = json.loads(input)
+        assert 'resumed_operations' not in request
+        assert request['previous_decision'] == response
+        return _RunResult(json.dumps(response))
+    monkeypatch.setattr(Runner, '_run_sync', runner)
+    out, _ = exploration._run_model('challenge', {'working_limit': 64, 'outsider_ids': [key],
+        'outsider_evidence': {'ids': [key] if preloaded else []}, 'resumed_operations': [],
+        'previous_decision': response, 'corrections': corrections, 'needs_more_queries': needs_queries},
+        index, [], lambda: None, {'screening_reasoning_effort': 'low'})
+    assert out == response and calls == steps
+
+
 def test_query_errors_are_recorded_without_becoming_successful_operations():
     from aso_agents.shortlist_query import CandidateIndex
     index = CandidateIndex(evidence_catalog(large_pool(2)))
@@ -207,7 +236,7 @@ def test_withdrawn_filter_cannot_supply_membership_or_report_rationale(tmp_path,
             sets['independent'] = query('all', 'gte', 80, 'Compare independently supported sites.')
             replacement = sets['independent']
         return {'additional_candidate_ids': [], 'additional_query_slices': [
-                    {'set_id': replacement, 'offset': 0, 'take': 32}],
+                    {'set_id': replacement, 'offset': 0, 'take': 73 if corrections else 32}],
             'filter_decisions': [{'set_id': key, 'keep': key != sets['original']}
                                  for key in payload['proposed_filter_ids']],
             'attribute_ids': [rank], 'strategy_supported': True, 'summary': 'A revised comparison.',
@@ -219,6 +248,7 @@ def test_withdrawn_filter_cannot_supply_membership_or_report_rationale(tmp_path,
     decision = json.loads((tmp_path/'recommendation_review/exploration.json').read_text())
     assert decision['basis_set_ids'] == [sets['independent']]
     assert decision['withdrawn_set_ids'] == [sets['original']]
+    assert len(decision['proposed_ids']) >= 73
     assert set(decision['proposed_ids']) <= set(decision['matched_ids']) | {molecule_id(row) for row in rows[:4]}
     assert [item['rationale'] for item in receipt['selection_process']['steps']] == ['Compare independently supported sites.']
 
