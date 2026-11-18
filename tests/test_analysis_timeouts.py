@@ -49,7 +49,8 @@ def test_timeout_preserves_logs_restores_inputs_and_stops_repair(tmp_path):
                 "time.sleep(60)"}
     started = time.monotonic()
     result = execute_analysis_program(directory=tmp_path, payload={}, generate=generate,
-        # Allow time for the interpreter and sandbox helper to start.
+        # Include interpreter and sandbox-helper startup before the sleeping
+        # program, including installations with the optional GUI dependencies.
         required_outputs=[], readonly_outputs=[protected], timeout_seconds=2, max_attempts=5)
     assert time.monotonic() - started < 10
     assert not result['ok'] and result['error_code'] == 'analysis_timeout'
