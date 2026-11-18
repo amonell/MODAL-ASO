@@ -180,6 +180,40 @@ def test_zero_step_budget_inspects_initial_response_without_tool_execution(
     assert len(result.responses) == 1
 
 
+def test_read_only_reviewer_retries_failed_generation_without_repeating_tools(monkeypatch):
+    monkeypatch.delenv('ASO_LLM_TRANSPORT_RETRIES', raising=False)
+    executed = []
+    @function_tool
+    def inspect_value(value: int) -> int:
+        executed.append(value)
+        return value
+    first = _message_response('Inspect a value.')
+    first['output'] = [{'type': 'function_call', 'name': 'inspect_value',
+                        'call_id': 'inspect-1', 'arguments': '{"value":7}'}]
+    failure = {'id': 'failed', 'status': 'failed', 'error': {'code': 'server_error'}, 'output': []}
+    fake = _install_fake_client(monkeypatch, 'openrouter', [first, failure, _message_response('Reviewed.')])
+    agent = Agent('reviewer', 'Review the evidence.', tools=[inspect_value], retry_failed_generation=True)
+    assert Runner._run_sync(agent, input='Review.').final_output == 'Reviewed.'
+    calls = fake.instances[0].calls
+    assert executed == [7] and len(calls) == 3
+    assert calls[1]['input'] == calls[2]['input']
+
+
+@pytest.mark.parametrize('enabled,explicit,code,requests', [
+    (True, None, 'server_error', 2), (False, None, 'server_error', 1),
+    (True, '0', 'server_error', 1), (True, None, 'invalid_request', 1)])
+def test_read_only_generation_retry_honors_limits_and_permanent_failures(monkeypatch, enabled, explicit, code, requests):
+    if explicit is None:
+        monkeypatch.delenv('ASO_LLM_TRANSPORT_RETRIES', raising=False)
+    else:
+        monkeypatch.setenv('ASO_LLM_TRANSPORT_RETRIES', explicit)
+    failure = {'id': 'failed', 'status': 'failed', 'error': {'code': code}, 'output': []}
+    fake = _install_fake_client(monkeypatch, 'openrouter', [failure]*requests)
+    with pytest.raises(RuntimeError):
+        Runner._run_sync(Agent('reviewer', 'Review.', retry_failed_generation=enabled), input='Review.')
+    assert len(fake.instances[0].calls) == requests
+
+
 @function_tool
 def double(value: int) -> dict[str, int]:
     """Double one integer."""

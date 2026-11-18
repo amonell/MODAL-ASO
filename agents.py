@@ -21,6 +21,7 @@ class Agent:
         model: str = DEFAULT_SMALL_MODEL,
         log_tool_calls: bool = False,
         model_settings: Optional["ModelSettings"] = None,
+        retry_failed_generation: bool = False,
     ):
         self.name = name
         self.instructions = instructions
@@ -28,6 +29,7 @@ class Agent:
         self.model = model
         self.log_tool_calls = log_tool_calls
         self.model_settings = model_settings
+        self.retry_failed_generation = retry_failed_generation
 
 
 def _pytype_to_jsonschema(py_t) -> Dict[str, Any]:
@@ -379,7 +381,7 @@ class Runner:
         max_steps: int = 5,
         event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> _RunResult:
-        from aso_agents.llm_provider import get_provider_config
+        from aso_agents.llm_provider import get_provider_config, TransientGenerationError
 
         tool_funcs: Dict[str, Callable] = {}
         tools_spec: List[Dict[str, Any]] = []
@@ -419,6 +421,12 @@ class Runner:
                 "type": "model_call", "agent": agent.name, **attribution,
             })
             try:
+                return Runner._responses(request_payload, config=config)
+            except TransientGenerationError:
+                if not agent.retry_failed_generation:
+                    raise
+                from aso_agents.runtime_warnings import emit_progress
+                emit_progress("The model service reported a temporary error. Retrying the current review request.")
                 return Runner._responses(request_payload, config=config)
             finally:
                 Runner._emit_event(event_callback, {

@@ -218,7 +218,7 @@ def _run_model(phase, payload, index, records, save, configuration):
         extra_body={'text': {'format': {'type': 'json_schema', 'name': 'shortlist_exploration',
             'strict': True, 'schema': portable_strict_json_schema(schema)}}})
     agent = Agent(name='ASO Library ' + phase.title(), instructions=instructions,
-        tools=_tools(index, records, save), model=DEFAULT_MODEL,
+        tools=_tools(index, records, save), model=DEFAULT_MODEL, retry_failed_generation=True,
         # The provider's JSON compatibility adapter adds a system instruction
         # demanding an immediate JSON value. Keep that contract on the final
         # decision boundary; native function arguments have their own schemas.
@@ -250,7 +250,7 @@ def _run_model(phase, payload, index, records, save, configuration):
             'Use query slices for stored result membership and candidate IDs for individual additions. '
             'The separate basis_set_ids field records provenance only. '
             'No new queries can run.',
-            tools=[], model=DEFAULT_MODEL, model_settings=decision_settings)
+            tools=[], model=DEFAULT_MODEL, model_settings=decision_settings, retry_failed_generation=True)
         available = [{'set_id': item['set_id'], 'rationale': item['rationale'],
             'matched_count': item['matched_count'], 'unknown_count': item['unknown_count'],
             'candidate_id_sample': list(index.ordered_sets[item['set_id']][:8])}
