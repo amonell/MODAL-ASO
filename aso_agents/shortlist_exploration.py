@@ -287,7 +287,8 @@ def _session(phase, payload, index, directory, configuration):
              ('shortlist_exploration.py', 'shortlist_query.py', 'shortlist_evidence.py', 'report_attributes.py')}
     key = digest({'version': VERSION, 'phase': phase, 'payload': payload, 'configuration': configuration,
                   'implementation': basis, 'rubric': digest(RUBRIC),
-                  'membership_instructions': digest(_instructions('membership_confirmation'))})
+                  'membership_instructions': digest(_instructions('membership_confirmation')),
+                  'origin_instructions': digest(_instructions('membership_origin_review'))})
     path = Path(directory)/'recommendation_review'/'exploration'/(key+'.json')
     previous = _read(path)
     records = []
@@ -411,6 +412,7 @@ def _session(phase, payload, index, directory, configuration):
         return previous['response']
     correction, previous_decision = [], None
     allow_final_correction = False
+    declined = None
     for attempt in range(3):
         if attempt == 2 and not allow_final_correction:
             break
@@ -432,6 +434,9 @@ def _session(phase, payload, index, directory, configuration):
                 correction = ['Finish the required JSON using the existing query results. Keep each list and explanation concise.']
                 continue
             raise
+        # A new decision supersedes the prior one, including a withdrawal.
+        # A truncated turn supplies no new decision.
+        declined = None
         previous_submission = response
         correction = check(response)
         candidate = response
@@ -465,13 +470,15 @@ def _session(phase, payload, index, directory, configuration):
                 state['approved_membership_sha256'] = digest(members)
             else:
                 correction = ['The reviewer declined this exact comparison membership: ' + approval['reason']]
+                if candidate['strategy_supported']:
+                    declined = (candidate, preview, approval['reason'], len(state['attempts']))
         if attempt == 1 and correction:
             # One last bounded turn can repair a malformed replacement query or
             # the first usable decision after truncation. The same evidence,
             # independence and membership checks apply to every attempt.
             allow_final_correction = ((previous_decision is None and not needs_queries
                 and _can_finalize_from_observations(phase, records)) or
-                (phase == 'challenge' and needs_queries and response.get('strategy_supported')
+                (phase == 'challenge' and needs_queries and isinstance(response, dict) and response.get('strategy_supported')
                  and any(not item['keep'] for item in response['filter_decisions'])
                  and any(r['tool'] == 'filter_candidates' and r.get('outcome') == 'error' for r in records)))
         previous_decision = response
@@ -485,6 +492,18 @@ def _session(phase, payload, index, directory, configuration):
         save()
         if not correction:
             return response
+    if declined is not None:
+        candidate, preview, objection, attempt_index = declined
+        if not check(candidate):
+            origin_review = _review_disputed_origins(preview, objection, index, directory, configuration)
+            if origin_review is not None:
+                state['attempts'][attempt_index]['membership_origin_review'] = origin_review
+                if origin_review.get('decision') == 'confirm_origins':
+                    state.update(status='accepted', response=candidate, response_sha256=digest(candidate),
+                                 approved_membership_sha256=digest(preview['ordered_members']))
+                save()
+                if state['status'] == 'accepted':
+                    return candidate
     raise ExplorationExhausted('The exploration response could not be validated.')
 
 
@@ -496,8 +515,12 @@ def _uses_fill(response):
     return any('fill_to_distinct' in item for item in _slices(response))
 
 
-def _response_ids(response, index):
-    members = dict.fromkeys(response.get('candidate_ids', response.get('additional_candidate_ids', [])))
+def _member_origins(response, index):
+    """Record the first source introducing each member, in the decision's exact order."""
+    members = {}
+    individuals = response.get('candidate_ids', response.get('additional_candidate_ids', []))
+    for pick, key in enumerate(individuals):
+        members.setdefault(key, {'candidate_id': key, 'set_id': None, 'source_index': pick, 'slice_index': None})
     slices = _slices(response)
     for position, item in enumerate(slices):
         ordered = index.ordered_sets.get(item['set_id'])
@@ -508,18 +531,50 @@ def _response_ids(response, index):
             end = offset + item['take']
             if end > len(ordered):
                 raise ValueError('Query slices must stay within the stored result count.')
-            members.update(dict.fromkeys(ordered[offset:end]))
-            continue
-        target = item['fill_to_distinct']
-        if position != len(slices) - 1 or len(members) > target or offset >= len(ordered):
-            raise ValueError('Use fill_to_distinct only on the final slice, with a valid offset and a total covering all earlier picks.')
-        for candidate in ordered[offset:]:
-            if len(members) == target:
+            target = None
+        else:
+            target = item['fill_to_distinct']
+            if position != len(slices) - 1 or len(members) > target or offset >= len(ordered):
+                raise ValueError('Use fill_to_distinct only on the final slice, with a valid offset and a total covering all earlier picks.')
+            end = len(ordered)
+        for source_index in range(offset, end):
+            if target is not None and len(members) == target:
                 break
-            members[candidate] = None
-        if len(members) < target:
+            key = ordered[source_index]
+            members.setdefault(key, {'candidate_id': key, 'set_id': item['set_id'],
+                                     'source_index': source_index, 'slice_index': position})
+        if target is not None and len(members) < target:
             raise ValueError(f'The chosen slice reached {len(members)} distinct members out of {target} requested. Choose another approved slice or offset.')
-    return list(members)
+    return members
+
+
+def _response_ids(response, index):
+    return list(_member_origins(response, index))
+
+
+def _review_disputed_origins(preview, objection, index, directory, configuration):
+    """Clarify one terminal objection about a named member using the original decision."""
+    from .shortlist_review import ReviewUnavailable, _call
+    origins = _member_origins(preview['decision'], index)
+    named = {key: record for key, record in origins.items() if key in objection}
+    if not named or list(origins) != preview['ordered_members']:
+        return None
+    row = obj({'candidate_id': TEXT, 'set_id': {'type': ['string', 'null']},
+               'source_index': INTEGER, 'slice_index': {'type': ['integer', 'null'], 'minimum': 0}})
+    schema = obj({'decision': {'type': 'string', 'enum': ['confirm_origins', 'uphold_objection']},
+                  'verified_origins': array(row), 'reason': SUMMARY})
+    def check(value):
+        if value['decision'] == 'confirm_origins':
+            verified = value['verified_origins']
+            if len(verified) != len(named) or {entry['candidate_id']: entry for entry in verified} != named:
+                return ['Supply the exact source record for every named member or uphold the objection.']
+        return []
+    request = {**preview, 'original_objection': objection, 'named_members': list(named),
+               'member_origins': list(origins.values())}
+    try:
+        return _call('membership_origin_review', request, schema, check, directory, configuration)
+    except ReviewUnavailable as exc:
+        return {'status': 'unavailable', 'details': exc.details}
 
 
 def _overlap_repair(response, index, minimum):

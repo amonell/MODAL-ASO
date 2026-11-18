@@ -374,6 +374,10 @@ def test_distinct_fill_uses_only_the_chosen_order_and_reports_exhaustion():
     proposal = {'candidate_ids': ['d', 'c'], 'query_slices': [
         {'set_id': 'ranked', 'offset': 0, 'take': 2}, {'set_id': 'ranked', 'offset': 2, 'fill_to_distinct': 5}]}
     assert exploration._response_ids(proposal, index) == list('dcabe')
+    origins = exploration._member_origins(proposal, index)
+    assert origins['c'] == {'candidate_id': 'c', 'set_id': None, 'source_index': 1, 'slice_index': None}
+    assert origins['a'] == {'candidate_id': 'a', 'set_id': 'ranked', 'source_index': 0, 'slice_index': 0}
+    assert origins['e'] == {'candidate_id': 'e', 'set_id': 'ranked', 'source_index': 4, 'slice_index': 1}
     proposal['query_slices'][-1]['fill_to_distinct'] = 7
     with pytest.raises(ValueError) as exhausted:
         exploration._response_ids(proposal, index)
@@ -420,6 +424,78 @@ def test_one_duplicate_in_replacement_requires_approval_of_exact_extension(tmp_p
         with pytest.raises(exploration.ExplorationExhausted):
             invoke()
     assert len(confirmations) == 1
+
+
+@pytest.mark.parametrize('outcome', ['origin', 'science', 'bad_position', 'unavailable', 'withdrawal'])
+def test_terminal_membership_objection_requires_exact_origins_and_independent_decision(tmp_path, monkeypatch, outcome):
+    from aso_agents.shortlist_query import CandidateIndex
+    index = CandidateIndex(evidence_catalog(large_pool(80)))
+    ids = list(index.ordered_sets['all'])
+    individual, sliced = ids[-1], ids[4]
+    for key, members in [('withdrawn', ids[:40]), ('kept', ids[:-1])]:
+        index.ordered_sets[key] = members
+        index.sets[key] = set(members)
+    submitted = {'additional_candidate_ids': [individual], 'additional_query_slices': [
+        {'set_id': 'kept', 'offset': 4, 'fill_to_distinct': 32}],
+        'filter_decisions': [{'set_id': 'withdrawn', 'keep': False}, {'set_id': 'kept', 'keep': True}],
+        'attribute_ids': [], 'summary': 'Compare the selected sites and the individually inspected control.',
+        'strategy_supported': True, 'blocking_issues': [], 'caveats': [], 'reviewed_outsider_ids': [individual]}
+    payload = {'goal': {}, 'outsider_ids': [individual], 'outsider_evidence': {'ids': [individual]},
+               'proposed_ids': [], 'proposed_filter_ids': ['withdrawn', 'kept'],
+               'replacement_candidate_limit': 64, 'additional_candidate_limit': 32}
+    def challenge(phase, request, *args):
+        if request['corrections']:
+            if outcome == 'withdrawal':
+                return {**submitted, 'additional_query_slices': [], 'additional_candidate_ids': [],
+                        'strategy_supported': False, 'blocking_issues': ['A required group is missing.']}, []
+            raise exploration.ExplorationExhausted('No further decision.')
+        return submitted, []
+    kinds = []
+    def reviewer(kind, request, schema):
+        kinds.append(kind)
+        if kind == 'membership_confirmation':
+            return {'approve': False, 'reason': f'Check the source of {individual} and {sliced}.'}, []
+        assert kind == 'membership_origin_review'
+        assert request['decision'] == submitted
+        assert request['ordered_members'] == [individual, *ids[4:35]]
+        assert set(request['named_members']) == {individual, sliced}
+        if outcome == 'unavailable':
+            raise review.ReviewUnavailable('Provider unavailable.')
+        if outcome == 'science':
+            return {'decision': 'uphold_objection', 'verified_origins': [],
+                    'reason': 'The comparison lacks alternatives in the required region.'}, []
+        verified = [{'candidate_id': individual, 'set_id': None, 'source_index': 0, 'slice_index': None},
+                    {'candidate_id': sliced, 'set_id': 'kept', 'source_index': 4, 'slice_index': 0}]
+        if outcome == 'bad_position':
+            verified[1]['source_index'] = 3
+        return {'decision': 'confirm_origins', 'verified_origins': verified,
+                'reason': 'The individual and the first member of the slice account for both sources.'}, []
+    monkeypatch.setattr(exploration, '_run_model', challenge)
+    monkeypatch.setattr(review, '_model_call', reviewer)
+    def invoke():
+        return exploration._session('challenge', payload, index, tmp_path, {})
+    if outcome == 'origin':
+        assert invoke() == submitted
+        assert invoke() == submitted
+    elif outcome == 'withdrawal':
+        assert invoke()['strategy_supported'] is False
+        assert kinds == ['membership_confirmation']
+        return
+    else:
+        with pytest.raises(exploration.ExplorationExhausted):
+            invoke()
+    assert kinds[0] == 'membership_confirmation' and set(kinds[1:]) == {'membership_origin_review'}
+    receipt = json.loads(next((tmp_path/'recommendation_review/exploration').glob('*.json')).read_text())
+    first = receipt['attempts'][0]
+    assert first['membership_confirmation']['approve'] is False
+    assert first['membership_origin_review']
+    assert receipt['attempts'][1]['error_type'] == 'ExplorationExhausted'
+    if outcome == 'origin':
+        assert len(kinds) == 2
+        assert receipt['approved_membership_sha256'] == exploration.digest([individual, *ids[4:35]])
+    else:
+        assert receipt['status'] == 'incomplete'
+        assert 'approved_membership_sha256' not in receipt
 
 
 def test_duplicate_shortfall_cannot_revive_a_withdrawn_source(tmp_path, monkeypatch):
