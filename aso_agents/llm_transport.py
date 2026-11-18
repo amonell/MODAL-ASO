@@ -165,6 +165,22 @@ def transport_error_details(exc: Exception) -> dict[str, Any]:
     return _safe_value(details)
 
 
+def openrouter_credit_error_hint(details: Mapping[str, Any]) -> str:
+    """Explain a credit rejection using only allowlisted provider metadata."""
+    if details.get("status_code") != 402:
+        return ""
+    source = (details.get("provider_error") or {}).get("limit_source")
+    if source == "openrouter_in_flight_budget":
+        delay = retry_after_seconds(details.get("headers", {}))
+        wait = f"Wait at least {math.ceil(delay)} seconds before retrying." if delay else "Wait for other requests to settle before retrying."
+        return "OpenRouter's budget for in-flight requests is temporarily full. " + wait
+    if source == "openrouter_key_limit":
+        return "This request exceeds the remaining budget for the selected API key. Check its spending limit in OpenRouter's API Keys settings."
+    if source == "openrouter_credits":
+        return "OpenRouter could not reserve enough credits for this request. Check your account credits and the estimated cost of the request."
+    return "OpenRouter rejected this request on credit or budget grounds. Check the account credits and the selected API key's remaining spending limit."
+
+
 def retryable_transport_error(exc: Exception, details: Mapping[str, Any]) -> bool:
     if details.get("headers", {}).get("x-should-retry") == "false":
         return False
