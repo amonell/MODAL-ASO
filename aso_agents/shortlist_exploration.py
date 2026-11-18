@@ -138,8 +138,8 @@ additional_query_slices and additional_candidate_ids, up to replacement_candidat
 can reuse valid recorded sets, or query the original library. Include enough
 alternatives, usually 32 to 64. A withdrawn set and its descendants cannot
 supply replacement slices. The host restores native reserves independently.
-With all proposed filters kept, return additional_candidate_ids to restore worthwhile alternatives, up to
-additional_candidate_limit. Existing proposed candidates remain available for detailed review
+With all proposed filters kept, additional_candidate_limit applies to the combined
+new membership from individual IDs and every additional query slice. Existing proposed candidates remain available for detailed review
 and do not count against that additions limit. working_limit belongs to the initial
 comparison proposal, whose final research panel is chosen in a later step.
 Use additional_query_slices to restore members from a stored query without copying
@@ -204,6 +204,11 @@ def _tools(index, records, save):
     return result
 
 
+def _can_finalize_from_observations(phase, records):
+    return phase == 'challenge' or any(record['tool'] == 'filter_candidates'
+        and record.get('outcome') != 'error' for record in records)
+
+
 def _run_model(phase, payload, index, records, save, configuration):
     from agents import Agent, ModelSettings, Runner
     from .model_defaults import DEFAULT_MODEL
@@ -223,9 +228,8 @@ def _run_model(phase, payload, index, records, save, configuration):
         # demanding an immediate JSON value. Keep that contract on the final
         # decision boundary; native function arguments have their own schemas.
         model_settings=ModelSettings(reasoning=reasoning, max_output_tokens=budget))
-    queried = any(record['tool'] == 'filter_candidates' and record.get('outcome') != 'error'
-                  for record in records)
-    if payload.get('corrections') and not payload.get('needs_more_queries') and (queried or phase == 'challenge'):
+    if (payload.get('corrections') and not payload.get('needs_more_queries')
+            and _can_finalize_from_observations(phase, records)):
         from agents import _RunResult
         result = _RunResult({'error': 'Max tool-calling steps exceeded'})
     else:
@@ -394,11 +398,14 @@ def _session(phase, payload, index, directory, configuration):
             and not check(previous['response'])):
         return previous['response']
     correction, previous_decision = [], None
-    for attempt in range(2):
+    repair_first_decision = False
+    for attempt in range(3):
+        if attempt == 2 and not repair_first_decision:
+            break
         started = time.monotonic()
         request = {**payload, 'corrections': correction,
                    'needs_more_queries': needs_queries,
-                   '_generation_budget': 8192 * (attempt+1),
+                   '_generation_budget': 8192 if attempt == 0 else 16384,
                    'resumed_operations': records[-4:] if records else []}
         if previous_decision is not None:
             request['previous_decision'] = previous_decision
@@ -413,8 +420,12 @@ def _session(phase, payload, index, directory, configuration):
                 correction = ['Finish the required JSON using the existing query results. Keep each list and explanation concise.']
                 continue
             raise
-        previous_decision = response
         correction = check(response)
+        # A truncated first generation has never seen membership validation.
+        # Give the first usable decision one tool-free correction over saved evidence.
+        repair_first_decision = (attempt == 1 and previous_decision is None and bool(correction)
+            and not needs_queries and _can_finalize_from_observations(phase, records))
+        previous_decision = response
         state['attempts'].append({'response': response, 'validation_errors': correction,
             'model_metadata': metadata, 'elapsed_seconds': time.monotonic()-started})
         if not correction:

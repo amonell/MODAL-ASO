@@ -253,6 +253,43 @@ def test_withdrawn_filter_cannot_supply_membership_or_report_rationale(tmp_path,
     assert [item['rationale'] for item in receipt['selection_process']['steps']] == ['Compare independently supported sites.']
 
 
+@pytest.mark.parametrize('valid_repair', [True, False])
+def test_first_completed_decision_can_correct_membership_after_truncation(tmp_path, monkeypatch, valid_repair):
+    phases = []
+
+    def reviewer(phase, payload, index, records, save, configuration):
+        if phase == 'explore':
+            return querying_model(phase, payload, index, records, save, configuration)
+        phases.append(payload)
+        if len(phases) == 1:
+            raise exploration.ExplorationExhausted('Truncated final decision.')
+        take = 120
+        if len(phases) == 3:
+            assert any('limit is 32' in error for error in payload['corrections'])
+            assert not payload['needs_more_queries']
+            assert payload['previous_decision']['additional_query_slices'][0]['take'] == take
+            if valid_repair:
+                take = 8
+        return {'additional_candidate_ids': [],
+            'additional_query_slices': [{'set_id': 'all', 'offset': 0, 'take': take}],
+            'filter_decisions': [{'set_id': key, 'keep': True} for key in payload['proposed_filter_ids']],
+            'attribute_ids': [], 'summary': 'Compare alternatives at additional positions.',
+            'strategy_supported': True, 'blocking_issues': [], 'caveats': [],
+            'reviewed_outsider_ids': payload['outsider_ids']}, []
+
+    monkeypatch.setattr(exploration, '_run_model', reviewer)
+    catalog = evidence_catalog(large_pool(160))
+    config = {'screening_reasoning_effort': 'low'}
+    if valid_repair:
+        _, receipt = exploration.explore(catalog, {}, tmp_path, config, [])
+        assert len(receipt['proposed_ids']) <= 40
+    else:
+        with pytest.raises(exploration.ExplorationExhausted) as error:
+            exploration.explore(catalog, {}, tmp_path, config, [])
+        assert 'could not be validated' in str(error.value)
+    assert len(phases) == 3
+
+
 def test_compact_finalist_group_receives_a_single_complete_comparison(tmp_path, monkeypatch):
     monkeypatch.setattr(exploration, '_run_model', querying_model)
     monkeypatch.setattr(review, '_model_call', nomination_model)

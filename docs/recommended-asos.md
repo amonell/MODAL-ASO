@@ -130,7 +130,10 @@ lists. Final explanation audits use small concurrent batches with the full panel
 as comparison context. Selected source-page audits also run concurrently; every
 original page still receives its assigned check. The independent reviewer can withdraw
 an unsupported filter and replace the comparison from valid queries. The reviewer can request additional evidence and reuses existing query results
-when correcting only membership. Replacements use the same capacity as additions.
+when correcting only membership. A replacement can use the combined capacity of
+the original comparison and its additional alternatives.
+If an interrupted response uses the initial attempt, the first complete decision
+can still correct a validation error once using the evidence already available.
 When OpenRouter returns a temporary server error during exploration, the reviewer
 retries the failed generation once with the same query history. Explicit transport
 retry settings govern recovery when configured. The report
