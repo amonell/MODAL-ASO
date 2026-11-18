@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 
 from aso_agents import shortlist_review as review
-from aso_agents.shortlist_evidence import evidence_catalog, screening_packet, molecule_id
+from aso_agents.shortlist_evidence import compact_screening_rows, evidence_catalog, screening_packet, molecule_id
 from test_shortlist_review import pool, model, run
 
 REAL_MODEL_CALL = review._model_call
@@ -58,6 +58,22 @@ def test_screening_roundtrip_preserves_every_fact_context_and_missing_value():
     assert expand_packet(packet) == {i: entry['facts'] for i, entry in enumerate(entries)}
     assert packet['shared_values']
     assert entries == before
+
+
+def test_wire_table_roundtrip_distinguishes_missing_cells_and_recorded_nulls():
+    rows = pool(40)
+    for i, row in enumerate(rows):
+        for j in range(20):
+            if i != j:
+                row['complete_measurement_under_named_condition_' + str(j)] = None if i == j + 1 else i * j
+    packet = screening_packet(list(evidence_catalog(rows).values()), include_provenance=True)
+    packed = compact_screening_rows(packet)
+    assert len(json.dumps(packed)) < len(json.dumps(packet))
+    columns = packed['column_names']
+    for original, encoded in zip(packet['rows'], packed['rows']):
+        indices = encoded.get('column_indices', list(range(len(columns))))
+        assert original == {'id': encoded['id'], 'values': dict(zip(
+            [columns[i] for i in indices], encoded['values'], strict=True))}
 
 
 def test_nomination_keeps_scientific_fields_and_future_measurements():

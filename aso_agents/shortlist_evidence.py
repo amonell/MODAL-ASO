@@ -433,6 +433,32 @@ def screening_packet(entries, *, include_provenance=False, local_ids=True):
             'the requested objective and reference, and does not establish an exon overlap or isoform selectivity.'}
 
 
+def compact_screening_rows(packet):
+    """Share column names across the transport table, preserving absent and null cells."""
+    fields, rows = packet.get('fields'), packet.get('rows')
+    if not fields or not rows:
+        return packet
+    columns = list(fields)
+    indices = {name: position for position, name in enumerate(columns)}
+    packed = []
+    for row in rows:
+        named = row['values']
+        if len(named) == len(columns):
+            packed.append({**row, 'values': [named[name] for name in columns]})
+        else:
+            packed.append({**row, 'column_indices': [indices[name] for name in named],
+                           'values': list(named.values())})
+    guide = ('Rows list their values in column_names order. A sparse row provides column_indices '
+             'for its present values. Indices start at zero. A missing cell and a recorded null '
+             'both indicate unavailable evidence. ')
+    def size(value):
+        return len(json.dumps(value, separators=(',', ':'), ensure_ascii=False))
+    if size(packed) + size(columns) + len(guide) >= size(rows) * 0.8:
+        return packet
+    return {**packet, 'column_names': columns, 'rows': packed,
+            'reading_guide': guide + packet['reading_guide']}
+
+
 def nested_packet(entries):
     """An equivalent tree encoding for records dominated by long fact paths.
 

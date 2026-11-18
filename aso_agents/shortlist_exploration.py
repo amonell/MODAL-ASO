@@ -57,6 +57,7 @@ FINAL_SCHEMA = obj({'candidate_ids': IDS, 'query_slices': SLICES, 'basis_set_ids
     'attribute_ids': array(TEXT, 12), 'summary': SUMMARY})
 CHALLENGE_SCHEMA = obj({'additional_candidate_ids': array(TEXT, 32),
     'additional_query_slices': SLICES,
+    'filter_decisions': array(obj({'set_id': TEXT, 'keep': {'type': 'boolean'}}), 80),
     'attribute_ids': array(TEXT, 12), 'summary': SUMMARY,
     'strategy_supported': {'type': 'boolean'}, 'blocking_issues': FINDINGS,
     'caveats': FINDINGS, 'reviewed_outsider_ids': IDS})
@@ -126,7 +127,18 @@ goal: favor fewer same-gene isoform matches only for a recorded selective/preser
 objective, compare activity under compatible conditions, retain signed splice
 effects and chemistry-specific motifs. Review the actual query predicates and
 their rationale. Request correction for concrete unsupported biological priorities.
-Return additional_candidate_ids to restore worthwhile alternatives, up to
+Review every set in proposed_filter_ids exactly once in filter_decisions. Keep a
+set when its actual predicates and sorting are justified for this request.
+Withdraw unsupported narrowing, including treating a canonical reference as a
+reason to favor fewer same-gene isoforms. Record rejection with keep=false even
+when better alternatives can be restored. Describing an invalid filter as a
+caveat cannot remove its influence on membership or the report.
+If you withdraw any set, explicitly build the entire replacement comparison with
+additional_query_slices and additional_candidate_ids, up to working_limit. You
+can reuse valid recorded sets, or query the original library. Include enough
+alternatives, usually 32 to 64. A withdrawn set and its descendants cannot
+supply replacement slices. The host restores native reserves independently.
+With all proposed filters kept, return additional_candidate_ids to restore worthwhile alternatives, up to
 additional_candidate_limit. Existing proposed candidates remain available for detailed review
 and do not count against that additions limit. working_limit belongs to the initial
 comparison proposal, whose final research panel is chosen in a later step.
@@ -212,7 +224,7 @@ def _run_model(phase, payload, index, records, save, configuration):
         model_settings=ModelSettings(reasoning=reasoning, max_output_tokens=budget))
     queried = any(record['tool'] == 'filter_candidates' and record.get('outcome') != 'error'
                   for record in records)
-    if payload.get('corrections') and queried:
+    if payload.get('corrections') and queried and not payload.get('needs_more_queries'):
         from agents import _RunResult
         result = _RunResult({'error': 'Max tool-calling steps exceeded'})
     else:
@@ -313,6 +325,22 @@ def _session(phase, payload, index, directory, configuration):
                 return ['Return only candidate sets created by your queries.']
         additional = ids-set(payload.get('proposed_ids', [])) if phase == 'challenge' else ids
         limit = payload['additional_candidate_limit'] if phase == 'challenge' else payload['working_limit']
+        if phase == 'challenge':
+            decisions = response['filter_decisions']
+            judged = [item['set_id'] for item in decisions]
+            if sorted(judged) != sorted(payload['proposed_filter_ids']):
+                errors.append('Return one keep decision for every proposed_filter_id, with no duplicates.')
+            withdrawn = {item['set_id'] for item in decisions if not item['keep']}
+            if withdrawn:
+                excluded = _dependent_sets(index, withdrawn)
+                if any(item['set_id'] in excluded for item in slices):
+                    errors.append('Replace withdrawn filters and their descendants with independent query slices.')
+                additional, limit = ids, payload['working_limit']
+                if response['strategy_supported']:
+                    sizes = [len(index.sets[item['set_id']]) for item in slices]
+                    minimum = min(32, max(sizes, default=len(index.ids)), limit)
+                    if not slices or len(ids) < minimum:
+                        errors.append(f'Supply an independent replacement query slice and at least {minimum} comparison candidates, or request full-library review.')
         if not ids and phase == 'explore':
             errors.append('Choose a nonempty comparison pool using query_slices or known candidate IDs.')
         unknown = ids-set(index.ids)
@@ -344,6 +372,8 @@ def _session(phase, payload, index, directory, configuration):
                     inspected.add(record['result']['candidate_id'])
             if not outsiders <= inspected:
                 errors.append('Retrieve comparison or source evidence for every supplied outsider before approving.')
+            if withdrawn and not set(response['additional_candidate_ids']) <= inspected:
+                errors.append('Inspect individually chosen replacement candidates or select them from independent query slices.')
             if response['strategy_supported'] == bool(response['blocking_issues']):
                 errors.append('strategy_supported must agree with blocking_issues. Put ordinary measurement gaps in caveats.')
         return errors
@@ -354,7 +384,9 @@ def _session(phase, payload, index, directory, configuration):
     correction = []
     for attempt in range(2):
         started = time.monotonic()
-        request = {**payload, 'corrections': correction, '_generation_budget': 8192 * (attempt+1),
+        request = {**payload, 'corrections': correction,
+                   'needs_more_queries': phase == 'challenge' and bool(correction),
+                   '_generation_budget': 8192 * (attempt+1),
                    'resumed_operations': records[-4:] if records else []}
         try:
             response, metadata = _run_model(phase, request, index, records, save, configuration)
@@ -382,6 +414,25 @@ def _response_ids(response, index):
     for item in response.get('query_slices', response.get('additional_query_slices', [])):
         ids.extend(index.ordered_sets[item['set_id']][item['offset']:item['offset']+item['take']])
     return list(dict.fromkeys(ids))
+
+
+def _dependent_sets(index, withdrawn):
+    """Queries only reference earlier results, so one ordered pass covers all descendants."""
+    excluded = set(withdrawn)
+    for operation in index.operations:
+        if excluded.intersection(operation['query']['input_sets']):
+            excluded.add(operation['set_id'])
+    return excluded
+
+
+def _proposal_filters(proposal, index):
+    # Include ancestors of combined sets. Looking at an unrelated distribution
+    # during exploration does not make it a selection criterion.
+    basis = set(proposal['basis_set_ids']) | {item['set_id'] for item in proposal['query_slices']}
+    for op in reversed(index.operations):
+        if op['set_id'] in basis:
+            basis.update(op['query']['input_sets'])
+    return [op['set_id'] for op in index.operations if op['set_id'] in basis]
 
 
 def project(index, candidate_ids, attribute_ids):
@@ -431,6 +482,7 @@ def explore(catalog, context, directory, configuration, reserve_ids):
     _progress(directory, f'Exploring recorded attributes across {len(index.ids):,} ASOs.',
               phase='exploring', total=len(index.ids))
     proposal = _session('explore', payload, index, directory, configuration)
+    basis_ids = _proposal_filters(proposal, index)
     proposed = list(dict.fromkeys(_response_ids(proposal, index)+list(reserve_ids)))
     outside = index.outsiders(proposed, limit=16)
     attributes = list(proposal['attribute_ids'])
@@ -439,8 +491,10 @@ def explore(catalog, context, directory, configuration, reserve_ids):
         attributes.extend(item['field_id'] for item in operation['query']['order_by'])
     attributes = list(dict.fromkeys(attributes))[:24]
     challenge = None
-    if outside:
-        _progress(directory, f'Checking {len(outside)} alternatives outside the proposed filters.',
+    if outside or basis_ids:
+        message = (f'Checking {len(outside)} alternatives outside the proposed filters.' if outside
+                   else 'Checking the criteria used to compare the library.')
+        _progress(directory, message,
                   phase='challenging', total=len(outside))
         outside_projection = project(index, outside, attributes)
         outside_evidence = screening_packet(list(outside_projection.values()), local_ids=False)
@@ -452,20 +506,31 @@ def explore(catalog, context, directory, configuration, reserve_ids):
             outside_evidence = {'candidate_ids': outside,
                 'instruction': 'Use compare_candidates pages to inspect every outsider.'}
         challenge = _session('challenge', {**payload, 'additional_candidate_limit': 32,
+            'proposed_filter_ids': basis_ids,
             'proposed_ids': proposed, 'proposal': proposal, 'filters': index.operations,
             'outsider_ids': outside, 'outsider_evidence': outside_evidence}, index, directory, configuration)
         if not challenge['strategy_supported']:
             raise ExplorationExhausted('Independent review requires a full-library comparison.')
-        proposed = list(dict.fromkeys(proposed+_response_ids(challenge, index)))
+        withdrawn = [item['set_id'] for item in challenge['filter_decisions'] if not item['keep']]
+        if withdrawn:
+            proposed = list(dict.fromkeys(_response_ids(challenge, index) + list(reserve_ids)))
+        else:
+            proposed = list(dict.fromkeys(proposed+_response_ids(challenge, index)))
+    else:
+        withdrawn = []
     attributes = list(dict.fromkeys(attributes+(challenge or {}).get('attribute_ids', [])))[:24]
     projection = project(index, proposed, attributes)
-    basis_ids = list(dict.fromkeys(proposal['basis_set_ids'] + [item['set_id'] for item in proposal['query_slices']]))
-    matched = set().union(*(index.sets[key] for key in basis_ids)) if basis_ids else None
+    used_sets = [] if withdrawn else [item['set_id'] for item in proposal['query_slices']]
+    if not withdrawn and proposal['candidate_ids']:
+        used_sets.extend(proposal['basis_set_ids'])
+    used_sets.extend(item['set_id'] for item in (challenge or {}).get('additional_query_slices', []))
+    used_sets = list(dict.fromkeys(used_sets))
+    matched = set().union(*(index.sets[key] for key in used_sets)) if used_sets else None
     receipt = {'method': 'query_guided', 'indexed_ids': list(index.ids),
         'proposed_ids': proposed, 'challenger_ids': outside, 'attribute_ids': attributes,
         'compared_ids': sorted(index.compared_ids | index.read_ids),
         'matched_ids': sorted(matched) if matched is not None else None,
-        'operations': index.operations, 'basis_set_ids': basis_ids,
+        'operations': index.operations, 'basis_set_ids': used_sets, 'withdrawn_set_ids': withdrawn,
         'summary': (challenge or proposal)['summary'],
         'source_sha256': payload['input_sha256']}
     write_json(Path(directory)/'recommendation_review'/'exploration.json', receipt)

@@ -128,7 +128,12 @@ The model can select exact slices of a stored, sorted query result by offset and
 count. This preserves its chosen ordering and avoids copying long candidate-ID
 lists. Final explanation audits use small concurrent batches with the full panel
 as comparison context. Selected source-page audits also run concurrently; every
-original page still receives its assigned check. Mismatch arrays supply a separate
+original page still receives its assigned check. The independent reviewer can withdraw
+an unsupported filter and replace the comparison from valid queries. The report
+lists the filters that supplied the accepted comparison. When the complete
+comparison fits in one ordinary evidence packet, one full review establishes
+the order. Evidence repairs can cite newly identified facts from the original
+packet. Mismatch arrays supply a separate
 arithmetic table for each bin, with missing values retained.
 Reopening the report stays
 offline. New installations generate their own index from their run's evidence.

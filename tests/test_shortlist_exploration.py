@@ -34,6 +34,7 @@ def querying_model(phase, payload, index, records, save, configuration):
         response.update(candidate_ids=ids, query_slices=[], basis_set_ids=[result['set_id']])
     else:
         response.update(additional_candidate_ids=ids, additional_query_slices=[], strategy_supported=True,
+            filter_decisions=[{'set_id': key, 'keep': True} for key in payload['proposed_filter_ids']],
             blocking_issues=[], caveats=[], reviewed_outsider_ids=outsiders)
     return response, []
 
@@ -178,6 +179,59 @@ def test_query_errors_are_recorded_without_becoming_successful_operations():
     result = tool({'unsupported': 'query'})
     assert result['error'] and records[0]['outcome'] == 'error'
     assert not index.operations
+
+
+def test_withdrawn_filter_cannot_supply_membership_or_report_rationale(tmp_path, monkeypatch):
+    rows = large_pool(160)
+    sets, corrections = {}, []
+    def challenge_filter(phase, payload, index, records, save, configuration):
+        call = next(tool for tool in exploration._tools(index, records, save)
+                    if tool._tool_name == 'filter_candidates')
+        rank = next(key for key, field in index.fields.items() if field['path'].endswith('/selection_rank'))
+        def query(parent, operator, threshold, rationale):
+            result = call({'input_sets': [parent], 'combine': 'union',
+                'predicates': [{'field_id': rank, 'scope_ids': [], 'operator': operator,
+                    'value': threshold, 'aggregation': 'any', 'missing': 'exclude'}],
+                'join': 'all', 'context_policy': 'any', 'rationale': rationale,
+                'order_by': [], 'offset': 0, 'limit': 32})
+            return result['set_id']
+        if phase == 'explore':
+            sets['original'] = query('all', 'lte', 40, 'An unsupported preliminary priority.')
+            sets['child'] = query(sets['original'], 'lte', 32, 'A subset of that preliminary choice.')
+            return {'candidate_ids': [], 'query_slices': [{'set_id': sets['child'], 'offset': 0, 'take': 32}],
+                    'basis_set_ids': [], 'attribute_ids': [rank], 'summary': 'Initial comparison.'}, []
+        assert set(payload['proposed_filter_ids']) == {sets['original'], sets['child']}
+        replacement = sets['child']
+        if payload['corrections']:
+            corrections.extend(payload['corrections'])
+            sets['independent'] = query('all', 'gte', 80, 'Compare independently supported sites.')
+            replacement = sets['independent']
+        return {'additional_candidate_ids': [], 'additional_query_slices': [
+                    {'set_id': replacement, 'offset': 0, 'take': 32}],
+            'filter_decisions': [{'set_id': key, 'keep': key != sets['original']}
+                                 for key in payload['proposed_filter_ids']],
+            'attribute_ids': [rank], 'strategy_supported': True, 'summary': 'A revised comparison.',
+            'blocking_issues': [], 'caveats': [], 'reviewed_outsider_ids': payload['outsider_ids']}, []
+    monkeypatch.setattr(exploration, '_run_model', challenge_filter)
+    monkeypatch.setattr(review, '_model_call', nomination_model)
+    _, _, receipt = run(rows, tmp_path, {'candidate_limit': 4}, review_strategy='auto')
+    assert receipt['status'] == 'completed' and any('descendants' in text for text in corrections)
+    decision = json.loads((tmp_path/'recommendation_review/exploration.json').read_text())
+    assert decision['basis_set_ids'] == [sets['independent']]
+    assert decision['withdrawn_set_ids'] == [sets['original']]
+    assert set(decision['proposed_ids']) <= set(decision['matched_ids']) | {molecule_id(row) for row in rows[:4]}
+    assert [item['rationale'] for item in receipt['selection_process']['steps']] == ['Compare independently supported sites.']
+
+
+def test_compact_finalist_group_receives_a_single_complete_comparison(tmp_path, monkeypatch):
+    monkeypatch.setattr(exploration, '_run_model', querying_model)
+    monkeypatch.setattr(review, '_model_call', nomination_model)
+    _, _, receipt = run(large_pool(140), tmp_path, {'candidate_limit': 4}, review_strategy='auto')
+    assert receipt['status'] == 'completed'
+    subset = json.loads((tmp_path/'recommendation_review/exploration.json').read_text())['proposed_ids']
+    assert set(subset) == set(receipt['fully_reviewed_ids'])
+    levels = [level for level in receipt['review_levels'] if level['method'] == 'final_selection']
+    assert len(levels) == 1
 
 
 def test_complete_ordinary_finalist_evidence_reaches_ranking_without_eager_page_calls(tmp_path, monkeypatch):

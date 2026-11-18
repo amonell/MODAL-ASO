@@ -18,7 +18,7 @@ import time
 from .artifact_io import write_json
 from .candidate_presentation import molecule_key
 from .splice_recommendations import finite_number
-from .shortlist_evidence import (citation, clean, compact_packet, digest,
+from .shortlist_evidence import (citation, clean, compact_packet, compact_screening_rows, digest,
     evidence_catalog, fact_value, indexed_packet, molecule_id, nested_packet, panel_binding_geometry, review_context,
     screening_packet)
 
@@ -505,6 +505,10 @@ negative shifts are upstream and positive shifts downstream. Use this arithmetic
 for positional comparisons. Use /binding_geometry/start_shift_nt_in_RNA or
 /binding_geometry/end_shift_nt_in_RNA in quantitative comparisons. Panel numbering
 uses /panel_order; its order is separate from genomic or RNA position.
+For evidence_paths and comparison_evidence, cite the supplied original coordinate
+or measurement facts. A derived distance between two ASOs is supported by the
+saved intervals of both ASOs. The binding_geometry and numeric_comparisons tables
+can verify the arithmetic directly and have no original source citation of their own.
 '''
     if kind in {'explain', 'repair'}:
         instructions += '''
@@ -594,6 +598,8 @@ def _model_call(kind, payload, schema):
             return [replace_ids(child) for child in value]
         return _replace_identifiers(value, aliases) if isinstance(value, str) else value
     wire_payload = replace_ids(payload) if kind == 'rank' else payload
+    if kind in {'select', 'nominate', 'audit'} and 'evidence' in payload:
+        wire_payload = {**wire_payload, 'evidence': compact_screening_rows(payload['evidence'])}
     agent = Agent(name='ASO Shortlist ' + kind.title(), instructions=instructions, tools=[],
         model=MODEL, model_settings=ModelSettings(reasoning=reasoning, max_output_tokens=budget,
             extra_body={'text': {'format': {'type': 'json_schema', 'name': 'shortlist_' + kind,
@@ -1256,13 +1262,15 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 cited_paths = {path for item in response['recommendations'] for path in item['evidence_paths']}
                 cited_paths.update(reference['path'] for item in response['recommendations']
                                    for reference in item['comparison_evidence'])
-                # Editing an already checked draft needs its claims and source
-                # facts. Keep the original citation IDs and value vectors, plus
-                # the complete candidate overviews. The independent audit below
-                # still receives every original fact and alternative.
-                repair_packet = {**packet, 'facts': [fact for fact in packet['facts'] if any(
-                    cited == source or cited.startswith(source + '/') or source.startswith(cited + '/')
-                    for source in fact['paths'].values() for cited in cited_paths)]}
+                # Wording edits need the existing citations. An evidence audit
+                # can find a missed source or an incorrect citation. Give that
+                # repair the same full citation directory and exact values that
+                # were available when the recommendations were written.
+                repair_packet = packet
+                if audit.get('wording_only'):
+                    repair_packet = {**packet, 'facts': [fact for fact in packet['facts'] if any(
+                        cited == source or cited.startswith(source + '/') or source.startswith(cited + '/')
+                        for source in fact['paths'].values() for cited in cited_paths)]}
                 patch = _call('repair', {**payload, 'evidence': repair_packet, 'previous_draft': response,
                     'review_corrections': corrections, 'repair_candidate_ids': sorted(repair_ids),
                     'checked_field_observations': [item for item in audit['field_reviews'] if not item['supported']],
@@ -1287,7 +1295,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             if wording:
                 corrections = [{'candidate_id': item['candidate_id'],
                     'problem': item['field'] + ': ' + item['evidence_statement']} for item in wording]
-                audit = {'issues': corrections, 'field_reviews': wording, 'checks': []}
+                audit = {'issues': corrections, 'field_reviews': wording, 'checks': [], 'wording_only': True}
                 numeric_comparisons = []
                 write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
                     'draft_sha256': digest(response), 'audit': audit, 'stage': 'wording_repair'})
@@ -1585,10 +1593,21 @@ def _query_rank(catalog, context, goal, eligible, reserve, select_panel, directo
         'complete_pool_molecule_count': len(exploration['indexed_ids']),
         'comparison_molecule_count': len(projection),
         'evidence_scope': 'Exact source excerpts chosen during library exploration; complete source evidence follows for finalists.'}}
-    order, size, levels = _rank(projection, comparison_context, directory, configuration, preselected=True)
-    if not size:
-        raise ExplorationExhausted('An empty subset requires full-library review before an empty recommendation.')
-    detailed_ids = list(dict.fromkeys(order[:max(12, size*3)]+reserve_ids))
+    # When the shortlisted records fit together, the full comparison itself
+    # supplies the preference order. A separate excerpt ranking adds a round
+    # trip without increasing coverage. Test the ordinary full packet budget.
+    from .shortlist_paging import needs_paging
+    candidates = [catalog[key] for key in projection]
+    fits = (not any(needs_paging(entry, MAX_PACKET_CHARACTERS) for entry in candidates)
+            and len(json.dumps(screening_packet(candidates, include_provenance=True),
+                               separators=(',', ':'))) <= MAX_PACKET_CHARACTERS)
+    if fits:
+        order, levels, detailed_ids = list(projection), [], list(projection)
+    else:
+        order, size, levels = _rank(projection, comparison_context, directory, configuration, preselected=True)
+        if not size:
+            raise ExplorationExhausted('An empty subset requires full-library review before an empty recommendation.')
+        detailed_ids = list(dict.fromkeys(order[:max(12, size*3)]+reserve_ids))
     detailed_catalog, full_order, detailed_levels = dict(catalog), [], []
     for expansion in range(3):
         # The narrowed comparison can share repeated source facts across its
@@ -1632,7 +1651,7 @@ def _query_rank(catalog, context, goal, eligible, reserve, select_panel, directo
         {name: operation[name] for name in ('rationale', 'matched_count', 'unknown_count')}
         for operation in exploration['operations'] if operation['matched_count']
         and operation['set_id'] in exploration['basis_set_ids']
-        and not _prose_issue(operation['rationale'])
+        and not _prose_issue(operation['rationale'], context=context)
         and not any(character in operation['rationale'] for character in '{}[]')]}
     coverage = {'indexed_molecule_count': len(exploration['indexed_ids']),
         'compared_molecule_count': len(compared_ids),

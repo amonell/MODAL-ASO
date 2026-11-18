@@ -184,6 +184,8 @@ def test_visible_notation_and_contrastive_boilerplate_are_fixed_before_audit(tmp
         if kind == 'repair':
             corrections.append(payload['repair_fields'])
             assert list(payload['repair_fields'].values()) == [['why_chosen']]
+            assert '/contexts/0/selection_rank' not in {path for fact in payload['evidence']['facts']
+                                                        for path in fact['paths'].values()}
             result['recommendations'][0]['why_chosen'] = 'This ASO has complete scoped off-target evidence.'
             result['recommendations'][0]['tradeoff'] = 'Unsolicited unrelated rewrite.'
         return result, metadata
@@ -516,8 +518,8 @@ def test_repairs_keep_exact_citations_and_audits_keep_complete_evidence(tmp_path
     assert receipt['status'] == 'completed'
     assert len(repair_paths) == 1 and audit_paths[0] == audit_paths[1]
     assert '/contexts/0/uncited_future_analysis/score' in audit_paths[0]
-    assert '/contexts/0/uncited_future_analysis/score' not in repair_paths[0]
-    assert repair_paths[0] < audit_paths[0]
+    assert '/contexts/0/uncited_future_analysis/score' in repair_paths[0]
+    assert repair_paths[0] == audit_paths[0]
 
 
 def test_panel_only_repair_ignores_unsolicited_candidate_rewrites(tmp_path, monkeypatch):
