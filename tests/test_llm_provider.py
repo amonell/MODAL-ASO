@@ -1134,8 +1134,9 @@ def test_openrouter_temporary_reservation_obeys_shared_cooldown_and_retry_limits
         assert gate in gates and 'reservation-test-key' not in gate and delay >= 120
         assert calls[0]['model'] == calls[1]['model']
     else:
-        with pytest.raises(RuntimeError, match='HTTP 402'):
+        with pytest.raises(RuntimeError) as error:
             llm_provider.create_response(payload, config)
+        assert 'HTTP 402' in str(error.value)
         assert not pauses
     assert len(calls) == expected_calls
 
