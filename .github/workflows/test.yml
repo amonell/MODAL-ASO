@@ -77,10 +77,6 @@ jobs:
         run: .venv/bin/python ci/check_warm_tools.py
       - name: Regressions
         run: .venv/bin/python -m pytest -q --junitxml=test-results.xml
-      - name: Install optional GUI and test presentation contracts
-        run: |
-          uv sync --frozen --extra splice --extra dev --extra gui
-          .venv/bin/python -m pytest -q tests/test_gui*.py
       - name: Packaged native workflow
         env:
           ASO_RUN_INSTALLED_SMOKE: '1'

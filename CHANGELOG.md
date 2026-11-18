@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-- Add an optional browser GUI with provider setup, chat, report and file panels,
-  responsive scrolling, and offline `--test` previews. Group SDK serialization
-  warnings under optional technical activity. The GUI uses the existing analysis
-  controller and provider transport ([#4](https://github.com/amonell/MODAL-ASO/issues/4)).
 - Preserve exon-defined transcript groups through clarification, scoring and review. Resolve physical exon identity before design, keep partial transcript membership explicit, and report group coverage separately from selectivity (#31). New group-aware runs can rank candidates differently; historical scientific artifacts retain their recorded values.
 - Bound generated analysis programs to five minutes by default, terminate their process groups, and retain timeout diagnostics. Configure the budget through `ASO_ANALYSIS_TIMEOUT_SECONDS` (#1).
 - Keep provisional ASOs visible when recommendation review is incomplete, with review status and diagnostics carried into reports and terminal completion (#22).
