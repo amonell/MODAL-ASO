@@ -23,7 +23,7 @@ class FilterHistoryBrowserTest(unittest.TestCase):
             output = root/'artifacts/candidates/candidate_exclusions.json'
             output.parent.mkdir(parents=True)
             rows = [{'Synthesis':'ACGTACGT', 'IDT':'A*C*G*T*A*C*G*T', 'Chrom':'chr1', 'Start':i*10,
-                     'End':i*10+8, 'GC':.123456789, 'stage':'Rule A' if i%2 else 'Rule B',
+                     'End':i*10+8, 'GC':.123456789, 'stage':'Rule A' if i%2 else 'Recommendation eligibility after screening',
                      'reason':'=SUM(1,2)' if i%2 else '<img src=x onerror="window.unsafe=1">'} for i in range(10003)]
             output.write_text(json.dumps({'rows': rows}))
             document = basic_document('Filter history', '# Results\nNo eligible candidates.', root)
