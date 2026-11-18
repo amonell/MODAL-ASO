@@ -218,6 +218,53 @@ def test_terminal_audit_blocks_a_still_unsupported_panel(tmp_path, monkeypatch):
     assert result['status'] == 'unavailable' and result['failure_code'] == 'explanation_evidence_review_incomplete'
 
 
+@pytest.mark.parametrize('second_objection', [False, True])
+def test_terminal_summary_can_cite_a_selected_member_and_requires_full_review(tmp_path, monkeypatch, second_objection):
+    monkeypatch.setattr(review, 'EDITORIAL_ROUNDS', 1)
+    drafts = []
+    unit = '/contexts/0/candidate_assessment/off_target/unit'
+    budget = '/contexts/0/candidate_assessment/off_target/mismatch_budget'
+    def reviewer(kind, request, schema):
+        result, meta = model(kind, request, schema)
+        if kind == 'audit':
+            draft = request['draft']
+            drafts.append(deepcopy(draft))
+            if len(drafts) == 1 or second_objection:
+                field = next(row for row in result['field_reviews'] if row['field'] == 'summary')
+                field.update(supported=False, evidence_statement='Specify the scope of the screen.')
+                result['issues'] = [{'candidate_id': 'panel', 'field': 'summary', 'selection_impact': 'text_only',
+                    'problem': 'Specify the scope of the screen.', 'replacement': 'The screen counted matching genes.'
+                        if len(drafts) == 1 else 'The screen counted genes with up to two mismatches.',
+                    'sources': [{'candidate_id': draft['recommendations'][0]['candidate_id'],
+                                 'path': unit if len(drafts) == 1 else budget}], 'superseded_sources': []}]
+        return result, meta
+    monkeypatch.setattr(review, '_model_call', reviewer)
+    _, _, result = run(pool(3), tmp_path, {'candidate_limit': 1})
+    assert len(drafts) == 2
+    first, second = [draft['recommendations'][0] for draft in drafts]
+    assert second == {**first, 'evidence_paths': [*first['evidence_paths'], unit]}
+    assert drafts[1]['summary'] == 'The screen counted matching genes.'
+    if second_objection:
+        assert result['status'] == 'unavailable' and result['failure_code'] == 'explanation_evidence_review_incomplete'
+    else:
+        assert result['status'] == 'completed'
+        evidence = result['recommendations'][first['candidate_id']]['evidence']
+        assert any(ref['path'] == unit and ref['value'] == 'genes' for ref in evidence)
+
+
+def test_terminal_summary_cannot_attach_another_molecules_uncited_reference():
+    catalog = evidence_catalog(pool(2))
+    selected, outside = catalog
+    draft = {'summary': 'Original.', 'recommendations': [{'candidate_id': selected,
+             'evidence_paths': ['/contexts/0/length'], 'comparison_evidence': []}]}
+    finding = {'candidate_id': 'panel', 'field': 'summary', 'selection_impact': 'text_only',
+               'problem': 'Specify length.', 'replacement': 'The panel uses 16-nucleotide molecules.',
+               'sources': [{'candidate_id': outside, 'path': '/contexts/0/length'}]}
+    audit = {'issues': [finding], 'field_reviews': [{'candidate_id': 'panel', 'field': 'summary', 'supported': False}]}
+    assert sourced_audit_edit(draft, audit, catalog, str, attach_panel_sources=True) is None
+    assert draft['summary'] == 'Original.'
+
+
 def test_sourced_replacement_with_poor_wording_gets_a_focused_edit_before_the_full_audit(tmp_path, monkeypatch):
     calls, repair_fields, drafts = [], [], []
     def edit(kind, payload, schema):

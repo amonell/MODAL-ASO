@@ -1310,6 +1310,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             if not _validate(draft, saved_schema, lambda value: explain_check(value, check_prose=False)):
                 response = draft
         remaining_rounds, verifying_final_edit = EDITORIAL_ROUNDS, False
+        used_panel_citation_repair = False
         while remaining_rounds:
             remaining_rounds -= 1
             if response is None:
@@ -1639,8 +1640,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 # draft and every original source page, including unchanged fields.
                 response, corrections = edited, []
                 if remaining_rounds == 0:
-                    # A sourced edit on the last editorial round still needs its
-                    # audit. That check cannot authorize another editing round.
+                    # A sourced edit on the last ordinary round still needs its audit.
                     remaining_rounds, verifying_final_edit = 1, True
                 continue
             if not audit['issues']:
@@ -1655,6 +1655,18 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 checked_notes.append({'reviewed_ids': ids, 'summary': response['summary'],
                                       'size_reason': response['size_reason']})
                 break
+            if (remaining_rounds == 0 and not used_panel_citation_repair and edited is None
+                    and all(issue.get('candidate_id') == 'panel' and issue.get('selection_impact') == 'text_only'
+                            for issue in audit['issues'])):
+                # Selection reconsideration has already seen these findings.
+                # Permit one new set of original member citations and re-audit
+                # the entire corrected draft, including every candidate and source.
+                panel_edit = sourced_audit_edit(response, audit, allowed, expand_reference, attach_panel_sources=True)
+                if panel_edit is not None and not explain_check(panel_edit, check_prose=False):
+                    response, corrections = panel_edit, []
+                    used_panel_citation_repair = True
+                    remaining_rounds, verifying_final_edit = 1, True
+                    continue
             corrections = audit['issues']
         else:
             raise ReviewUnavailable('explanation_evidence_review_incomplete', details={

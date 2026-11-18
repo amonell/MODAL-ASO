@@ -130,7 +130,7 @@ def render_phrases(item, phrases):
     return errors
 
 
-def sourced_audit_edit(draft, audit, catalog, expand_reference):
+def sourced_audit_edit(draft, audit, catalog, expand_reference, *, attach_panel_sources=False):
     """Apply only unanimous, source-resolved wording edits to explicitly rejected fields."""
     from copy import deepcopy
     if not audit['issues'] or any(finding.get('selection_impact') != 'text_only' for finding in audit['issues']):
@@ -168,12 +168,16 @@ def sourced_audit_edit(draft, audit, catalog, expand_reference):
     additions, removals = {}, {}
     for (owner, field), (text, added, removed) in edits.items():
         if owner == 'panel':
-            # Panel text has no separate citation field. Its evidence must
-            # already be cited by a member of the panel.
             cited = {(key, p) for key, item in by_id.items() for p in item['evidence_paths']}
             cited.update((ref['candidate_id'], ref['path']) for item in by_id.values() for ref in item['comparison_evidence'])
-            if field not in ('summary', 'size_reason') or removed or not added <= cited:
+            if field not in ('summary', 'size_reason') or removed:
                 return None
+            # Panel text shares the recommendations' citations. A terminal
+            # repair may add a verified fact to the member it actually describes.
+            for candidate, path in sorted(added - cited):
+                if not attach_panel_sources or candidate not in by_id:
+                    return None
+                additions.setdefault(candidate, set()).add((candidate, path))
             result[field] = text
         else:
             if owner not in by_id or field not in ('why_chosen', 'tradeoff', 'panel_role'):
@@ -182,7 +186,7 @@ def sourced_audit_edit(draft, audit, catalog, expand_reference):
             additions.setdefault(owner, set()).update(added)
             removals.setdefault(owner, set()).update(removed)
     for key, added in additions.items():
-        item, removed = by_id[key], removals[key]
+        item, removed = by_id[key], removals.get(key, set())
         current = [(key, path) for path in item['evidence_paths']]
         current.extend((ref['candidate_id'], ref['path']) for ref in item['comparison_evidence'])
         if not removed <= set(current) or removed & added:
