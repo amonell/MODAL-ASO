@@ -45,14 +45,18 @@ def verified_phrases(catalog, ids, geometry):
     for key in ids:
         entry = catalog[key]
         sources = entry.get('binding_sources', [])
-        for observation in entry.get('coordinate_observations', []):
+        # The complete geometry still goes to the reviewer. Bound optional
+        # writing aids for molecules with many overlapping target definitions.
+        for observation in entry.get('coordinate_observations', [])[:6]:
             ctx = observation['context']
             if ctx >= len(sources) or not sources[ctx]:
                 continue
             member = f"/contexts/{ctx}/source_annotations/binding_site_membership/{observation['source_membership_index']}/"
             label = next((member + name for name in ('label', 'constraint_label')
                           if entry['facts'].get(member + name) == observation['target_label']
-                          and isinstance(observation['target_label'], str) and observation['target_label'].strip()), None)
+                          and isinstance(observation['target_label'], str) and observation['target_label'].strip()
+                          and len(observation['target_label']) <= 100 and '[[' not in observation['target_label']
+                          and ']]' not in observation['target_label']), None)
             target = observation['target_label'] if label else 'the target'
             refs = [(key, path) for path in [*sources[ctx], member + 'genomic_segments_bed0_half_open']]
             if label:
@@ -189,3 +193,43 @@ def sourced_audit_edit(draft, audit, catalog, expand_reference):
         if not item['evidence_paths']:
             return None
     return result if result != draft else None
+
+
+def mismatch_citation_findings(draft, claims, catalog):
+    """Check the unit-specific bin named by the auditor against the cited original source."""
+    by_id = {item['candidate_id']: item for item in draft['recommendations']}
+    issues = []
+    for claim in claims:
+        owner, field = claim['candidate_id'], claim['field']
+        source, ctx, mismatch = claim['source_candidate_id'], claim['context'], claim['mismatches']
+        item = by_id[owner]
+        entry = catalog[source]
+        prefix = f'/contexts/{ctx}/'
+        counts = prefix + 'candidate_assessment/off_target/counts_by_mismatch'
+        indexed = counts + '/' + str(mismatch)
+        native = 'Off_target_' + ('exact' if mismatch == 0 else str(mismatch) + 'mm') + '_count'
+        possible = [indexed, prefix + native, prefix + 'source_annotations/' + native]
+        matching, observed = [], set()
+        for path in possible:
+            try:
+                value = fact_value(entry, path)
+            except KeyError:
+                continue
+            if type(value) in (int, float):
+                observed.add(value)
+                if value == claim['count']:
+                    matching.append(path)
+        if len(observed) > 1:
+            matching = []
+        refs = item['evidence_paths'] if source == owner else [
+            ref['path'] for ref in item['comparison_evidence'] if ref['candidate_id'] == source]
+        if any(path in refs for path in matching) or (indexed in matching and counts in refs):
+            continue
+        correct = [{'candidate_id': source, 'path': path} for path in matching[:1]]
+        problem = (f"The {mismatch}-mismatch count of {claim['count']} needs the original citation for that "
+                   f"bin and molecule in context {ctx}.") if correct else (
+                   f"The original {mismatch}-mismatch records for context {ctx} do not support the stated count of {claim['count']}.")
+        issues.append({'candidate_id': owner, 'field': field, 'problem': problem,
+                       'selection_impact': 'text_only' if correct else 'uncertain',
+                       'replacement': item[field] if correct else None, 'sources': correct, 'superseded_sources': []})
+    return issues

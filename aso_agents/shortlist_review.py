@@ -16,7 +16,7 @@ from pathlib import Path
 import time
 
 from .artifact_io import write_json
-from .shortlist_facts import render_phrases, sourced_audit_edit, verified_phrases
+from .shortlist_facts import mismatch_citation_findings, render_phrases, sourced_audit_edit, verified_phrases
 from .candidate_presentation import molecule_key
 from .splice_recommendations import finite_number
 from .shortlist_evidence import (citation, clean, compact_packet, compact_screening_rows, digest,
@@ -322,7 +322,11 @@ AUDIT_SCHEMA = _object({'reviewed_ids': _array(_text(), uniqueItems=True),
         'path': _text(), 'order': {'type': 'string', 'enum': ['ascending', 'descending', 'absolute_ascending', 'absolute_descending']},
         'claimed_rank': {'type': 'integer', 'minimum': 1},
         'scope_ids': _array(_text(), minItems=1, uniqueItems=True)})),
+    'mismatch_count_claims': _array(_object({'candidate_id': _text(), 'source_candidate_id': _text(),
+        'field': {'type': 'string', 'enum': ['why_chosen', 'tradeoff', 'panel_role']},
+        **{name: {'type': 'integer', 'minimum': 0} for name in ('context', 'mismatches', 'count')}})),
     'issues': _array(AUDIT_ISSUE)})
+AUDIT_SCHEMA['required'].remove('mismatch_count_claims')
 PATCH_SCHEMA = _object({'summary': {'anyOf': [_text(900), {'type': 'null'}]},
     'size_reason': {'anyOf': [_text(500), {'type': 'null'}]},
     'recommendations': EXPLAIN_SCHEMA['properties']['recommendations']})
@@ -448,11 +452,11 @@ def _prose_issue(text, *, summary=False, context=None):
 
 def _instructions(kind):
     if kind == 'membership_confirmation':
-        return """Check the exact ordered membership realized by the proposed ASO comparison.
-The query definitions, starting offsets, individual picks, distinct count and any additions
-needed for overlap are supplied. Approve only if the realized comparison follows the
-reviewer's stated criteria for this goal. Decline an unsupported extension or scope.
-This approves a pool for later detailed review. Give one short reason."""
+        return """Confirm the exact comparison members realized from the independent
+reviewer's kept queries, chosen offsets and individual picks. Check the distinct total
+and any members introduced to resolve overlap. Decline if these members or their sources
+depart from that decision. The complete query history is supplied for provenance.
+An exploratory alternative can differ from a lead pick. Give one short reason."""
     if kind == 'selection_reconsideration':
         return RUBRIC + '''
 Decide whether the recorded audit findings require comparing candidate choices
@@ -568,6 +572,14 @@ list or fact supplies no correction. Preserve already-supported, clear prose.
 '''
     if kind == 'audit':
         instructions += '''
+Extract each stated exact or mismatch-specific off-target count in an assigned
+candidate sentence into mismatch_count_claims, even when accurate. Record the
+displayed candidate and field, the source molecule, zero-based context, mismatch
+number and count. For "two one-mismatch loci" record mismatches=1 and count=2.
+Count a stated zero too. A search budget or a total across mismatch bins alone
+does not specify a bin count. The host checks that the draft actually cites
+the original count for that exact bin and molecule. Check the cited values as
+well as the entire source table; a true observation still needs its citation.
 For each issue give the affected field and selection_impact. Use text_only when
 the same ASO remains justified and a wording or citation change resolves the
 entire issue. Give one publishable replacement sentence preserving supported
@@ -639,10 +651,11 @@ def _model_call(kind, payload, schema):
             return [replace_ids(child) for child in value]
         return _replace_identifiers(value, aliases) if isinstance(value, str) else value
     wire_payload = replace_ids(payload) if kind == 'rank' else payload
-    if kind == 'audit':
+    if kind in {'audit', 'evidence_audit'}:
         # New auditors provide a disposition for every finding. Legacy
         # unclassified findings take the conservative repair path on replay.
         schema = deepcopy(schema)
+        schema['required'] = list(schema['properties'])
         finding = schema['properties']['issues']['items']
         finding['required'] = list(finding['properties'])
         wire_payload = {**wire_payload, 'output_schema': schema}
@@ -851,7 +864,7 @@ def _previous_audited_draft(payload, directory, configuration):
             continue
         request = receipt.get('input') or {}
         original_payload = {key: value for key, value in request.items()
-                            if key not in {'draft', 'numeric_comparisons', 'audit_scope'}}
+                            if key not in {'draft', 'numeric_comparisons', 'audit_scope', 'cited_measurements'}}
         if 'audit_scope' in request:
             draft_ids = {item.get('candidate_id') for item in (request.get('draft') or {}).get('recommendations', [])}
             if draft_ids != set(payload.get('selected_ids') or []):
@@ -1470,6 +1483,24 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     if not item['supported'] and not any(issue['candidate_id'] == item['candidate_id']
                                                         for issue in audit['issues']):
                         errors.append('Every unsupported field needs an actionable issue for its candidate or panel.')
+                claims = audit.get('mismatch_count_claims', [])
+                scoped = []
+                for claim in claims:
+                    if claim['candidate_id'] in outside_scope:
+                        continue
+                    key = claim['source_candidate_id']
+                    if (claim['candidate_id'] not in review_ids or key not in allowed
+                            or claim['context'] >= len(allowed[key]['row_indices'])):
+                        errors.append('Each mismatch count must name a reviewed entry, supplied source molecule and context.')
+                    else:
+                        scoped.append(claim)
+                audit['mismatch_count_claims'] = scoped
+                for issue in mismatch_citation_findings(response, scoped, allowed):
+                    if issue not in audit['issues']:
+                        audit['issues'].append(issue)
+                    for item in fields:
+                        if (item['candidate_id'], item['field']) == (issue['candidate_id'], issue['field']):
+                            item.update(supported=False, evidence_statement=issue['problem'])
                 return errors
             comparison_paths = {path for item in response['recommendations'] for path in item['evidence_paths']}
             comparison_paths.update({'/panel_order', '/binding_geometry/start_shift_nt_in_RNA',
@@ -1504,22 +1535,21 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             audit_parts = [ids[start:start + AUDIT_BATCH_MOLECULES]
                            for start in range(0, len(ids), AUDIT_BATCH_MOLECULES)] or [[]]
             def audit_part(index, part):
+                cited_measurements = []
+                for item in response['recommendations']:
+                    if item['candidate_id'] not in part:
+                        continue
+                    refs = [{'candidate_id': item['candidate_id'], 'path': path} for path in item['evidence_paths']]
+                    values = []
+                    for ref in refs + item['comparison_evidence']:
+                        value = fact_value(allowed[ref['candidate_id']], ref['path'])
+                        values.append({**ref, **({'value': value} if len(json.dumps(value)) <= 512 else {})})
+                    cited_measurements.append({'displayed_candidate': item['candidate_id'], 'citations': values})
                 return _call('audit', {**payload, 'evidence': audit_evidence,
-                    'selected_ids': part, 'draft': response,
+                    'selected_ids': part, 'draft': response, 'cited_measurements': cited_measurements,
                     'numeric_comparisons': numeric_comparisons,
                     'audit_scope': {'candidate_ids': part, 'include_panel_fields': index == 0}},
                     AUDIT_SCHEMA, lambda value: audit_check(value, part, index == 0), directory, configuration)
-            if len(audit_parts) == 1:
-                audits = [audit_part(0, audit_parts[0])]
-            else:
-                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(audit_parts))) as executor:
-                    futures = [executor.submit(copy_context().run, audit_part, index, part)
-                               for index, part in enumerate(audit_parts)]
-                    audits = [future.result() for future in futures]
-            # Every displayed field has an assigned audit; preserve factual
-            # issues raised by any reviewer, including cross-candidate issues.
-            audit = {key: list({digest(item): item for part in audits for item in part[key]}.values())
-                     for key in AUDIT_SCHEMA['properties']}
             # Evidence selection must not hide counterevidence from the final
             # explanation audit. Visit every original page for selected large
             # molecules and feed exact offending source records into repairs.
@@ -1534,17 +1564,23 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     exc.details['draft_molecule_count'] = len(response['recommendations'])
                     raise
                 return key, findings, source_receipt
-            if len(source_ids) > 1:
-                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(source_ids))) as executor:
-                    futures = [executor.submit(copy_context().run, audit_source, key) for key in source_ids]
-                    source_results = [future.result() for future in futures]
+            if len(audit_parts) + len(source_ids) > 1:
+                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(audit_parts) + len(source_ids))) as executor:
+                    field_futures = [executor.submit(copy_context().run, audit_part, index, part)
+                                     for index, part in enumerate(audit_parts)]
+                    source_futures = [executor.submit(copy_context().run, audit_source, key) for key in source_ids]
+                    audits = [future.result() for future in field_futures]
+                    source_results = [future.result() for future in source_futures]
             else:
-                source_results = [audit_source(key) for key in source_ids]
+                audits, source_results = [audit_part(0, audit_parts[0])], []
+            audit = {key: list({digest(item): item for part in audits for item in part[key]}.values())
+                     for key in AUDIT_SCHEMA['properties']}
             for key, findings, source_receipt in source_results:
                 source_findings.extend(findings)
                 catalog[key]['evidence_review']['explanation_audit'] = source_receipt
             if source_findings:
-                audit['issues'].extend({'candidate_id': finding['candidate_id'], 'problem': finding['problem']}
+                audit['issues'].extend({key: value for key, value in finding.items()
+                                        if key not in {'source_records', 'source_molecule'}}
                                        for finding in source_findings)
                 audit['field_reviews'].extend({'candidate_id': finding['candidate_id'],
                     'field': finding['field'], 'supported': False, 'evidence_statement': finding['problem']}

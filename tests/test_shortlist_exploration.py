@@ -366,3 +366,75 @@ def test_incomplete_exploration_resume_retains_attempts_and_reports_each_query_o
     assert receipt['attempts'][0]['error_type'] == 'TimeoutError'
     assert len(receipt['attempts']) == 2
     assert len(progress) == 2
+
+
+def test_distinct_fill_uses_only_the_chosen_order_and_reports_exhaustion():
+    from types import SimpleNamespace
+    index = SimpleNamespace(ordered_sets={'ranked': list('abcdef')})
+    proposal = {'candidate_ids': ['d', 'c'], 'query_slices': [
+        {'set_id': 'ranked', 'offset': 0, 'take': 2}, {'set_id': 'ranked', 'offset': 2, 'fill_to_distinct': 5}]}
+    assert exploration._response_ids(proposal, index) == list('dcabe')
+    proposal['query_slices'][-1]['fill_to_distinct'] = 7
+    with pytest.raises(ValueError) as exhausted:
+        exploration._response_ids(proposal, index)
+    assert 'reached 6 distinct' in str(exhausted.value)
+    proposal['query_slices'].reverse()
+    with pytest.raises(ValueError) as misplaced:
+        exploration._response_ids(proposal, index)
+    assert 'final slice' in str(misplaced.value)
+
+
+@pytest.mark.parametrize('approve', [True, False])
+def test_one_duplicate_in_replacement_requires_approval_of_exact_extension(tmp_path, monkeypatch, approve):
+    from aso_agents.shortlist_query import CandidateIndex
+    catalog = evidence_catalog(large_pool(140))
+    index = CandidateIndex(catalog, [])
+    kept = list(index.ordered_sets['all'])
+    index.ordered_sets.update(kept=kept, withdrawn=list(reversed(kept)))
+    index.sets.update(kept=set(kept), withdrawn=set(kept))
+    individual = kept[:11] + kept[48:49]
+    submitted = {'additional_candidate_ids': individual, 'additional_query_slices': [
+        {'set_id': 'kept', 'offset': 48, 'take': 20}], 'filter_decisions': [
+        {'set_id': 'withdrawn', 'keep': False}, {'set_id': 'kept', 'keep': True}],
+        'attribute_ids': [], 'summary': 'Keep the approved ranking and individually reviewed alternatives.',
+        'strategy_supported': True, 'blocking_issues': [], 'caveats': [], 'reviewed_outsider_ids': individual}
+    monkeypatch.setattr(exploration, '_run_model', lambda *args: (submitted, []))
+    confirmations = []
+    def confirm(kind, payload, schema):
+        assert kind == 'membership_confirmation'
+        confirmations.append(payload)
+        assert payload['introduced_by_overlap_repair'] == kept[68:69]
+        assert payload['ordered_members'] == list(dict.fromkeys(individual + kept[48:69]))
+        return {'approve': approve, 'reason': 'Reviewed the exact comparison membership.'}, []
+    monkeypatch.setattr(review, '_model_call', confirm)
+    payload = {'goal': {}, 'outsider_ids': individual, 'outsider_evidence': {'ids': individual},
+        'proposed_filter_ids': ['withdrawn', 'kept'], 'proposed_ids': [], 'working_limit': 64,
+        'additional_candidate_limit': 32, 'replacement_candidate_limit': 96}
+    invoke = lambda: exploration._session('challenge', payload, index, tmp_path, {})
+    if approve:
+        decision = invoke()
+        assert decision['additional_query_slices'] == [{'set_id': 'kept', 'offset': 48, 'fill_to_distinct': 32}]
+        assert invoke() == decision
+        assert submitted['additional_query_slices'][0]['take'] == 20
+    else:
+        with pytest.raises(exploration.ExplorationExhausted):
+            invoke()
+    assert len(confirmations) == 1
+
+
+def test_duplicate_shortfall_cannot_revive_a_withdrawn_source(tmp_path, monkeypatch):
+    from aso_agents.shortlist_query import CandidateIndex
+    index = CandidateIndex(evidence_catalog(large_pool(140)), [])
+    ordered = list(index.ordered_sets['all'])
+    index.ordered_sets['withdrawn'] = ordered
+    index.sets['withdrawn'] = set(ordered)
+    payload = {'goal': {}, 'outsider_ids': [], 'outsider_evidence': {'ids': []}, 'proposed_ids': [],
+        'proposed_filter_ids': ['withdrawn'], 'replacement_candidate_limit': 96, 'additional_candidate_limit': 32}
+    response = {'additional_candidate_ids': [], 'additional_query_slices': [
+        {'set_id': 'withdrawn', 'offset': 0, 'fill_to_distinct': 32}],
+        'filter_decisions': [{'set_id': 'withdrawn', 'keep': False}], 'attribute_ids': [], 'summary': 'Initial choice.',
+        'strategy_supported': True, 'blocking_issues': [], 'caveats': [], 'reviewed_outsider_ids': []}
+    monkeypatch.setattr(exploration, '_run_model', lambda *args: (response, []))
+    monkeypatch.setattr(review, '_model_call', lambda *args: pytest.fail('A withdrawn source cannot reach confirmation'))
+    with pytest.raises(exploration.ExplorationExhausted):
+        exploration._session('challenge', payload, index, tmp_path, {})

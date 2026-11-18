@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Count distinct ASOs across overlapping shortlist queries and show the realized
+  pool for review. Cite original measurements for RNA placement and mismatch
+  counts. Apply sourced wording corrections and independently check the complete
+  revised panel. A reviewer can still reopen selection when evidence affects
+  which molecules to recommend. ([#43](https://github.com/amonell/MODAL-ASO/issues/43))
 - Give the shortlist reviewer structured tools to survey, filter and compare large
   candidate libraries before detailed evidence review. Check omitted alternatives,
   preserve native panel requirements, and retain every ASO in reports and exports.

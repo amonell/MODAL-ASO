@@ -405,7 +405,7 @@ def _session(phase, payload, index, directory, configuration):
     if (reusable and previous.get('status') == 'accepted'
             and previous.get('response_sha256') == digest(previous.get('response'))
             and not check(previous['response'])
-            and (not _uses_fill(previous['response']) or
+            and (phase == 'explore' or not _uses_fill(previous['response']) or
                  previous.get('approved_membership_sha256') == digest(_response_ids(previous['response'], index)))):
         return previous['response']
     correction, previous_decision = [], None
@@ -439,16 +439,23 @@ def _session(phase, payload, index, directory, configuration):
             if candidate is not None:
                 correction = check(candidate)
         approval = None
-        if not correction and _uses_fill(candidate):
+        if not correction and _uses_fill(candidate) and phase == 'explore':
+            # The challenge receives every realized member and every ancestor
+            # query. It must explicitly approve or replace this proposal.
+            response = candidate
+            state['membership_review_phase'] = 'challenge'
+            state['submitted_decision'] = previous_submission
+        elif not correction and _uses_fill(candidate):
             from .shortlist_review import _call
             members = _response_ids(candidate, index)
             before = _response_ids(response, index)
             preview = {'goal': payload['goal'], 'phase': phase, 'decision': candidate,
                 'ordered_members': members, 'distinct_count': len(members),
                 'introduced_by_overlap_repair': [key for key in members if key not in before],
-                'queries': [{'set_id': op['set_id'], 'query': op['query'], 'rationale': op['rationale']}
-                    for op in index.operations if op['set_id'] in {
-                        item['set_id'] for item in _slices(candidate)}]}
+                'queries': index.operations,
+                'changed_member_evidence': screening_packet(list(project(index,
+                    [key for key in members if key not in before], candidate['attribute_ids']).values()),
+                    local_ids=False) if set(members) - set(before) else None}
             approval = _call('membership_confirmation', preview,
                 obj({'approve': {'type': 'boolean'}, 'reason': SUMMARY}), lambda value: [],
                 directory, configuration)
@@ -603,7 +610,7 @@ def explore(catalog, context, directory, configuration, reserve_ids):
         attributes.extend(item['field_id'] for item in operation['query']['order_by'])
     attributes = list(dict.fromkeys(attributes))[:24]
     challenge = None
-    if outside or basis_ids:
+    if outside or basis_ids or _uses_fill(proposal):
         message = (f'Checking {len(outside)} alternatives outside the proposed filters.' if outside
                    else 'Checking the criteria used to compare the library.')
         _progress(directory, message,
@@ -620,6 +627,7 @@ def explore(catalog, context, directory, configuration, reserve_ids):
         challenge = _session('challenge', {**payload, 'additional_candidate_limit': 32,
             'replacement_candidate_limit': min(len(index.ids), limit + 32),
             'proposed_filter_ids': basis_ids,
+            'membership_before_native_reserve': _response_ids(proposal, index),
             'proposed_ids': proposed, 'proposal': proposal, 'filters': index.operations,
             'outsider_ids': outside, 'outsider_evidence': outside_evidence}, index, directory, configuration)
         if not challenge['strategy_supported']:
