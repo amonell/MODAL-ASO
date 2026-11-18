@@ -247,3 +247,20 @@ def test_numeric_object_keys_retain_separate_named_mismatch_bins():
     data = index(rows)
     assert field(data, '/future_match_bins/0') != field(data, '/future_match_bins/1')
     assert query(data, [predicate(data, '/future_match_bins/0', 0, operator='eq')])['candidate_ids'] == [molecule_id(rows[0])]
+
+
+def test_comparison_shares_conditions_without_losing_source_association():
+    rows = pool(3)
+    for row in rows:
+        row['assay'] = [{'conditions': {'dose_nm': 10, 'delivery': 'test'}, 'response': 80},
+                        {'conditions': {'dose_nm': 100, 'delivery': 'test'}, 'response': 95}]
+    data = index(rows); attribute = field(data, '/response')
+    result = data.compare(list(data.ids), [attribute])
+    assert len(result['fields'][attribute]['scopes']) == 2
+    for candidate in result['candidates']:
+        for observation in candidate['attributes'][attribute]:
+            conditions = result['fields'][attribute]['scopes'][observation['scope_id']]
+            dose = next(value for key, value in conditions.items() if key.endswith('/dose_nm'))
+            assert observation['value'] == (80 if dose == 10 else 95)
+            assert observation['value'] == data.catalog[candidate['id']]['facts'][observation['path']]
+            assert 'conditions' not in observation

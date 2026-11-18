@@ -100,7 +100,7 @@ attribute_ids for the subsequent comparison, selected from discovered IDs.
 Describe the actual selection criteria in two concise sentences for a biologist.
 State what each criterion means directly. Keep raw IDs and field names in structured
 fields. Return the required final JSON. An independent review checks the proposal.
-You have eight tool turns. Batch independent tool calls and use the initial
+You have four tool turns. Batch independent tool calls and use the initial
 distribution summaries. Once useful alternatives fit working_limit, finish the
 proposal; detailed candidate review follows. Reserve your final turn for JSON.
 Aim to finish exploration in three tool turns. Additional turns are for resolving
@@ -201,13 +201,15 @@ def _run_model(phase, payload, index, records, save, configuration):
         # demanding an immediate JSON value. Keep that contract on the final
         # decision boundary; native function arguments have their own schemas.
         model_settings=ModelSettings(reasoning=reasoning, max_output_tokens=budget))
-    if payload.get('corrections') and records:
+    queried = any(record['tool'] == 'filter_candidates' and record.get('outcome') != 'error'
+                  for record in records)
+    if payload.get('corrections') and queried:
         from agents import _RunResult
         result = _RunResult({'error': 'Max tool-calling steps exceeded'})
     else:
         result = Runner._run_sync(agent, input=json.dumps({**payload, 'output_schema': schema},
             ensure_ascii=False, separators=(',', ':')),
-                                 max_steps=2 if phase == 'challenge' else 8)
+                                 max_steps=2 if phase == 'challenge' else 4)
     try:
         decoded = json.loads(result.final_output) if isinstance(result.final_output, str) else None
     except ValueError:

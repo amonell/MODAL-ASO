@@ -1,5 +1,6 @@
 """Read-only, context-preserving queries over a run's immutable ASO evidence."""
 from collections import Counter, defaultdict
+from copy import deepcopy
 from functools import lru_cache
 import json
 import math
@@ -396,20 +397,31 @@ class CandidateIndex:
             raise ValueError('Use known candidate IDs and at most 12 attributes.')
         if not 1 <= limit <= 32 or offset < 0:
             raise ValueError('Use a nonnegative offset and a page size from 1 to 32.')
-        rows = []
+        rows, fields = [], {}
+        for field_id in field_ids:
+            fields[field_id] = {'path': self.field(field_id)['path'], 'scopes': {}}
         for key in candidate_ids[offset:offset+limit]:
             row = {'id': key, 'identity': self.catalog[key]['identity'],
                 'overview': self.catalog[key]['overview'], 'attributes': {
-                    field_id: [{**item, 'conditions': self.column(field_id)['scopes'][item['scope_id']]}
+                    field_id: [{name: item[name] for name in ('value', 'path', 'scope_id', 'unavailable')}
                         for item in self.column(field_id)['values'].get(key, [])] for field_id in field_ids}}
-            if len(json.dumps(rows+[row], separators=(',', ':'))) > MAX_RESULT_CHARACTERS-1000:
+            next_fields = deepcopy(fields)
+            for field_id, observations in row['attributes'].items():
+                for item in observations:
+                    scope_id = item['scope_id']
+                    next_fields[field_id]['scopes'][scope_id] = self.column(field_id)['scopes'][scope_id]
+            header_size = len(json.dumps(next_fields, separators=(',', ':')))
+            if header_size + len(json.dumps(rows+[row], separators=(',', ':'))) > MAX_RESULT_CHARACTERS-1000:
                 if not rows:
                     raise ValueError('This record requires read_evidence pages or fewer attributes.')
                 break
             rows.append(row)
+            fields = next_fields
         self.compared_ids.update(row['id'] for row in rows)
         end = offset+len(rows)
-        return bounded({'candidates': rows, 'next_offset': end if end < len(candidate_ids) else None})
+        return bounded({'fields': fields, 'candidates': rows,
+            'reading_guide': 'Each attribute observation references its exact source path and a scope in fields. Conditions are shared without changing recorded values.',
+            'next_offset': end if end < len(candidate_ids) else None})
 
     def read_evidence(self, candidate_id, page=0):
         from .shortlist_paging import evidence_fragments, evidence_pages
