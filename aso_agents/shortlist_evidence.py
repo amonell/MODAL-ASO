@@ -525,6 +525,24 @@ def indexed_packet(entries, *, packet=None):
             'All original scientific values and source paths are retained.'}
 
 
+def review_request(run_dir, intake_context):
+    """Recover the user's wording or the scoped child task for recommendation review."""
+    from pathlib import Path
+    from .report_presentation import display_request
+    envelope = intake_context.get('request_envelope') or {}
+    request = (intake_context.get('payload') or {}).get('request') or envelope.get('request_text')
+    root = Path(run_dir)
+    if root.parent.name == 'child_runs':
+        # A child's machine-generated execution prompt can describe unrelated tasks.
+        return display_request(root, envelope, '').strip()
+    if not isinstance(request, str) or not request.strip():
+        try:
+            request = (root/'request.txt').read_text(encoding='utf-8')
+        except (OSError, UnicodeError):
+            return ''
+    return request.strip()
+
+
 def review_context(goal):
     # Use the typed request contract, excluding generated artifacts and genomic
     # data. Keep selected-reference identity and objective geometry separately.

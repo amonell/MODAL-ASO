@@ -94,7 +94,10 @@ similar. Heavily overlapping windows can be useful backups; describe their role.
 Start with each candidate_overview, then inspect the detailed facts that bear on
 the decision. Compare nearby alternatives before accepting more close off-target
 matches for positional diversity, and explain what warrants that tradeoff.
-Require an explicit isoform-selectivity or preservation objective before favoring
+Read the saved request_text and scoped program objective when interpreting reference
+labels. A specific_isoform entry names the target for a desired change. Using a
+canonical transcript as the design reference leaves other same-gene transcripts
+unconstrained. Require an explicit isoform-selectivity or preservation objective before favoring
 fewer same-gene isoform matches. Keep numerical claims to values directly recorded
 in the evidence; describe inferred geometry qualitatively. Use ASO 1, ASO 2, etc.
 in final prose, matching complete_panel.panel_order; keep opaque IDs in JSON keys.
@@ -147,7 +150,8 @@ with unresolved potency or selectivity: missing experimental validation alone
 does not require an empty nomination. Full-pool count requirements
 are enforced later. Leave unchosen candidates unordered; all remain available.
 Return reviewed_count equal to the batch count, nominated_ids and a two-sentence
-summary of the choice and main uncertainty. Return the required JSON object.
+summary of the choice and main uncertainty. Aim for 400 characters in this
+internal comparison note. Return the required JSON object.
 """
 SELECT_INSTRUCTIONS = RUBRIC + """
 This is the final comparison of the supplied nominees. The review_scope records
@@ -283,7 +287,7 @@ RANK_SCHEMA = _object({'ordered_ids': _array(_text(), uniqueItems=True),
     'suggested_size': {'type': 'integer', 'minimum': 0}, 'summary': _text(900)})
 NOMINATE_SCHEMA = _object({'reviewed_count': {'type': 'integer', 'minimum': 1},
     'nominated_ids': _array({'type': 'integer', 'minimum': 0}, uniqueItems=True),
-    'summary': _text(650)})
+    'summary': _text(900)})
 SELECT_SCHEMA = _object({'reviewed_count': {'type': 'integer', 'minimum': 1},
     'nominated_ids': _array({'type': 'integer', 'minimum': 0}, uniqueItems=True),
     'suggested_size': {'type': 'integer', 'minimum': 0}, 'summary': _text(900)})
@@ -440,6 +444,13 @@ again. Set reconsider_selection=true when actual placement, chemistry, required
 coverage or material contrary evidence undermines the choice or warrants comparing
 alternatives. Set false when the selected evidence still supports the choice and
 the findings can be resolved by precise wording and disclosure of limitations.
+When a finding asserts an additional selection requirement, check it against the
+user's request_text and the scoped program. Quote the instruction supporting that
+requirement in your reason. For a same-gene sparing preference, identify the
+requested differential effect or preservation target. A reference accession and
+the specific_isoform routing label identify the intended transcript. If the only
+objection is an inferred sparing preference, correct the wording. Retain
+independent evidence that warrants a new comparison.
 Use only the supplied findings and goal. Explain the concrete basis briefly.
 Return only reconsider_selection (boolean) and reason (string).
 '''
@@ -1665,7 +1676,7 @@ def _query_rank(catalog, context, goal, eligible, reserve, select_panel, directo
 
 
 def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=False, retry_failed=False,
-                    skip_shortlist=False, review_strategy='auto'):
+                    skip_shortlist=False, review_strategy='auto', request_text=None):
     """Return checked membership, native constraint receipt, and review provenance.
 
     Rendering never starts a model. The report execution stage explicitly enables
@@ -1676,6 +1687,8 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
     if review_strategy not in {'auto', 'exhaustive'}:
         raise ValueError('review_strategy must be auto or exhaustive')
     context = review_context(goal)
+    if isinstance(request_text, str) and request_text.strip():
+        context['request_text'] = request_text.strip()
     eligible = [deepcopy(row) for row in pool
                 if (row.get('candidate_assessment') or {}).get('selection_eligible') is True]
     identity = digest({'version': VERSION, 'pool': clean(pool), 'goal': context,

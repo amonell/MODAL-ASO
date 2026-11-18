@@ -95,6 +95,34 @@ def test_model_changes_membership_preserves_pool_and_exports_sources(tmp_path, f
     assert all('_recommendation_order' not in row for row in selected)
 
 
+def test_review_uses_saved_request_and_keeps_child_task_scope(tmp_path, fake_model):
+    from aso_agents.shortlist_evidence import review_request
+    request = 'Use the canonical transcript as the reference for knockdown.'
+    envelope = {'request_text': request, 'tasks': [{'label': 'Review the requested target group.'}]}
+    assert review_request(tmp_path, {'request_envelope': envelope}) == request
+    (tmp_path/'request.txt').write_text(request)
+    assert review_request(tmp_path, {}) == request
+    child = tmp_path/'child_runs'/'design'
+    intake = {'payload': {'request': 'Internal task instructions'}, 'request_envelope': envelope}
+    assert review_request(child, intake) == envelope['tasks'][0]['label']
+    assert review_request(child, {'payload': intake['payload']}) == ''
+    goal = {'candidate_limit': 2, 'splice_isoform_objectives': [{'objective_scope': 'specific_isoform'}]}
+    _, _, receipt = run(pool(), tmp_path, goal, request_text=request)
+    assert receipt['status'] == 'completed'
+    for _, payload, *_ in fake_model:
+        assert payload['goal']['request_text'] == request
+    assert 'request_text' not in goal
+
+
+def test_nomination_note_uses_the_same_bounded_space_as_final_comparison():
+    note = 'The binding and screening evidence supports these alternatives. ' * 12
+    response = {'reviewed_count': 3, 'nominated_ids': [1], 'summary': note.strip()}
+    assert 650 < len(response['summary']) <= 900
+    assert review._validate(response, review.NOMINATE_SCHEMA, lambda value: []) == []
+    response['summary'] += note
+    assert review._validate(response, review.NOMINATE_SCHEMA, lambda value: [])
+
+
 def test_mismatch_arrays_supply_scalar_arithmetic_without_imputing_missing_bins(tmp_path, monkeypatch):
     rows = pool(4)
     rows[0]['candidate_assessment']['off_target']['counts_by_mismatch'][2] = None

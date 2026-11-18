@@ -29,6 +29,9 @@ reports. Exported review status is `skipped`, with a receipt in
 receipts remain intact. Normal runs without the flag keep the existing review.
 
 The report stage uses the configured language model, including `OPENROUTER_MODEL`.
+The reviewer reads the saved request alongside the structured design objective.
+Child runs use their own task wording. When a preference would change the panel,
+the reviewer checks the user's stated objective and any named preservation targets.
 Large libraries begin with a survey of saved attributes and prediction conditions.
 The model can query distributions, apply reversible filters, sort candidates,
 compare individual ASOs and inspect original evidence pages. Numeric thresholds,
