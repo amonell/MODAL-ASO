@@ -426,7 +426,8 @@ def test_one_duplicate_in_replacement_requires_approval_of_exact_extension(tmp_p
     assert len(confirmations) == 1
 
 
-@pytest.mark.parametrize('outcome', ['origin', 'science', 'bad_position', 'unavailable', 'withdrawal'])
+@pytest.mark.parametrize('outcome', [
+    'origin', 'extra_verified', 'bad_extra', 'missing', 'duplicate', 'science', 'bad_position', 'unavailable', 'withdrawal'])
 def test_terminal_membership_objection_requires_exact_origins_and_independent_decision(tmp_path, monkeypatch, outcome):
     from aso_agents.shortlist_query import CandidateIndex
     index = CandidateIndex(evidence_catalog(large_pool(80)))
@@ -468,13 +469,20 @@ def test_terminal_membership_objection_requires_exact_origins_and_independent_de
                     {'candidate_id': sliced, 'set_id': 'kept', 'source_index': 4, 'slice_index': 0}]
         if outcome == 'bad_position':
             verified[1]['source_index'] = 3
+        elif outcome in {'extra_verified', 'bad_extra'}:
+            verified.append({'candidate_id': ids[5], 'set_id': 'kept',
+                             'source_index': 5 if outcome == 'extra_verified' else 6, 'slice_index': 0})
+        elif outcome == 'missing':
+            verified.pop()
+        elif outcome == 'duplicate':
+            verified.append(verified[0])
         return {'decision': 'confirm_origins', 'verified_origins': verified,
                 'reason': 'The individual and the first member of the slice account for both sources.'}, []
     monkeypatch.setattr(exploration, '_run_model', challenge)
     monkeypatch.setattr(review, '_model_call', reviewer)
     def invoke():
         return exploration._session('challenge', payload, index, tmp_path, {})
-    if outcome == 'origin':
+    if outcome in {'origin', 'extra_verified'}:
         assert invoke() == submitted
         assert invoke() == submitted
     elif outcome == 'withdrawal':
@@ -490,7 +498,7 @@ def test_terminal_membership_objection_requires_exact_origins_and_independent_de
     assert first['membership_confirmation']['approve'] is False
     assert first['membership_origin_review']
     assert receipt['attempts'][1]['error_type'] == 'ExplorationExhausted'
-    if outcome == 'origin':
+    if outcome in {'origin', 'extra_verified'}:
         assert len(kinds) == 2
         assert receipt['approved_membership_sha256'] == exploration.digest([individual, *ids[4:35]])
     else:

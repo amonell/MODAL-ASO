@@ -566,8 +566,10 @@ def _review_disputed_origins(preview, objection, index, directory, configuration
     def check(value):
         if value['decision'] == 'confirm_origins':
             verified = value['verified_origins']
-            if len(verified) != len(named) or {entry['candidate_id']: entry for entry in verified} != named:
-                return ['Supply the exact source record for every named member or uphold the objection.']
+            supplied = {entry['candidate_id']: entry for entry in verified}
+            if (len(supplied) != len(verified) or not named.keys() <= supplied.keys()
+                    or any(origins.get(key) != entry for key, entry in supplied.items())):
+                return ['Return one exact source record per ID in named_members. Every supplied record must match its original pick or query position.']
         return []
     request = {**preview, 'original_objection': objection, 'named_members': list(named),
                'member_origins': list(origins.values())}
