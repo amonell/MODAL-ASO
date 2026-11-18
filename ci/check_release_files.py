@@ -14,7 +14,7 @@ with zipfile.ZipFile(wheels[0]) as archive:
     names = archive.namelist()
     metadata = BytesParser().parsebytes(archive.read(f"modal_aso-{version}.dist-info/METADATA"))
     assert metadata["Name"] == "modal-aso" and metadata["Version"] == version
-    required = ["aso_agents/gui/app.py", "aso_agents/gui/artifacts.py", "aso_agents/gui/worker.py",
+    required = ["aso_agents/gui/app.py", "aso_agents/gui/artifacts.py", "aso_agents/gui/server.py", "aso_agents/gui/worker.py",
                 "aso_agents/resources/gui/mechanisms.png", "aso_agents/resources/gui/mechanisms-mobile.png",
                 "aso_agents/resources/gui/test_run/preview.json", "aso_agents/resources/gui/test_run/report.html.gz",
                 "aso_agents/cli.py", "aso_agents/encode_rbp_peaks.py", "aso_chemistry.py",

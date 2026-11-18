@@ -4,12 +4,10 @@ from queue import Queue
 from types import SimpleNamespace
 import os
 import sys
-import urllib.error
-import urllib.request
 
 import pytest
 
-from aso_agents.gui.artifacts import artifact_server, register
+from aso_agents.gui import artifacts
 from aso_agents.gui.config import Settings, model_family
 from aso_agents.gui.diagnostics import redact_credentials
 from aso_agents.gui.presentation import result_message
@@ -52,64 +50,52 @@ def test_shared_controller_events_support_explicit_model_installation(monkeypatc
     saved = []
     while not events.empty():
         saved.append(events.get_nowait())
-    assert ('message', 'Reviewing 83 ASOs') in saved
     assert any(kind == 'questions' and value['questions'] == ['Install OligoAI now? Answer yes or no.'] for kind, value in saved)
     assert saved[-1] == ('done', None)
 
 
 @pytest.fixture
 def output_server(tmp_path):
-    run_dir = tmp_path / 'run';run_dir.mkdir()
-    (run_dir / 'report.html').write_text('<!doctype html><title>ASO report</title><h1>Results</h1><a href="artifacts/table.csv">Download ASOs</a>')
-    (run_dir / 'artifacts').mkdir()
-    (run_dir / 'artifacts/table.csv').write_text('ASO,score\n1,0.81234567890123\n')
-    (run_dir / 'genome.fa').symlink_to('/etc/passwd')
-    server = artifact_server(run_dir)
-    yield server, 'http://' + server.authority + '/' + server.token + '/'
-    server.shutdown();server.server_close()
+    pytest.importorskip("starlette")
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+    (tmp_path / "report.html").write_text('<a href="table.csv">Download</a>')
+    (tmp_path / "table.csv").write_text("ASO,score\n1,0.81234567890123\n")
+    (tmp_path / ".local-config").write_text("private")
+    (tmp_path / "reference.fa").symlink_to(tmp_path / ".local-config")
+    prefix = artifacts.route_prefix("/preview/")
+    token = artifacts.register(tmp_path)
+    app = Starlette(routes=[Route(prefix + "/{token}/{relative:path}", artifacts.serve_artifact)])
+    with TestClient(app, base_url="https://forwarded.example") as client:
+        yield client, f"{prefix}/{token}/", tmp_path
 
 
-def test_report_assets_stream_with_path_and_host_boundaries(output_server):
-    server, base = output_server
-    with urllib.request.urlopen(base + 'report.html') as response:
-        assert b'Download ASOs' in response.read()
-        assert response.headers['Referrer-Policy'] == 'no-referrer'
-    with urllib.request.urlopen(base + 'artifacts/table.csv') as response:
-        assert response.headers['Content-Disposition'] == 'attachment'
-        assert b'0.81234567890123' in response.read()
-    for relative in ['../report.html', 'genome.fa', '%2fetc/passwd']:
-        with pytest.raises(urllib.error.HTTPError):
-            urllib.request.urlopen(base + relative)
-    with pytest.raises(urllib.error.HTTPError):
-        urllib.request.urlopen('http://' + server.authority + '/wrong/report.html')
-    with pytest.raises(urllib.error.HTTPError):
-        urllib.request.urlopen(urllib.request.Request(base + 'report.html', headers={'Host': 'another.example'}))
+def test_report_and_artifacts_share_forwarded_origin(output_server):
+    client, base, run_dir = output_server
+    frame = artifacts.report_frame(run_dir, "/preview/")
+    assert f'src="{base}report.html"' in frame
+    assert "127.0.0.1" not in frame
+    report = client.get(base + "report.html")
+    assert report.status_code == 200 and "table.csv" in report.text
+    assert "sandbox allow-scripts" in report.headers["Content-Security-Policy"]
+    csv = client.get(base + "table.csv")
+    assert csv.text == "ASO,score\n1,0.81234567890123\n"
+    assert csv.headers["Content-Disposition"].startswith("attachment")
+    for relative in ("reference.fa", ".local-config", "%2e%2e/table.csv", "%2ftable.csv"):
+        assert client.get(base + relative).status_code == 404
+    assert client.get("/preview/_modal_aso_artifacts/unknown/report.html").status_code == 404
 
 
-def test_many_reports_share_one_bounded_server(output_server, tmp_path):
-    server, _ = output_server
-    for i in range(100):
-        register(server, tmp_path / str(i))
-    assert len(server.roots) == 50
-    token = register(server, tmp_path / '99')
-    assert register(server, tmp_path / '99') == token
-
-
-def test_embedded_report_relative_download_works_in_browser(output_server):
-    import shutil
-    playwright = pytest.importorskip('playwright.sync_api')
-    executable = shutil.which('google-chrome') or shutil.which('chromium')
-    if not executable:
-        pytest.skip('Local browser unavailable')
-    _, base = output_server
-    with playwright.sync_playwright() as p:
-        browser = p.chromium.launch(executable_path=executable, headless=True, args=['--no-sandbox'])
-        page = browser.new_page(accept_downloads=True)
-        page.set_content('<iframe title="Report" src="' + base + 'report.html"></iframe>')
-        with page.expect_download() as download:
-            page.frame_locator('iframe').get_by_role('link', name='Download ASOs').click()
-        assert Path(download.value.path()).read_text() == 'ASO,score\n1,0.81234567890123\n'
-        browser.close()
+def test_report_registration_is_bounded_and_reuses_existing_token(tmp_path, monkeypatch):
+    from collections import OrderedDict
+    monkeypatch.setattr(artifacts, "_roots", OrderedDict())
+    first = artifacts.register(tmp_path / "first")
+    for index in range(51):
+        token = artifacts.register(tmp_path / str(index))
+    assert len(artifacts._roots) == 50
+    assert first not in artifacts._roots
+    assert artifacts.register(tmp_path / "50") == token
 
 
 def test_large_file_lists_are_searchable_and_paginated(tmp_path):
@@ -126,5 +112,5 @@ def test_large_file_lists_are_searchable_and_paginated(tmp_path):
     assert not ui.exception and len(ui.get('download_button')) == 50
     ui.selectbox[0].select(3).run()
     assert not ui.exception and len(ui.get('download_button')) == 1
-    ui.text_input[0].set_value('100.csv').run()
+    next(item for item in ui.text_input if item.label == 'Find a file').set_value('100.csv').run()
     assert not ui.exception and len(ui.get('download_button')) == 1

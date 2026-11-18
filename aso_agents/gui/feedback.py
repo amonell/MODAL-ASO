@@ -1,5 +1,4 @@
-"""Scoped UI adapters. Restore every hook when the GUI worker finishes."""
-from contextlib import contextmanager
+"""Format shared runner events for the UI without including request data."""
 
 
 def activity_message(event):
@@ -16,34 +15,3 @@ def activity_message(event):
         # Report the event, never expose the raw final_output content here.
         return "Model response received."
     return None
-
-
-@contextmanager
-def runner_feedback(events, commentary_for_tool=None):
-    """Observe existing events while forwarding original callbacks unchanged."""
-    from agents import Runner
-    original = Runner._emit_event
-    counts = {}
-    seen_commentary = set()
-
-    def emit(callback, event):
-        try:
-            if event.get("type") == "tool_call" and callable(commentary_for_tool):
-                tool = str(event.get("tool") or "")
-                counts[tool] = counts.get(tool, 0) + 1
-                commentary = commentary_for_tool(tool, counts[tool])
-                if commentary and commentary not in seen_commentary:
-                    events.put(("message", commentary))
-                    seen_commentary.add(commentary)
-            message = activity_message(event)
-            if message:
-                events.put(("activity", message))
-        except Exception:
-            pass  # Display feedback must not change execution.
-        return original(callback, event)
-
-    Runner._emit_event = staticmethod(emit)
-    try:
-        yield
-    finally:
-        Runner._emit_event = staticmethod(original)

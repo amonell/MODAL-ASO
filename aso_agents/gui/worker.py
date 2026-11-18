@@ -66,31 +66,17 @@ class ChatStream(io.TextIOBase):
         self.flush_warning()
 
 
-def run(settings, request, events, answers):
-    from aso_agents.gui.config import environment_for, api_error
-    from aso_agents.gui.feedback import runner_feedback
+def run(settings, request, events, answers, options=()):
+    from aso_agents.cli import _run
+    from aso_agents.gui.config import environment_for, api_error, credential_name
+    from aso_agents.gui.feedback import activity_message
     result_received = False
+    api_key = settings.api_key.strip() or os.environ.get(credential_name(settings.provider), "").strip()
     try:
-        # This process has its own environment. Preserve inherited CLI settings
-        # and apply only explicit choices through existing CLI variables.
         os.environ.update(environment_for(settings))
-        # Same no-argument runtime bootstrap as cli._run, before agent imports.
-        from aso_agents.runtime_binaries import refresh_runtime_path
-        refresh_runtime_path()
-        os.environ.setdefault("MODAL_ASO_SKIP_RUNTIME_INSTALL", "1")
-        from aso_agents.llm_provider import get_provider_config
-        get_provider_config()
-        import run_goal_intake as controller
-        main = controller.main
-        import inspect
-        try:
-            inspect.signature(main).bind(argv=[], clarification_resolver=None, result_callback=None, event_callback=None)
-        except TypeError:
-            events.put(("error", "The GUI adapter is incompatible with this controller version. Update aso_agents/gui/worker.py; the analysis engine does not need a GUI-specific change."))
-            return
 
-        def clarify(*, questions, context):
-            events.put(("questions", {"questions": questions, "context": context}))
+        def clarify(*, questions, context, can_pause=True):
+            events.put(("questions", {"questions": questions, "context": context, "can_pause": can_pause}))
             return answers.get()
 
         def result_callback(result):
@@ -98,48 +84,58 @@ def run(settings, request, events, answers):
             result_received = True
             events.put(("result", result))
 
+        offered_installations = set()
+
         def event_callback(event):
             if event.get("type") == "model_installation":
                 model = str(event.get("model") or "the model")
+                installation = (model, event.get("root"))
+                if installation in offered_installations or "--raw-cli" in options:
+                    return False
+                offered_installations.add(installation)
                 responses = clarify(questions=[f"Install {model} now? Answer yes or no."],
-                                    context={"why_this_matters": event.get("message", "")})
+                                    context={"why_this_matters": event.get("message", "")}, can_pause=False)
                 return bool(responses and str(responses[0].get("answer", "")).strip().lower()
-                            in {"yes", "y", "install"})
-            if event.get("type") == "progress" and event.get("message"):
-                events.put(("message", str(event["message"])))
+                            in {"yes", "y"})
+            if message := activity_message(event):
+                events.put(("activity", message))
 
-        stream = ChatStream(events, settings.api_key)
+        stream = ChatStream(events, api_key)
+        argv = [*options, "--", request] if request else list(options)
         try:
             events.put(("activity", "Starting the analysis controller."))
-            with redirect_stdout(stream), redirect_stderr(stream), runner_feedback(
-                events, commentary_for_tool=getattr(controller, "_cli_message_for_tool", None)
-            ):
-                main(argv=["--", request], clarification_resolver=clarify,
-                     result_callback=result_callback, event_callback=event_callback)
+            with redirect_stdout(stream), redirect_stderr(stream):
+                _run(argv, clarification_resolver=clarify, result_callback=result_callback,
+                     event_callback=event_callback)
         finally:
             stream.finish()
     except SystemExit as exc:
         # Failed-run records already describe the cause. An exit code is not
         # a network exception, and must not replace that cause in the chat.
         if not result_received and exc.code not in (None, 0):
-            events.put(("error", "The analysis controller stopped before returning a result. Review the preceding diagnostics."))
+            from aso_agents.gui.diagnostics import redact_credentials
+            detail = exc.code if isinstance(exc.code, str) else "The analysis stopped before returning a result. See the preceding messages."
+            events.put(("error", redact_credentials(detail, api_key)))
     except Exception as exc:
         from aso_agents.gui.diagnostics import diagnostic
-        details = diagnostic(exc, settings.api_key)
+        details = diagnostic(exc, api_key)
         if getattr(exc, "status_code", None) is not None or type(exc).__name__ in {"APITimeoutError", "APIConnectionError"}:
             error = api_error(exc)
             message = f"Analysis stopped. {error.field}: {error}"
+        elif isinstance(exc, (OSError, ValueError, RuntimeError)):
+            # The terminal entry point displays these shared execution errors directly.
+            message = details["message"]
         else:
-            message = f"The GUI worker encountered {details['type']}: {details['message']}\n\nOpen Technical details below for the traceback. Any returned results remain available."
+            message = f"Analysis stopped with {details['type']}: {details['message']}\n\nOpen Technical details for the traceback."
         events.put(("error", message))
         events.put(("diagnostic", details))
     finally:
         events.put(("done", None))
 
 
-def start(settings, request):
+def start(settings, request, options=()):
     context = multiprocessing.get_context("spawn")
     events, answers = context.Queue(), context.Queue()
-    process = context.Process(target=run, args=(settings, request, events, answers), daemon=False)
+    process = context.Process(target=run, args=(settings, request, events, answers, tuple(options)), daemon=False)
     process.start()
     return process, events, answers

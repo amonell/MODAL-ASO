@@ -26,8 +26,8 @@ def test_openai_global_overrides_are_rejected_instead_of_rewriting_requests():
         environment_for(Settings("openai", "key", "gpt-5.2", "high"), {})
 
 
-@pytest.mark.parametrize("case", ["openai", "router_defaults", "router_inherited", "router_explicit"])
-def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypatch, case):
+@pytest.mark.parametrize("case", ["openai", "router_defaults", "router_inherited", "router_explicit", "router_stream_failure"])
+def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypatch, tmp_path, case):
     from agents import Agent, ModelSettings, Runner, function_tool
     from openai._models import BaseModel as SDKModel
     from aso_agents import cli, llm_provider
@@ -48,6 +48,9 @@ def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypat
         selected = Settings("openrouter", "fake-key")
         if case == "router_inherited":
             inherited.update(OPENROUTER_MODEL="vendor/inherited", OPENROUTER_REASONING_EFFORT="high")
+        if case == "router_stream_failure":
+            inherited.update(ASO_LLM_TRANSPORT_RETRIES="1", ASO_LLM_RETRY_BASE_SECONDS=".01",
+                             ASO_RESOURCE_LOCK_ROOT=str(tmp_path / "locks"))
 
     # Build the CLI's exports independently of the GUI mapping function.
     cli_env = {**inherited, "ASO_LLM_PROVIDER": selected.provider,
@@ -71,6 +74,9 @@ def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypat
         {"id": "resp_2", "model": "deterministic-model", "status": "completed", "output": [
             {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": '{"ok":true}'}]}]},
     ]
+    if case == "router_stream_failure":
+        responses.insert(0, {"status": "failed", "error": {
+            "code": "server_error", "message": "stream closed with reason: error"}})
 
     class Client:
         def __init__(self, config):
@@ -79,7 +85,7 @@ def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypat
 
         def create(self, **payload):
             captured.append((copy.deepcopy(payload), self.config))
-            return copy.deepcopy(responses[(len(captured) - 1) % 2])
+            return copy.deepcopy(responses[len(captured) - 1])
 
     monkeypatch.setattr(llm_provider, "_get_client", Client)
 
@@ -107,8 +113,56 @@ def test_cli_and_gui_send_identical_requests_and_preserve_sdk_behavior(monkeypat
     events = Queue()
     run(selected, "Same ASO request", events, Queue())
     gui_calls = captured[:]
-    assert len(cli_calls) == len(gui_calls) == 2
+    assert len(cli_calls) == len(gui_calls) == len(responses)
     assert gui_calls == cli_calls  # full prompts, schemas, tools, reasoning and history
     assert executions == [2, 2]
     assert (SDKModel.model_dump, SDKModel.model_dump_json) == sdk_methods
     assert llm_provider.prepare_responses_payload is provider_method
+
+
+def test_terminal_and_gui_resume_same_state_with_same_clarification(monkeypatch, tmp_path):
+    import json
+    from aso_agents import agentic_runner, cli
+    from aso_agents.gui.worker import run
+
+    run_dir = tmp_path / 'saved runs' / 'previous'
+    run_dir.mkdir(parents=True)
+    state = run_dir / 'run_state.json'
+    request = 'Use the supplied file at /inputs/path with spaces.csv'
+    state.write_text(json.dumps({'request': request, 'run_dir': str(run_dir)}))
+    monkeypatch.setattr(os, 'environ', dict(os.environ, ASO_LLM_PROVIDER='openai', OPENAI_API_KEY='test-key'))
+    monkeypatch.setattr('builtins.input', lambda prompt: '')
+    captured = []
+    def pipeline(**kwargs):
+        captured.append({k: v for k, v in kwargs.items() if k != 'event_callback'} | {'output_root': os.environ['ASO_RUNS_DIR']})
+        if kwargs['clarification_answers'] is None:
+            return {'status': 'needs_user_input', 'state_path': str(state),
+                    'pending_questions': ['Which supplied file?'],
+                    'planning': {'clarification_request': {'suggested_answers': ['Use the original file.']}}}
+        return {'status': 'run_complete', 'run_dir': str(run_dir)}
+    monkeypatch.setattr(agentic_runner, 'run_agentic_pipeline', pipeline)
+    flags = ['--agentic-state-path', str(state), '--skip-shortlist', '--agentic-max-steps', '50']
+    assert cli._run(flags) == 0
+    cli_calls = captured[:]
+    captured.clear()
+    events, answers = Queue(), Queue()
+    answers.put([{'question': 'Which supplied file?', 'answer': ' '}])
+    run(Settings('openai', ''), '', events, answers, flags)
+    assert captured == cli_calls and len(captured) == 2
+    assert captured[1]['clarification_answers'] == [{'question': 'Which supplied file?', 'answer': 'Use the original file.'}]
+    assert all(c['user_request'] == request and c['output_root'] == str(run_dir.parent) for c in captured)
+    assert any(kind == 'result' and item['status'] == 'run_complete' for kind, item in events.queue)
+
+
+def test_gui_reports_same_runtime_failure_as_terminal(monkeypatch):
+    from aso_agents import cli, runtime_binaries
+    from aso_agents.gui.worker import run
+    monkeypatch.setattr(os, 'environ', dict(os.environ, ASO_LLM_PROVIDER='openai', OPENAI_API_KEY='test-key'))
+    message = 'Bowtie is missing. Run modal-aso setup --features tools.'
+    monkeypatch.setattr(runtime_binaries, 'ensure_run_runtime', lambda: {'status': 'error', 'message': message})
+    with pytest.raises(SystemExit) as terminal:
+        cli._run(['--', 'Evaluate ASOs'])
+    events = Queue()
+    run(Settings('openai', ''), 'Evaluate ASOs', events, Queue())
+    assert ('error', terminal.value.code) in events.queue
+    assert terminal.value.code == message

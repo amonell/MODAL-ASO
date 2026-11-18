@@ -70,6 +70,8 @@ def result_message(result):
         if notice:
             return "Analysis and outputs saved. " + notice + " Open Results for the report and Files for downloads."
         return "Analysis completed. Open Results to inspect the report or Files to save the outputs."
+    if status == "needs_user_input":
+        return "Run paused. Use its saved state path under Run options to continue."
     return f"Analysis status: {status}."
 
 

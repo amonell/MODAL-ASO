@@ -1,47 +1,18 @@
 """GUI contracts use deterministic providers; no credentials or live spending."""
 from types import SimpleNamespace as NS
 import pytest
-from aso_agents.gui.config import Settings, SetupError, efforts, environment_for, api_error, validate, list_models
+from aso_agents.gui.config import Settings, SetupError, efforts, environment_for, api_error, list_models
 
 
 def settings(**changes):
     return Settings(**({"provider": "openrouter", "api_key": "test-key", "model": "openai/gpt-5.2", "effort": "low"} | changes))
 
 
-class Client:
-    def __init__(self, error=None, output=None):
-        self.responses = self
-        self.error = error
-        self.output = output if output is not None else [NS(type="function_call", name="gui_check", arguments='{"ok":true}')]
-        self.payloads = []
-
-    def create(self, **payload):
-        self.payloads.append(payload)
-        if self.error:
-            raise self.error
-        return NS(output=self.output)
-
-
-@pytest.mark.parametrize("provider,model,effort,expected", [("openai", "default", "default", "gpt-5.2-2025-12-11"), ("openrouter", "openai/gpt-5.2", "low", "openai/gpt-5.2")])
-def test_validation_uses_framework_transport(provider, model, effort, expected):
-    client = Client()
-    validate(settings(provider=provider, model=model, effort=effort), [model], client, base={})
-    assert client.payloads[0]["model"] == expected
-    if provider == "openrouter":
-        assert client.payloads[0]["reasoning"]["effort"] == "low"
-    else:
-        assert "reasoning" not in client.payloads[0]
-    assert client.payloads[0]["tools"][0]["name"] == "gui_check"
-
-
-@pytest.mark.parametrize("changes,field", [({"provider": "other"}, "Provider"), ({"api_key": " "}, "API key"),
-    ({"model": "typo"}, "Model"), ({"effort": "max"}, "Reasoning effort")])
-def test_invalid_fields_block_requests(changes, field):
-    client = Client()
+@pytest.mark.parametrize("changes,field", [({"provider": "other"}, "Provider"), ({"api_key": " "}, "API key")])
+def test_missing_provider_and_key_are_focused(changes, field):
     with pytest.raises(SetupError) as caught:
-        validate(settings(**changes), ["openai/gpt-5.2"], client)
+        environment_for(settings(**changes), {})
     assert caught.value.field == field
-    assert not client.payloads
 
 
 @pytest.mark.parametrize("status,field", [(401, "API key"), (402, "Billing"), (403, "Access"),
@@ -49,11 +20,9 @@ def test_invalid_fields_block_requests(changes, field):
 def test_provider_errors_are_focused_and_redacted(status, field):
     exc = RuntimeError("secret-key-must-not-leak")
     exc.status_code = status
-    client = Client(error=exc)
-    with pytest.raises(SetupError) as caught:
-        validate(settings(), ["openai/gpt-5.2"], client)
-    assert caught.value.field == field
-    assert "secret-key" not in str(caught.value)
+    error = api_error(exc)
+    assert error.field == field
+    assert "secret-key" not in str(error)
 
 
 def test_reasoning_error_identification():
@@ -68,11 +37,6 @@ def test_timeout_has_retry_guidance_without_blaming_credentials():
     assert error.field == "Timeout"
     assert "40-second" in str(error)
     assert "Retry validation" in str(error)
-
-
-def test_successful_http_response_without_tool_call_is_rejected():
-    with pytest.raises(SetupError, match="structured tool call"):
-        validate(settings(), ["openai/gpt-5.2"], Client(output=[]))
 
 
 def test_environment_mapping_preserves_existing_cli_settings():
@@ -157,24 +121,8 @@ def test_worker_delegates_to_unchanged_controller_and_isolates_settings(monkeypa
     kinds = []
     while not events.empty():
         kinds.append(events.get_nowait()[0])
-    assert [kind for kind in kinds if kind != "activity"] == ["questions", "result", "done"]
+    assert [kind for kind in kinds if kind not in {"activity", "message"}] == ["questions", "result", "done"]
     assert kinds.count("activity") == 1
-
-
-def test_changed_controller_contract_fails_in_gui_adapter(monkeypatch):
-    import os
-    import sys
-    from queue import Queue
-    from aso_agents import llm_provider
-    from aso_agents.gui.worker import run
-    monkeypatch.setattr(os, "environ", dict(os.environ))
-    monkeypatch.setattr(llm_provider, "prepare_responses_payload", llm_provider.prepare_responses_payload)
-    monkeypatch.setitem(sys.modules, "run_goal_intake", NS(main=lambda new_interface: None))
-    events = Queue()
-    run(settings(), "Request", events, Queue())
-    kind, message = events.get_nowait()
-    assert kind == "error" and "GUI adapter" in message and "worker.py" in message
-    assert events.get_nowait()[0] == "done"
 
 
 def test_chat_stream_buffers_narration_and_redacts_keys():
@@ -228,10 +176,8 @@ def test_failed_controller_exit_does_not_invent_connection_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "run_goal_intake", NS(main=controller))
     events = Queue()
     run(settings(), "Request", events, Queue())
-    assert events.get_nowait()[0] == "activity"
-    assert events.get_nowait()[0] == "result"
-    assert events.get_nowait()[0] == "done"
-    assert events.empty()
+    output = list(events.queue)
+    assert [kind for kind, _ in output if kind != "message"] == ["activity", "result", "done"]
 
 
 def test_failure_summary_preserves_http_rejection():
@@ -265,12 +211,6 @@ def test_worker_retains_execution_exception_in_redacted_diagnostic(monkeypatch):
     assert "test-key" not in str(output)
     assert output[-1][0] == "done"
 
-
-def test_gui_default_model_validation_without_catalog():
-    from aso_agents.gui.config import DEFAULT_OPENROUTER_MODEL
-    client = Client()
-    validate(settings(model=DEFAULT_OPENROUTER_MODEL, effort="default"), {}, client, base={})
-    assert client.payloads[0]["model"] == DEFAULT_OPENROUTER_MODEL
 
 def test_default_settings_preserve_global_and_per_agent_environment():
     base = {"OPENROUTER_MODEL": "stale/model", "ASO_GOAL_INTAKE_MODEL": "role/model"}

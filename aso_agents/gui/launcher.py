@@ -12,7 +12,7 @@ def launch(arguments):
     if importlib.util.find_spec("streamlit") is None:
         raise RuntimeError("GUI is optional. Install with: uv sync --frozen --extra splice --extra gui")
     return subprocess.call([sys.executable, "-m", "streamlit", "run",
-                            str(Path(__file__).with_name("app.py")),
+                            str(Path(__file__).with_name("server.py")),
                             "--server.address=127.0.0.1", "--server.headless=true", "--browser.gatherUsageStats=false",
                             "--global.developmentMode=false", "--server.fileWatcherType=none",
                             "--theme.base=light", "--theme.backgroundColor=#F5F8FC",

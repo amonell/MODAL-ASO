@@ -1,88 +1,70 @@
-"""Serve one recorded run locally, keeping relative report links usable."""
-from functools import lru_cache
+"""Stream registered run outputs through the browser UI's own origin."""
 from collections import OrderedDict
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from html import escape
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
-import atexit
-import mimetypes
 import secrets
-import shutil
 import threading
 
 
-class ArtifactHandler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def do_GET(self):
-        if self.headers.get('Host') != self.server.authority:
-            self.send_error(403)
-            return
-        token, _, relative = unquote(urlsplit(self.path).path).lstrip('/').partition('/')
-        with self.server.guard:
-            root = self.server.roots.get(token)
-        if root is None:
-            self.send_error(404)
-            return
-        parts = Path(relative)
-        path = root / parts
-        if (not relative or parts.is_absolute() or '..' in parts.parts
-                or any(root.joinpath(*parts.parts[:i]).is_symlink() for i in range(1, len(parts.parts) + 1))
-                or not path.resolve().is_relative_to(root) or not path.is_file()):
-            self.send_error(404)
-            return
-        try:
-            with path.open('rb') as handle:
-                self.send_response(200)
-                self.send_header('Content-Type', mimetypes.guess_type(path)[0] or 'application/octet-stream')
-                self.send_header('Content-Length', str(path.stat().st_size))
-                self.send_header('Cache-Control', 'no-store')
-                self.send_header('Referrer-Policy', 'no-referrer')
-                self.send_header('X-Content-Type-Options', 'nosniff')
-                if path.suffix.lower() in {'.csv', '.tsv', '.json', '.xlsx', '.zip', '.fa', '.fasta'}:
-                    self.send_header('Content-Disposition', 'attachment')
-                self.end_headers()
-                shutil.copyfileobj(handle, self.wfile)
-        except (OSError, BrokenPipeError):
-            return
+ROUTE = "_modal_aso_artifacts"
+DOWNLOAD_TYPES = {".csv", ".tsv", ".json", ".xlsx", ".zip", ".fa", ".fasta"}
+_roots: OrderedDict[str, Path] = OrderedDict()
+_guard = threading.Lock()
 
 
-def register(server, root):
+def register(root):
     root = Path(root).resolve()
-    with server.guard:
-        token = next((key for key, value in server.roots.items() if value == root), None)
+    with _guard:
+        token = next((key for key, value in _roots.items() if value == root), None)
         if token is None:
             token = secrets.token_urlsafe(32)
-            server.roots[token] = root
-        server.roots.move_to_end(token)
-        while len(server.roots) > 50:
-            server.roots.popitem(last=False)
+            _roots[token] = root
+        _roots.move_to_end(token)
+        while len(_roots) > 50:
+            _roots.popitem(last=False)
         return token
 
 
-def artifact_server(root=None):
-    server = ThreadingHTTPServer(('127.0.0.1', 0), ArtifactHandler)
-    server.roots = OrderedDict()
-    server.guard = threading.RLock()
-    if root is not None:
-        server.token = register(server, root)
-    server.authority = '127.0.0.1:' + str(server.server_port)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
+def artifact_path(token, relative):
+    with _guard:
+        root = _roots.get(token)
+    parts = Path(relative)
+    if root is None or not parts.parts or parts.is_absolute() or any(part.startswith(".") for part in parts.parts):
+        return None
+    path = root
+    for part in parts.parts:
+        path = path / part
+        if path.is_symlink():
+            return None
+    try:
+        return path if path.resolve().is_relative_to(root) and path.is_file() else None
+    except (OSError, ValueError):
+        return None
 
 
-@lru_cache(maxsize=1)
-def shared_server():
-    server = artifact_server()
-    def close():
-        server.shutdown()
-        server.server_close()
-    atexit.register(close)
-    return server
+def serve_artifact(request):
+    from starlette.responses import FileResponse, Response
+
+    path = artifact_path(request.path_params["token"], request.path_params["relative"])
+    if path is None:
+        return Response(status_code=404)
+    return FileResponse(
+        path,
+        filename=path.name if path.suffix.lower() in DOWNLOAD_TYPES else None,
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox allow-scripts allow-downloads allow-popups; frame-ancestors 'self'",
+        },
+    )
 
 
-def report_url(root):
-    server = shared_server()
-    token = register(server, root)
-    return 'http://' + server.authority + '/' + token + '/report.html'
+def route_prefix(base_url_path):
+    return "/" + "/".join(part for part in (base_url_path.strip("/"), ROUTE) if part)
+
+
+def report_frame(root, base_url_path):
+    source = escape(f"{route_prefix(base_url_path)}/{register(root)}/report.html", quote=True)
+    return (f'<iframe title="Run report" src="{source}" '
+            'style="display:block;border:0;width:100%;height:100vh"></iframe>')

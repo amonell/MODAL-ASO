@@ -2,11 +2,11 @@
 from dataclasses import dataclass, field
 import os
 from datetime import date
+from aso_agents.model_defaults import DEFAULT_OPENROUTER_MODEL
 
 BASES = {"openai": "https://api.openai.com/v1", "openrouter": "https://openrouter.ai/api/v1"}
 ALL_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 VALIDATION_TIMEOUT_SECONDS = 40
-DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash-1017"
 
 
 class SetupError(ValueError):
@@ -25,15 +25,21 @@ class Settings:
     max_retries: int | None = None
 
 
+def credential_name(provider):
+    return f"{provider.upper()}_API_KEY"
+
+
 def environment_for(settings, base=None):
     """Translate GUI choices into existing CLI variables, without rewriting requests."""
     if settings.provider not in BASES:
         raise SetupError("Provider", "Select OpenAI or OpenRouter.")
-    if not settings.api_key.strip():
-        raise SetupError("API key", "Paste your API key.")
     env = dict(os.environ if base is None else base)
+    variable = credential_name(settings.provider)
+    key = settings.api_key.strip() or env.get(variable, "").strip()
+    if not key:
+        raise SetupError("API key", f"Paste your API key or set {variable} in the terminal that starts the GUI.")
     env["ASO_LLM_PROVIDER"] = settings.provider
-    env["OPENAI_API_KEY" if settings.provider == "openai" else "OPENROUTER_API_KEY"] = settings.api_key.strip()
+    env[variable] = key
     if settings.provider == "openai":
         if settings.model != "default" or settings.effort != "default" or settings.timeout_seconds is not None or settings.max_retries is not None:
             raise SetupError("Configuration", "Direct OpenAI uses the existing CLI per-agent settings. Select inherited settings; global GUI overrides are unavailable.")
@@ -59,6 +65,7 @@ def configuration_preview(settings, base=None):
             "Reasoning effort": config.reasoning_effort_override or "Existing per-agent CLI reasoning settings",
             "Network timeout (seconds)": config.request_timeout_seconds or "Existing SDK default",
             "SDK retries": config.max_retries if config.max_retries is not None else "Existing CLI/SDK default",
+            "Transport retries": env.get("ASO_LLM_TRANSPORT_RETRIES", "0") if config.name == "openrouter" else "0",
             "Provider routing": config.provider_preferences,
             "Role settings from environment": {key: value for key, value in env.items()
                 if key.startswith("ASO_") and key.endswith(("_MODEL", "_REASONING_EFFORT"))}}
@@ -158,47 +165,6 @@ def list_models(provider, key):
         # structured-output families, then verify actual account compatibility.
         return dict(sorted((row.id, efforts(row.id)) for row in client.models.list()
                            if model_family(row.id)))
-    except SetupError:
-        raise
-    except Exception as exc:
-        raise api_error(exc) from None
-
-
-def validate(settings, models=(), client=None, base=None):
-    env = environment_for(settings, base)
-    if (settings.model != "default" and settings.model not in models
-            and not (settings.provider == "openrouter" and settings.model == DEFAULT_OPENROUTER_MODEL)):
-        raise SetupError("Model", "Select a model from this provider's refreshed catalog.")
-    allowed_efforts = models[settings.model] if isinstance(models, dict) and settings.model in models else efforts(settings.model)
-    if settings.effort != "default" and settings.effort not in allowed_efforts:
-        raise SetupError("Reasoning effort", "Select an effort supported by this model.")
-    from aso_agents.llm_provider import get_provider_config, prepare_responses_payload
-    try:
-        config = get_provider_config(env)
-    except (ValueError, RuntimeError) as exc:
-        raise SetupError("Configuration", str(exc)) from None
-    # This is a setup probe, not an analysis. Its short timeout/retry policy
-    # never changes the CLI configuration used by the analysis worker.
-    if client is None:
-        from openai import OpenAI
-        client = OpenAI(api_key=config.api_key, base_url=config.base_url,
-                        default_headers=config.default_headers,
-                        timeout=VALIDATION_TIMEOUT_SECONDS, max_retries=0)
-    payload = {"model": "gpt-5.2-2025-12-11", "input": "Call gui_check with ok=true.",
-        "tools": [{"type": "function", "name": "gui_check", "description": "Check configuration",
-                   "parameters": {"type": "object", "properties": {"ok": {"type": "boolean"}},
-                                  "required": ["ok"], "additionalProperties": False}, "strict": True}],
-        "tool_choice": {"type": "function", "name": "gui_check"},
-        "text": {"format": {"type": "json_schema", "name": "check", "strict": True,
-                 "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}},
-                            "required": ["ok"], "additionalProperties": False}}}}
-    try:
-        import json
-        prepared, _ = prepare_responses_payload(payload, config=config)
-        response = client.responses.create(**prepared)
-        calls = [item for item in response.output if item.type == "function_call" and item.name == "gui_check"]
-        if not calls or json.loads(calls[0].arguments) != {"ok": True}:
-            raise SetupError("Model compatibility", "The model did not return the required structured tool call.")
     except SetupError:
         raise
     except Exception as exc:

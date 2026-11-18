@@ -154,52 +154,31 @@ server ends the current chat session, so save any outputs you need first.
 
 ### Configure and use the interface
 
-OpenRouter defaults to `deepseek/deepseek-v4.1-flash-1017`. The compatible model catalog loads after you enter your key. Reasoning effort defaults to the highest supported level advertised for the selected model, and you can choose a lower level. Choose OpenRouter or OpenAI and paste your API key. With OpenRouter, optionally
-load the compatible model catalog and select a model and reasoning effort.
-Model and reasoning selections set the existing `OPENROUTER_MODEL`
-and `OPENROUTER_REASONING_EFFORT` variables inside the analysis worker.
-Direct OpenAI uses its existing per-agent CLI configuration; the framework has
-no equivalent global OpenAI override, so the GUI provides no global model or
-reasoning selector for that provider. Click
-**Validate and open chat**. Validation makes a small billable API request to
-check authentication, model access and structured tool calling. Errors identify
-the affected setting; chat stays closed until validation succeeds.
+Launch from the same Python environment and working directory as a terminal run.
+The GUI inherits the terminal provider, model, reasoning and runtime settings.
+It can use the API key already exported for that provider, or you can enter a key
+for the current browser session. **Start Chat** checks local configuration. The
+first analysis makes the same provider requests as the corresponding terminal run.
 
-The OpenRouter catalog requires advertised tools and structured outputs. Effort
-options follow its live per-model reasoning metadata. Models without effort
-metadata expose only inherited settings.
-Catalog support and a successful check do not guarantee every future request
-will succeed. Model availability, provider limits and tool installations can
-change.
+For OpenRouter, **Load model catalog** is optional. Keep **Use terminal setting**
+for the model and reasoning effort, pick a catalog model, or enter an exact model
+ID. Direct OpenAI uses the existing terminal per-agent configuration.
 
-The local server binds to `127.0.0.1`. Keys stay in session memory and are not
-written to configuration files. Each analysis runs in its own process using the
-existing controller and CLI runtime bootstrap. GUI choices use only existing CLI
-environment variables. The GUI does not rewrite prepared model requests, clear
-inherited routing settings, or patch SDK serialization. Scientific prompts, tools, ranking and report
-generation are unchanged. Chat collects clarification answers; Results embeds
-the existing HTML report; Files offers output downloads and Markdown previews.
-The controller's existing user-facing CLI commentary appears as assistant
-messages in Chat and remains for the session, with a three-dot activity indicator
-while work is in progress. Low-level tool-start, tool-completion and model-response
-events are hidden by default; enable **Show technical activity** to inspect them.
-Internal planner reasoning and raw tool arguments are not displayed.
-Files lists each output with its own Download button; Markdown files
-also have expandable previews. Native subprocess diagnostics may
-still appear in the launch terminal. Closing the server
-ends the GUI session; conversation persistence and restart recovery are not yet
-provided. On Windows, launch inside WSL2 and open the printed localhost URL in
-your Windows browser.
+Enter the same request text you would give the CLI. File paths refer to the machine
+running MODAL-ASO. In **Run options**, enter any terminal run flags, quoting paths
+with spaces as you would in a shell. To continue a saved run, enter its
+`run_state.json` path and select **Resume run**. While answering clarification
+questions, you can submit an empty field to accept a suggested answer, or pause
+and resume from the saved state path displayed in Chat.
 
-The GUI controller adapter is in `aso_agents/gui/worker.py`. If the controller's
-public arguments or callbacks change, update this adapter and its contract tests
-rather than adapting the scientific engine to the GUI.
+Chat relays the controller's questions, installation choices and progress. The
+**Results** and **Files** tabs display the saved report and downloads through the
+same local port as the chat. Forward that port when using a remote editor.
 
-Under **Advanced · timeout and retries**, OpenRouter users can set the existing
-`OPENROUTER_TIMEOUT_SECONDS` and `OPENROUTER_MAX_RETRIES` options. Unchecked
-controls inherit CLI settings. These are network timeouts and SDK retries, not a
-total run deadline. The setup probe uses its own 40-second timeout and no retries,
-without changing analysis settings.
+**Advanced** OpenRouter settings inherit terminal network timeouts and retries.
+When `ASO_LLM_TRANSPORT_RETRIES` is set, the shared transport handles eligible
+HTTP errors and failed responses, including streams that end with a server error.
+The timeout applies to individual API calls.
 
 Run the GUI regression tests with:
 
@@ -208,12 +187,9 @@ uv sync --frozen --extra splice --extra dev --extra gui
 .venv/bin/python -m pytest tests/test_gui*.py tests/test_llm_provider.py
 ```
 
-Compatibility metadata follows the [OpenRouter model catalog](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)
-and [per-model reasoning options](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
-Parity tests compare full captured CLI and GUI requests, including prompts,
-reasoning settings, schemas, tools and continuation history, using deterministic
-replies. Identical configuration follows the same execution path; real LLM replies
-can still vary between runs.
+Parity tests compare terminal and browser requests using deterministic replies. They
+cover provider payloads, reasoning, schemas, tools, continuation, resume settings
+and clarification answers.
 
 The GUI extra constrains Streamlit and Starlette to a tested combination.
 Streamlit's gzip middleware is incompatible with newer Starlette internals;

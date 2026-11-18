@@ -137,7 +137,7 @@ def _assets(args):
     return 1 if args.action == "verify" and any(row["status"] not in {"verified", "optional"} for rows in values.values() for row in rows) else 0
 
 
-def _run(argv):
+def _run(argv, *, clarification_resolver=None, result_callback=None, event_callback=None):
     # Set locations before importing pipeline modules with cached configuration.
     locations = argparse.ArgumentParser(add_help=False)
     locations.add_argument("--data-dir", type=Path)
@@ -188,7 +188,18 @@ def _run(argv):
             if intake_model != default_model:
                 startup.write(f"Intake language model: {intake_model}.\n")
     outcome = {}
-    run(argv=remainder, result_callback=outcome.update)
+
+    def capture_result(result):
+        outcome.update(result)
+        if result_callback is not None:
+            result_callback(result)
+
+    callbacks = {"result_callback": capture_result}
+    if clarification_resolver is not None:
+        callbacks["clarification_resolver"] = clarification_resolver
+    if event_callback is not None:
+        callbacks["event_callback"] = event_callback
+    run(argv=remainder, **callbacks)
     return 0 if not outcome or outcome.get("status") in {"run_complete", "needs_user_input", "completed"} else 1
 
 

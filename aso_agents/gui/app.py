@@ -3,10 +3,13 @@ from pathlib import Path
 from queue import Empty
 from itertools import groupby
 from base64 import b64encode
+import os
+import shlex
 import sys
 from importlib import reload
 import streamlit as st
-from aso_agents.gui.config import DEFAULT_OPENROUTER_MODEL, Settings, SetupError, list_models, efforts, validate, environment_for, configuration_preview
+from aso_agents.gui.config import ALL_EFFORTS, DEFAULT_OPENROUTER_MODEL, Settings, SetupError, credential_name, list_models, configuration_preview
+from aso_agents.llm_provider import selected_provider_name
 from aso_agents.gui.worker import start
 from aso_agents.gui.presentation import TYPING_HTML, result_message, tagline_html
 from aso_agents.gui import loading
@@ -170,10 +173,10 @@ def introduction():
 def main():
     models_loaded = False
     test_mode = "--test" in sys.argv
-    load_models, check_key, preview_settings, start_job = list_models, validate, configuration_preview, start
+    load_models, preview_settings, start_job = list_models, configuration_preview, start
     if test_mode:
         from aso_agents.gui import mock
-        load_models, check_key, preview_settings, start_job = mock.list_models, mock.validate, mock.configuration_preview, mock.start
+        load_models, preview_settings, start_job = mock.list_models, mock.configuration_preview, mock.start
     st.set_page_config(page_title="MODAL-ASO", layout="wide")
     branding()
     state = st.session_state
@@ -183,25 +186,25 @@ def main():
         st.markdown(STARTUP_HTML, unsafe_allow_html=True)
         state.startup_shown = True
 
-    if "validated" in state:
-        try:
-            environment_for(state.validated)
-        except SetupError:
-            state.pop("validated")
-            st.warning("Reconfigure this session using the existing CLI settings. Earlier chat messages are retained.")
-
     if "validated" not in state:
         introduction()
         st.markdown('<h2 id="aso-get-started">Connect your language model</h2>', unsafe_allow_html=True)
-        provider = st.selectbox("LLM provider", ["openrouter", "openai"])
-        key = st.text_input("API key", type="password", key=f"key_{provider}")
-        identity = (provider, key.strip())
+        providers = ["openrouter", "openai"]
+        try:
+            provider_index = providers.index(selected_provider_name()) if not test_mode else 0
+        except ValueError as exc:
+            st.warning(str(exc))
+            provider_index = 0
+        provider = st.selectbox("LLM provider", providers, index=provider_index)
+        inherited_key = "" if test_mode else os.environ.get(credential_name(provider), "").strip()
+        key = st.text_input("API key", type="password", key=f"key_{provider}",
+                            placeholder="Using key from terminal" if inherited_key else None).strip()
+        effective_key = key or inherited_key
+        identity = (provider, effective_key)
         if state.get("catalog_identity") != identity:
             state.pop("models", None)
         if provider == "openrouter":
-            refresh_models = st.button("Load compatible models", disabled=not key.strip(), key="load_compatible_models")
-            if refresh_models or (key.strip() and state.get("catalog_attempt_identity") != identity):
-                state.catalog_attempt_identity = identity
+            if st.button("Load model catalog", disabled=not effective_key, key="load_compatible_models"):
                 loading_models = st.empty()
                 loading_models.markdown(
                     TYPING_HTML.replace("Working on your request…", "Loading model…")
@@ -209,10 +212,10 @@ def main():
                     unsafe_allow_html=True,
                 )
                 try:
-                    state.models = load_models(provider, key)
+                    state.models = load_models(provider, effective_key)
                     state.catalog_identity = identity
                 except SetupError as exc:
-                    st.error(f"{exc.field}: {exc}")
+                    st.warning(f"{exc.field}: {exc} You can still use the terminal model or enter an exact model ID.")
                     loading_models.empty()
                 else:
                     loading_models.empty()
@@ -220,29 +223,31 @@ def main():
         else:
             st.info("OpenAI uses the existing per-agent CLI model and reasoning settings. Global GUI overrides are unavailable.")
 
-        if key.strip():
+        if effective_key:
             models = state.get("models", {})
             if provider == "openrouter":
-                model_options = list(dict.fromkeys([DEFAULT_OPENROUTER_MODEL, *models]))
+                model_options = list(dict.fromkeys(["default", DEFAULT_OPENROUTER_MODEL, *models]))
                 model = st.selectbox("Model", model_options,
-                    key="selected_router_model")
-                options = models[model] if isinstance(models, dict) and model in models else efforts(model)
-                options = [value for value in options if value != "default"] or ["default"]
-                effort = st.selectbox("Reasoning effort", options,
-                    index=len(options) - 1,
-                    format_func=lambda value: "Provider default (no supported effort levels advertised)" if value == "default" else value,
-                    key=f"selected_router_effort_{model}_{'_'.join(options)}")
+                    accept_new_options=True, key="selected_router_model",
+                    format_func=lambda value: "Use terminal setting" if value == "default" else value,
+                    help="Keep the terminal setting or choose or enter an exact OpenRouter model ID.")
+                effort = st.selectbox("Reasoning effort", ["default", *ALL_EFFORTS],
+                    format_func=lambda value: "Use terminal setting" if value == "default" else value,
+                    key="selected_router_effort",
+                    help="The default preserves the terminal's per-agent reasoning settings.")
                 timeout, retries = None, None
                 with st.expander("Advanced · timeout and retries"):
                     st.caption("Leave controls unchecked to inherit existing CLI settings. Network timeouts are per API call, not a total analysis deadline.")
                     if st.checkbox("Set network timeout"):
                         timeout = st.number_input("Network timeout (seconds)", min_value=1.0, value=120.0, step=10.0)
-                    if st.checkbox("Set SDK retry count"):
+                    transport_retries = os.environ.get("ASO_LLM_TRANSPORT_RETRIES", "0")
+                    if transport_retries != "0":
+                        st.caption(f"Using the terminal's OpenRouter transport retry setting ({transport_retries}).")
+                    elif st.checkbox("Set SDK retry count"):
                         retries = st.number_input("SDK retries", min_value=0, value=0, step=1)
-                    st.caption("Any additional framework transport retries retain their existing CLI configuration.")
-                settings = Settings(provider, key.strip(), model, effort, timeout, retries)
+                settings = Settings(provider, key, model, effort, timeout, retries)
             else:
-                settings = Settings(provider, key.strip())
+                settings = Settings(provider, key)
 
             configuration_ok = False
             try:
@@ -250,33 +255,13 @@ def main():
                 configuration_ok = True
             except (SetupError, ValueError, RuntimeError) as exc:
                 st.error(f"Configuration: {exc}")
-            st.caption("OpenRouter starts with DeepSeek Flash. Reasoning effort starts at the highest supported level for the selected model; you can change it.")
-            with st.expander("What validation checks and how long it takes"):
-                st.markdown("""
-1. **Settings:** validate the existing CLI provider configuration and any explicit model/effort selections.
-2. **Authentication and model access:** send one small probe through the existing provider transport.
-3. **Tools and structured output:** request a structured test-tool call.
-4. **Reasoning settings:** the provider applies explicit or inherited overrides using the same configuration code as the CLI.
-
-**Expected wait:** roughly 5–30 seconds; this is an estimate. The setup probe uses a 40-second network timeout and no automatic retries. Its timeout does not change analysis settings.
-
-This checks one small configuration request. Per-agent CLI defaults remain in effect; validation does not exercise every agent, run an ASO analysis, or guarantee that every later request will succeed.""")
             if st.button("Start Chat", type="primary", disabled=not configuration_ok):
-                validation_error = None
-                loading_model = st.empty()
-                loading_model.markdown(
-                    TYPING_HTML.replace("Working on your request…", "Checking API key…")
-                    .replace('class="aso-typing"', 'class="aso-typing aso-setup-loading"'),
-                    unsafe_allow_html=True,
-                )
                 try:
-                    check_key(settings, models)
+                    if test_mode:
+                        mock.validate(settings)
                 except SetupError as exc:
-                    validation_error = exc
-                if validation_error is not None:
-                    st.error(f"{validation_error.field}: {validation_error}")
-                    loading_model.empty()
-                if validation_error is None:
+                    st.error(f"{exc.field}: {exc}")
+                else:
                     state.validated = settings
                     state.setdefault("messages", [])
                     st.rerun()
@@ -301,21 +286,37 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
         state.pop("validated")
         st.rerun()
     st.sidebar.checkbox("Show technical activity", value=False, key="show_activity")
+    flags = resume_path = ""
+    resume = False
+    if not test_mode:
+        with st.sidebar.expander("Run options"):
+            flags = st.text_input("Terminal flags", disabled="job" in state,
+                                  help='Optional flags such as --skip-shortlist or --output-dir "/path with spaces".')
+            resume_path = st.text_input("Saved run state path", disabled="job" in state)
+            resume = st.button("Resume run", disabled="job" in state or not resume_path.strip())
 
 
     @st.fragment(run_every="1s" if "job" in state else None)
     def workspace():
         if "job" in state:
             process, events, answers = state.job
+            finished = not process.is_alive()
             while True:
                 try:
                     kind, value = events.get_nowait()
                 except Empty:
-                    break
+                    if not finished:
+                        break
+                    if "result" not in state:
+                        state.messages.append(("assistant", "The analysis stopped before returning a result. See the preceding messages."))
+                    kind, value = "done", None
                 if kind == "questions":
                     state.questions = value["questions"]
                     context = value.get("context") or {}
-                    explanation = "\n\n".join(str(context[field]) for field in ("why_this_matters", "recommendation") if context.get(field))
+                    state.question_context = context
+                    state.question_round = state.get("question_round", 0) + 1
+                    state.can_pause = value.get("can_pause", True)
+                    explanation = "\n\n".join(str(context[field]) for field in ("reason", "context", "why_this_matters", "recommendation") if context.get(field))
                     text = "I need your input to continue:\n\n" + "\n".join(f"- {question}" for question in value["questions"])
                     state.messages.append(("assistant", text + ("\n\n" + explanation if explanation else "")))
                 elif kind == "activity":
@@ -350,10 +351,6 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     state.pop("job", None)
                     state.pop("questions", None)
                     st.rerun()
-            if "job" in state and not process.is_alive() and process.exitcode not in (None, 0):
-                state.messages.append(("assistant", "The analysis worker stopped unexpectedly. Check the local terminal."))
-                state.pop("job")
-                st.rerun()
         chat, results, files = st.tabs(["Chat", "Results", "Files"], key="workspace_tab", on_change="rerun")
         with chat:
             st.markdown('<span class="aso-chat-surface" aria-hidden="true" style="display:none"></span>', unsafe_allow_html=True)
@@ -381,16 +378,21 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                                 else:
                                     st.write(message)
                 if "questions" in state:
+                    suggestions = state.question_context.get("suggested_answers") or []
                     with st.form("clarifications"):
-                        values = [st.text_input(question, key=f"answer_{index}_{question}") for index, question in enumerate(state.questions)]
-                        if st.form_submit_button("Send answers"):
-                            if all(value.strip() for value in values):
-                                state.job[2].put([{"question": q, "answer": a} for q, a in zip(state.questions, values)])
+                        values = []
+                        for index, question in enumerate(state.questions):
+                            suggestion = suggestions[index] if isinstance(suggestions, list) and index < len(suggestions) else ""
+                            values.append(st.text_input(question, key=f"answer_{state.question_round}_{index}",
+                                                       placeholder=str(suggestion) if suggestion else None))
+                        send = st.form_submit_button("Send answers")
+                        pause = state.can_pause and st.form_submit_button("Pause run")
+                        if send or pause:
+                            state.job[2].put([{"question": q, "answer": a} for q, a in zip(state.questions, values)] if send else None)
+                            if send and any(values):
                                 state.messages.append(("user", "\n".join(values)))
-                                state.pop("questions")
-                                st.rerun()
-                            else:
-                                st.error("Answer each question before continuing.")
+                            state.pop("questions")
+                            st.rerun()
                 if "job" in state:
                     if "questions" not in state:
                         with st.chat_message("assistant"):
@@ -398,23 +400,34 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     else:
                         st.caption("Waiting for your answers.")
                 if state.get("result") and "job" not in state:
+                    if state.result.get("state_path"):
+                        st.caption("Saved run state path")
+                        st.code(state.result["state_path"], language="text")
                     def open_output(tab):
                         state.workspace_tab = tab
                     view_results, view_files = st.columns(2)
                     view_results.button("View Results", on_click=open_output, args=("Results",), width="stretch")
                     view_files.button("View Files", on_click=open_output, args=("Files",), width="stretch")
             request = st.chat_input("Describe your ASO design or evaluation request", disabled="job" in state)
-            if request:
-                state.messages.append(("user", request))
+            if ((request and request.strip()) or resume) and "job" not in state:
+                try:
+                    options = shlex.split(flags)
+                    if resume:
+                        options.extend(["--agentic-state-path", resume_path.strip()])
+                    state.job = start_job(state.validated, request or "", options) if options else start_job(state.validated, request or "")
+                except (OSError, ValueError, RuntimeError) as exc:
+                    st.error(str(exc))
+                    return
+                display_request = request or f"Resume {resume_path.strip()}"
+                state.messages.append(("user", display_request))
                 state.pop("result", None)
                 state.seen_commentary = set()
                 state.pop("sdk_warning_summary", None)
                 with history:
                     with st.chat_message("user"):
-                        st.write(request)
+                        st.write(display_request)
                     with st.chat_message("assistant"):
                         st.markdown(TYPING_HTML, unsafe_allow_html=True)
-                state.job = start_job(state.validated, request)
                 if test_mode:
                     state.mock_output_directory = state.job[0].output_directory
                 st.rerun()
@@ -427,8 +440,8 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     st.caption(f"Saved run preview: {state.result['preview_source']} · No new analysis was run.")
                 report = root / "report.html" if root else None
                 if report and report.is_file():
-                    from aso_agents.gui.artifacts import report_url
-                    st.iframe(report_url(str(root)), height="stretch")
+                    from aso_agents.gui.artifacts import report_frame
+                    st.iframe(report_frame(root, st.get_option("server.baseUrlPath")), height="stretch")
                 else:
                     st.info("The HTML report will appear when available.")
         with files:

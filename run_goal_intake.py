@@ -32531,7 +32531,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None, event_
         pretty_cli = bool(sys.stdout.isatty()) and not raw_cli
         narrator = _CliNarrator(
             stream=sys.stdout,
-            enable_stream=pretty_cli and not no_stream_ui,
+            enable_stream=(pretty_cli or event_callback is not None) and not raw_cli and not no_stream_ui,
             enable_spinner=pretty_cli,
             allow_model_install=not raw_cli,
         )
@@ -32651,13 +32651,14 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None, event_
                 if not isinstance(resolved_answers, list) or len(resolved_answers) != len(questions):
                     raise ValueError("The clarification resolver must answer every displayed question explicitly.")
                 normalized_answers = []
-                for question, item in zip(questions, resolved_answers):
+                for index, (question, item) in enumerate(zip(questions, resolved_answers)):
                     if not isinstance(item, dict) or item.get("question") != question or not isinstance(item.get("answer"), str):
                         raise ValueError("Clarification answers must preserve the displayed question and contain answer text.")
-                    normalized_answers.append({"question": question, "answer": item["answer"]})
+                    suggested = suggested_answers[index] if index < len(suggested_answers) else ""
+                    normalized_answers.append({"question": question, "answer": item["answer"].strip() or suggested})
                 current_state_path = state_path_for_resume.strip()
                 pending_answers = normalized_answers
-                pending_summary = "User clarification answers received through the host interface."
+                pending_summary = "Interactive clarification answers captured from the user."
                 continue
             if pretty_cli:
                 narrator.show_clarification(
@@ -32719,7 +32720,7 @@ def main(*, argv=None, clarification_resolver=None, result_callback=None, event_
                 break
             current_state_path = state_path_for_resume.strip()
             pending_answers = interactive_answers
-            pending_summary = "Interactive clarification answers captured via CLI."
+            pending_summary = "Interactive clarification answers captured from the user."
             continue
 
         if str(agentic_result.get("status") or "").strip().lower() == "in_progress":

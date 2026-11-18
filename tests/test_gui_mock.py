@@ -21,7 +21,6 @@ class MockGuiTests(TestCase):
     def test_keys_and_offline_chat(self):
         with patch.object(sys, 'argv', ['app.py', '--test']), \
                 patch('aso_agents.gui.config.list_models', side_effect=AssertionError('Live API')), \
-                patch('aso_agents.gui.config.validate', side_effect=AssertionError('Live API')), \
                 patch('aso_agents.gui.worker.start', side_effect=AssertionError('Real worker')):
             ui = AppTest.from_file(str(APP)).run(timeout=20)
             ui.text_input[0].set_value('wrongkey').run()
@@ -50,10 +49,7 @@ class MockGuiTests(TestCase):
             self.assertEqual(len(ui.get('download_button')), 6)
             self.assertTrue(ui.get('iframe'))
             self.assertEqual(ui.session_state['result']['preview_source'], 'goal_1794942511_PCSK9')
-            from urllib.request import urlopen
-            report_frame = next(item for item in ui.get('iframe') if item.proto.src.endswith('/report.html'))
-            with urlopen(report_frame.proto.src, timeout=3) as response:
-                self.assertIn(b'PCSK9', response.read())
+            self.assertTrue(any('/_modal_aso_artifacts/' in item.proto.srcdoc for item in ui.get('iframe')))
             self.assertTrue(any('recommended_shortlist.csv' in item.value for item in ui.markdown))
             ui.chat_input[0].set_value('Second request').run()
             process = ui.session_state['job'][0]
