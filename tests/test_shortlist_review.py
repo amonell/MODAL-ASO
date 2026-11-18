@@ -74,6 +74,9 @@ def fake_model(monkeypatch):
 
 
 def run(rows, tmp_path, goal=None, **kwargs):
+    # These tests exercise the established exhaustive evidence reviewer.
+    # Query-driven orchestration has separate adversarial integration tests.
+    kwargs.setdefault('review_strategy', 'exhaustive')
     return review.recommend_panel(rows, goal or {}, tmp_path, select_panel=selector(tmp_path),
                                   allow_model_calls=True, **kwargs)
 
@@ -85,11 +88,61 @@ def test_model_changes_membership_preserves_pool_and_exports_sources(tmp_path, f
     assert receipt['status'] == 'completed'
     assert receipt['reviewed_molecule_count'] == 7
     assert rows == before
-    assert [call[0] for call in fake_model] == ['rank', 'explain', 'audit']
+    assert [call[0] for call in fake_model] == ['rank', 'explain', 'audit', 'audit']
     for entry in receipt['recommendations'].values():
         assert entry['evidence'][0]['value'] == 'complete_within_declared_scope'
         assert entry['evidence'][0]['source_pointer'].startswith('/rows/')
     assert all('_recommendation_order' not in row for row in selected)
+
+
+def test_review_uses_saved_request_and_keeps_child_task_scope(tmp_path, fake_model):
+    from aso_agents.shortlist_evidence import review_request
+    request = 'Use the canonical transcript as the reference for knockdown.'
+    envelope = {'request_text': request, 'tasks': [{'label': 'Review the requested target group.'}]}
+    assert review_request(tmp_path, {'request_envelope': envelope}) == request
+    (tmp_path/'request.txt').write_text(request)
+    assert review_request(tmp_path, {}) == request
+    child = tmp_path/'child_runs'/'design'
+    intake = {'payload': {'request': 'Internal task instructions'}, 'request_envelope': envelope}
+    assert review_request(child, intake) == envelope['tasks'][0]['label']
+    assert review_request(child, {'payload': intake['payload']}) == ''
+    goal = {'candidate_limit': 2, 'splice_isoform_objectives': [{'objective_scope': 'specific_isoform'}]}
+    _, _, receipt = run(pool(), tmp_path, goal, request_text=request)
+    assert receipt['status'] == 'completed'
+    for _, payload, *_ in fake_model:
+        assert payload['goal']['request_text'] == request
+    assert 'request_text' not in goal
+
+
+def test_nomination_note_uses_the_same_bounded_space_as_final_comparison():
+    note = 'The binding and screening evidence supports these alternatives. ' * 12
+    response = {'reviewed_count': 3, 'nominated_ids': [1], 'summary': note.strip()}
+    assert 650 < len(response['summary']) <= 900
+    assert review._validate(response, review.NOMINATE_SCHEMA, lambda value: []) == []
+    response['summary'] += note
+    assert review._validate(response, review.NOMINATE_SCHEMA, lambda value: [])
+
+
+def test_mismatch_arrays_supply_scalar_arithmetic_without_imputing_missing_bins(tmp_path, monkeypatch):
+    rows = pool(4)
+    rows[0]['candidate_assessment']['off_target']['counts_by_mismatch'][2] = None
+    observed = []
+    def check_tables(kind, payload, schema):
+        response, metadata = model(kind, payload, schema)
+        if kind == 'explain':
+            for item in response['recommendations']:
+                item['evidence_paths'].append('/contexts/0/candidate_assessment/off_target/counts_by_mismatch')
+        if kind == 'audit':
+            tables = {item['path']: item for item in payload['numeric_comparisons']}
+            prefix = '/contexts/0/candidate_assessment/off_target/counts_by_mismatch/'
+            assert set(tables[prefix+'0']['values']) == {molecule_id(row) for row in rows}
+            assert tables[prefix+'2']['values'] == {molecule_id(row): row['candidate_assessment'][
+                'off_target']['counts_by_mismatch'][2] for row in rows[1:]}
+            observed.append(True)
+        return response, metadata
+    monkeypatch.setattr(review, '_model_call', check_tables)
+    _, _, receipt = run(rows, tmp_path, {'candidate_limit': 4})
+    assert receipt['status'] == 'completed' and observed
 
 
 def test_legacy_metric_labels_are_defined_before_evidence_audit(tmp_path, monkeypatch):
@@ -155,16 +208,22 @@ def test_visible_notation_and_contrastive_boilerplate_are_fixed_before_audit(tmp
         calls.append(kind)
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            if payload.get('corrections_needed'):
-                corrections.append(payload['corrections_needed'])
-            else:
-                result['recommendations'][0]['why_chosen'] = text
+            result['recommendations'][0]['why_chosen'] = text
+        if kind == 'repair':
+            corrections.append(payload['repair_fields'])
+            assert list(payload['repair_fields'].values()) == [['why_chosen']]
+            assert '/contexts/0/selection_rank' not in {path for fact in payload['evidence']['facts']
+                                                        for path in fact['paths'].values()}
+            result['recommendations'][0]['why_chosen'] = 'This ASO has complete scoped off-target evidence.'
+            result['recommendations'][0]['tradeoff'] = 'Unsolicited unrelated rewrite.'
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
     assert receipt['status'] == 'completed' and len(corrections) == 1
-    assert calls == ['rank', 'explain', 'explain', 'audit']
+    assert calls == ['rank', 'explain', 'repair', 'audit']
     assert all(entry['why_chosen'] != text for entry in receipt['recommendations'].values())
+    assert all(entry['tradeoff'] == 'Target RNA accessibility remains unresolved.'
+               for entry in receipt['recommendations'].values())
     assert review._prose_issue('Target RNA accessibility was not measured.') is None
     assert review._prose_issue('Uses NM_018238.4 with c.1047_1049del.') is None
     assert review._prose_issue('Uses NM_018238 as the reference.') is None
@@ -182,7 +241,10 @@ def test_summary_keeps_scores_and_relative_offsets_in_candidate_details(tmp_path
     def wording(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
         if kind == 'explain':
-            result['summary'] = final_summary if payload.get('corrections_needed') else summary
+            result['summary'] = summary
+        if kind == 'repair':
+            assert payload['repair_fields'] == {'panel': ['summary']}
+            result['summary'] = final_summary
         return result, metadata
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 2})
@@ -484,8 +546,8 @@ def test_repairs_keep_exact_citations_and_audits_keep_complete_evidence(tmp_path
     assert receipt['status'] == 'completed'
     assert len(repair_paths) == 1 and audit_paths[0] == audit_paths[1]
     assert '/contexts/0/uncited_future_analysis/score' in audit_paths[0]
-    assert '/contexts/0/uncited_future_analysis/score' not in repair_paths[0]
-    assert repair_paths[0] < audit_paths[0]
+    assert '/contexts/0/uncited_future_analysis/score' in repair_paths[0]
+    assert repair_paths[0] == audit_paths[0]
 
 
 def test_panel_only_repair_ignores_unsolicited_candidate_rewrites(tmp_path, monkeypatch):
@@ -516,10 +578,10 @@ def test_arithmetic_overrides_a_model_approving_an_incorrect_comparison(tmp_path
     audits = []
     def incorrect_rank(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
-        if kind == 'audit' and not audits:
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields'] and not audits:
             result['quantitative_comparisons'] = [{'candidate_id': payload['selected_ids'][0],
                 'field': 'why_chosen', 'path': '/contexts/0/selection_rank', 'order': 'ascending',
-                'claimed_rank': 1, 'scope_ids': payload['selected_ids']}]
+                'claimed_rank': 1, 'scope_ids': [item['id'] for item in payload['complete_panel']]}]
             audits.append(result)
         if kind == 'repair':
             assert 'give rank 3' in str(payload['review_corrections'])
@@ -575,11 +637,11 @@ def test_completed_review_reopens_offline_and_evidence_change_invalidates_it(tmp
     rows = pool(); first, _, receipt = run(rows, tmp_path, {'candidate_limit': 2})
     monkeypatch.setattr(review, '_model_call', lambda *a: pytest.fail('Must reuse accepted result'))
     again, _, saved = review.recommend_panel(rows, {'candidate_limit': 2}, tmp_path,
-        select_panel=selector(tmp_path), allow_model_calls=False)
+        select_panel=selector(tmp_path), allow_model_calls=False, review_strategy='exhaustive')
     assert again == first and saved['status'] == 'completed'
     rows[-1]['candidate_assessment']['off_target']['counts_by_mismatch'][0] = 10
     _, _, changed = review.recommend_panel(rows, {'candidate_limit': 2}, tmp_path,
-        select_panel=selector(tmp_path), allow_model_calls=False)
+        select_panel=selector(tmp_path), allow_model_calls=False, review_strategy='exhaustive')
     assert changed['status'] == 'pending'
 
 
@@ -710,7 +772,7 @@ def test_each_explanation_batch_owns_its_fields_when_auditor_repeats_other_membe
 def test_panel_numbers_are_checked_as_metadata(tmp_path, monkeypatch, pointer):
     def panel_number(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
-        if kind == 'audit':
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields']:
             result['quantitative_comparisons'] = [{'candidate_id': payload['selected_ids'][0],
                 'field': 'panel_role', 'path': pointer, 'order': 'ascending',
                 'claimed_rank': 1, 'scope_ids': payload['selected_ids']}]
@@ -743,7 +805,7 @@ def test_rna_position_comparisons_use_recorded_strand(tmp_path, monkeypatch):
         row['strand'] = '-'
     def position(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
-        if kind == 'audit':
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields']:
             first = payload['selected_ids'][0]
             result['quantitative_comparisons'] = [{'candidate_id': first, 'field': 'panel_role',
                 'path': '/binding_geometry/' + first + '/start_shift_nt_in_RNA', 'order': 'ascending',

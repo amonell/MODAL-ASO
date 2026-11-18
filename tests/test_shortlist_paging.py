@@ -204,8 +204,26 @@ def test_ordinary_reviews_keep_original_call_sequence(tmp_path, monkeypatch):
     monkeypatch.setattr(review, '_model_call', recording)
     _, _, receipt = run(pool(4), tmp_path, {'candidate_limit': 3})
     assert receipt['status'] == 'completed'
-    assert calls == ['rank', 'explain', 'audit']
+    assert calls == ['rank', 'explain', 'audit', 'audit']
     assert receipt['source_evidence_reviews'] == {}
+
+
+def test_selected_original_source_audits_run_concurrently(tmp_path, monkeypatch):
+    from threading import Barrier, get_ident
+    from aso_agents import shortlist_paging
+    barrier = Barrier(2, timeout=5)
+    original = shortlist_paging.audit_large_entry
+    threads = set()
+    def audit(*args, **kwargs):
+        threads.add(get_ident())
+        barrier.wait()
+        return original(*args, **kwargs)
+    monkeypatch.setattr(shortlist_paging, 'audit_large_entry', audit)
+    monkeypatch.setattr(review, '_model_call', select_evidence)
+    _, _, receipt = run(large_rows(2), tmp_path, {'candidate_limit': 2})
+    assert receipt['status'] == 'completed' and len(threads) == 2
+    assert all(entry['explanation_audit']['source_pages_checked'] == entry['source_pages_reviewed']
+               for entry in receipt['source_evidence_reviews'].values())
 
 
 def test_final_source_audit_repairs_counterevidence_omitted_from_comparison(tmp_path, monkeypatch):

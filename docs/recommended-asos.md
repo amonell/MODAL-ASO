@@ -29,11 +29,28 @@ reports. Exported review status is `skipped`, with a receipt in
 receipts remain intact. Normal runs without the flag keep the existing review.
 
 The report stage uses the configured language model, including `OPENROUTER_MODEL`.
-Every eligible physical molecule enters a review batch with all its saved analysis
-contexts and attributes. Larger libraries use bounded batches followed by comparisons
-of their leading choices. Earlier rankings remain available to satisfy required
-binding regions or other panel constraints. This is a hierarchical comparison;
-small score differences can change the suggested order between fresh reviews.
+The reviewer reads the saved request alongside the structured design objective.
+Child runs use their own task wording. When a preference would change the panel,
+the reviewer checks the user's stated objective and any named preservation targets.
+Large libraries begin with a survey of saved attributes and prediction conditions.
+The model can query distributions, apply reversible filters, sort candidates,
+compare individual ASOs and inspect original evidence pages. Numeric thresholds,
+missing-value handling and aggregation across contexts are explicit. The queries
+preserve units, dose, delivery, transcript, species and search scope. Every operation
+uses validated structured arguments and exact saved values.
+
+An independent reviewer examines alternatives outside the proposed filters,
+including criterion leaders, threshold neighbors, distinct groups and candidates
+with missing measurements. Detailed review then reads complete evidence for the
+leading candidates and native constraint reserves. Additional candidates required
+by the panel contract receive full review before publication. Material contrary
+evidence can reopen selection. Unproductive exploration expands into the existing
+full-library reviewer, with progress and saved receipts.
+
+Query exploration applies above 128 eligible molecules or the normal comparison
+packet limit. Small libraries and all-eligible panel requests retain direct review.
+The full assessed library remains available throughout. Two fresh reviews can
+choose different, similarly supported alternatives.
 
 The model supplies the candidate preference order. Existing selectors apply requested
 counts, program limits, physical spacing, region coverage, ordered roles and explicit
@@ -77,9 +94,14 @@ to their provider quota, or configure `ASO_LLM_CALL_RESOURCE` and its correspond
 Large evidence packets share field paths and repeated values while retaining the
 original measurements. Generation that reaches its token allowance receives a
 bounded retry with a larger allowance.
+Large nomination batches can split when a generation exhausts its allowance.
+For the smallest batches, the reviewer increases the allowance within the same
+generation cap. Resuming a saved, exhausted small batch uses the next allowance.
 
-Large individual molecule records are reviewed in bounded source pages before
-candidate comparison. The paging format preserves exact values, source paths,
+Individual molecule records that exceed the comparison capacity are reviewed in
+bounded source pages. Query-driven review loads these pages for finalists and
+constraint reserves; smaller records reach detailed comparison with all their
+original facts. The paging format preserves exact values, source paths,
 array order and missing values; partial strings and arrays carry explicit ranges.
 Related small facts share their source prefixes. The reviewer selects source
 records for comparison without generating replacement measurements or prose
@@ -95,3 +117,36 @@ coverage, nominations and final source-page audits; component receipts retain th
 inputs and responses. The original assessment pool remains unchanged, and final
 citations resolve to its original values. Paging changes review preparation only;
 native generation, scoring, hard filters and panel constraints are unchanged.
+
+Query-driven receipts use version `evidence-reviewed-shortlist/3` and add
+`review_coverage`, `selection_process`, `compared_ids`, `fully_reviewed_ids` and
+`review_strategy`. Coverage distinguishes the local library index, query matches,
+individual comparisons and complete evidence reviews. `ranked_ids` remains a
+complete permutation for native selection; its `ordering_scope` describes the
+reviewed preference order and the remaining library. Reports explain the actual
+criteria under **How these ASOs were chosen** and read legacy receipts as before.
+Exploration receipts live under `recommendation_review/exploration/`; they retain
+validated queries, rejected query diagnostics, exact result hashes and model usage.
+The proposed comparison IDs are separate from query-set provenance, so a broad
+filter can supply a compact, explicitly chosen comparison. Ordinary measurement
+gaps and objections to the filtering strategy have separate review fields.
+The model can select exact slices of a stored, sorted query result by offset and
+count. This preserves its chosen ordering and avoids copying long candidate-ID
+lists. Final explanation audits use small concurrent batches with the full panel
+as comparison context. Selected source-page audits also run concurrently; every
+original page still receives its assigned check. The independent reviewer can withdraw
+an unsupported filter and replace the comparison from valid queries. The reviewer can request additional evidence and reuses existing query results
+when correcting only membership. A replacement can use the combined capacity of
+the original comparison and its additional alternatives.
+If an interrupted response uses the initial attempt, the first complete decision
+can still correct a validation error once using the evidence already available.
+When OpenRouter returns a temporary server error during exploration, the reviewer
+retries the failed generation once with the same query history. Explicit transport
+retry settings govern recovery when configured. The report
+lists the filters that supplied the accepted comparison. When the complete
+comparison fits in one ordinary evidence packet, one full review establishes
+the order. Evidence repairs can cite newly identified facts from the original
+packet. Mismatch arrays supply a separate
+arithmetic table for each bin, with missing values retained.
+Reopening the report stays
+offline. New installations generate their own index from their run's evidence.

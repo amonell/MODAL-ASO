@@ -81,6 +81,10 @@ _CLIENT_CACHE: dict[_ClientCacheKey, OpenAI] = {}
 _CLIENT_CACHE_LOCK = threading.Lock()
 
 
+class TransientGenerationError(RuntimeError):
+    """The provider explicitly reported a temporary failure before returning a generation."""
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """Resolved settings for one supported LLM provider."""
@@ -765,7 +769,11 @@ def create_response(
                 else:
                     error_parts = [str(raw_error).strip()] if str(raw_error or "").strip() else []
                 failure_detail = "; ".join(error_parts) or "provider returned status=failed"
-                raise RuntimeError(
+                exception = RuntimeError
+                if (resolved_config.name == "openrouter" and error_code == "server_error"
+                        and "ASO_LLM_TRANSPORT_RETRIES" not in os.environ):
+                    exception = TransientGenerationError
+                raise exception(
                     "LLM API response failed for provider "
                     f"'{attribution['provider']}', logical model "
                     f"{attribution['requested_model']!r}, resolved model "

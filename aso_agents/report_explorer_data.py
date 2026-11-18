@@ -643,7 +643,8 @@ def project_run(run_dir, *, goal=None, kind='design', request=None):
     result['recommendation_review'] = {key: review[key] for key in (
         'status', 'summary', 'size_reason', 'reviewer', 'eligible_molecule_count',
         'reviewed_molecule_count', 'reviewed_binding_record_count', 'draft_molecule_count',
-        'provisional_molecule_count', 'failure_code', 'failure_details') if key in review}
+        'provisional_molecule_count', 'failure_code', 'failure_details',
+        'review_strategy', 'review_coverage', 'selection_process') if key in review}
     from .report_approaches import project_approaches
     result['approach_rankings'] = project_approaches(
         goal, contexts, read_record(_root_file(root, 'strategy_router_summary.json')))
