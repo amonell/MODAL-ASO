@@ -9,6 +9,7 @@ from aso_agents.model_defaults import DEFAULT_MODEL
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from copy import deepcopy
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -32,7 +33,7 @@ FINAL_PACKET_CHARACTERS = 840000
 FINAL_BATCH_MOLECULES = 256
 SCREEN_WORKERS = 32
 SCREEN_THRESHOLD = 128
-AUDIT_BATCH_MOLECULES = 3
+AUDIT_BATCH_MOLECULES = 2
 ATTEMPTS = 3
 EDITORIAL_ROUNDS = 6
 DEFAULT_OUTPUT_TOKENS = 16384
@@ -167,8 +168,12 @@ Explain each selected molecule in selected_ids exactly once. Selection already
 enforces the user's typed constraints; describe any explicit objective that governs
 it. For each: why_chosen states the strongest specific reason; tradeoff names the
 most relevant limitation or uncertainty; panel_role explains what it adds relative
-to the other selected ASOs. Use one short sentence per field. Cite 1–6 exact paths
-from that molecule's facts in evidence_paths, supporting both strengths and limits.
+to the other selected ASOs. Use one short sentence per field.
+Lead with the biological placement or predicted effect and its main comparison.
+Keep extra measurements in the cited evidence. Use readable precision for scores
+and percentages while preserving small nonzero values; keep counts and coordinates
+exact. The supporting citations retain each original measurement.
+Cite 1–6 exact paths from that molecule's facts in evidence_paths, supporting both strengths and limits.
 Use the short f_ citation IDs supplied in paths for evidence_paths and for the path
 field of comparison_evidence. The host expands them to exact source paths. Copy
 the supplied IDs literally. Support comparative claims using comparison_evidence.
@@ -235,6 +240,12 @@ these interpretations in field_reviews and tradeoffs_relevant_to_goal, then ask
 for the specific unresolved question or relevant limitation instead.
 numeric_comparisons gives exact arithmetic for cited numerical fields across the
 supplied selected ASOs. Use those tables to check rankings and superlatives.
+Use the table's scalar path in quantitative_comparisons, including the array index
+for a mismatch bin. Its complete-panel arithmetic and binding_geometry support
+relative placements and rankings when the draft cites the underlying coordinate
+or measurement. Source citations use original fact paths; computed comparison
+fields supply supplementary arithmetic. Accept faithful rounding of displayed
+scores and percentages; coordinates, counts and original cited values stay exact.
 Extract EVERY lowest/highest or ordinal numerical comparison in candidate prose
 into quantitative_comparisons, including claims you consider correct. Record the
 field containing the claim, the cited metric path, ascending or descending order,
@@ -807,19 +818,20 @@ def _progress(directory, message, **details):
     emit_progress(message)
 
 
-def _nominate(entries, context, directory, configuration):
+def _nominate(entries, context, directory, configuration, *, include_provenance=False):
     """Review every molecule; bound output by nominees instead of pool size."""
     total = len(entries)
     desired = context.get('candidate_limit') or 6
     promote = max(4, min(12, desired))
     levels, remaining_ids = [], []
+    packet_for = partial(screening_packet, include_provenance=include_provenance)
     while len(entries) > SCREEN_THRESHOLD:
         # Once the nominees fit a single bounded final comparison, another
         # nomination round adds latency without adding coverage.
         if levels and len(entries) <= FINAL_BATCH_MOLECULES and len(json.dumps(
-                screening_packet(entries), separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
+                packet_for(entries), separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
             break
-        batches = _batches(entries, packet_builder=screening_packet,
+        batches = _batches(entries, packet_builder=packet_for,
             max_molecules=SCREEN_BATCH_MOLECULES, max_characters=SCREEN_PACKET_CHARACTERS)
         level = len(levels)
         reviewed = 0
@@ -836,7 +848,7 @@ def _nominate(entries, context, directory, configuration):
                     errors.append('Return zero to promotion_limit distinct local integer IDs from evidence.ids.')
                 return errors
             try:
-                response = _call('nominate', {'goal': context, 'evidence': screening_packet(batch),
+                response = _call('nominate', {'goal': context, 'evidence': packet_for(batch),
                     'review_scope': {'complete_pool_molecule_count': total, 'batch_molecule_count': len(batch),
                         'is_final_comparison': False}, 'promotion_limit': limit},
                     NOMINATE_SCHEMA, check, directory, configuration)
@@ -892,14 +904,15 @@ def _nominate(entries, context, directory, configuration):
 
 def _rank(catalog, context, directory, configuration, *, preselected=False):
     entries = [entry for entry in catalog.values() if entry['eligible']]
-    finalists, remaining, nominations = _nominate(entries, context, directory, configuration)
+    finalists, remaining, nominations = _nominate(entries, context, directory, configuration,
+                                                  include_provenance=preselected)
     if not finalists:
         return remaining, 0, nominations
     _progress(directory, f'Comparing {len(finalists):,} shortlist finalists.', phase='comparing', total=len(finalists))
     if nominations or preselected:
         # One final comparison chooses a panel. Sorting every unsuccessful
         # nominee again adds output and retries without helping that decision.
-        packet = screening_packet(finalists)
+        packet = screening_packet(finalists, include_provenance=preselected)
         if len(json.dumps(packet, separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
             limit = min(len(finalists), max(12, min(48, (context.get('candidate_limit') or 6) * 2)))
             def check(response):
@@ -1393,6 +1406,18 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 for key in ids for index, observation in enumerate(allowed[key].get('coordinate_observations', []))
                 for field, value in observation.items() if type(value) in (int, float)
                 and field not in {'context', 'source_membership_index'})
+            # Count arrays contain separate measurements. Give the auditor
+            # explicit scalar paths and ranks for each recorded bin, preserving
+            # missing values, instead of asking it to rank an entire vector.
+            for pointer in list(comparison_paths):
+                for key in ids:
+                    try:
+                        value = fact_value(allowed[key], pointer)
+                    except KeyError:
+                        continue
+                    if isinstance(value, list):
+                        comparison_paths.update(pointer + '/' + str(index) for index, item in enumerate(value)
+                            if finite_number(item) is not None)
             numeric_comparisons = []
             for pointer in sorted(comparison_paths):
                 values = {key: number_at(key, pointer) for key in ids if number_at(key, pointer) is not None}
@@ -1428,15 +1453,22 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             # molecules and feed exact offending source records into repairs.
             from .shortlist_paging import audit_large_entry
             source_findings = []
-            for key in ids:
-                if not catalog[key].get('evidence_review'):
-                    continue
+            source_ids = [key for key in ids if catalog[key].get('evidence_review')]
+            def audit_source(key):
                 try:
                     findings, source_receipt = audit_large_entry(catalog[key], context, response,
                         directory, configuration, _call)
                 except ReviewUnavailable as exc:
                     exc.details['draft_molecule_count'] = len(response['recommendations'])
                     raise
+                return key, findings, source_receipt
+            if len(source_ids) > 1:
+                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(source_ids))) as executor:
+                    futures = [executor.submit(copy_context().run, audit_source, key) for key in source_ids]
+                    source_results = [future.result() for future in futures]
+            else:
+                source_results = [audit_source(key) for key in source_ids]
+            for key, findings, source_receipt in source_results:
                 source_findings.extend(findings)
                 catalog[key]['evidence_review']['explanation_audit'] = source_receipt
             if source_findings:
@@ -1592,17 +1624,21 @@ def _query_rank(catalog, context, goal, eligible, reserve, select_panel, directo
     all_levels = [query_level]+levels+detailed_levels
     for index, level in enumerate(all_levels):
         level['level'] = index
-    process = {'summary': f'Recorded attributes narrowed the library to {len(projection):,} ASOs for comparison. '
-        f'The reviewer also examined {len(exploration["challenger_ids"]):,} alternatives outside the filters and read the complete evidence for the leading choices.', 'steps': [
+    challenge_count = len(exploration['challenger_ids'])
+    process = {'summary': f'The reviewer compared {len(projection):,} ASOs using selected attributes '
+        f'and read the complete evidence for {len(detailed_ids):,} leading choices and required alternatives.'
+        + (f' A second review examined {challenge_count:,} ASOs left out of the initial comparison.'
+           if challenge_count else ''), 'steps': [
         {name: operation[name] for name in ('rationale', 'matched_count', 'unknown_count')}
         for operation in exploration['operations'] if operation['matched_count']
         and operation['set_id'] in exploration['basis_set_ids']
         and not _prose_issue(operation['rationale'])
         and not any(character in operation['rationale'] for character in '{}[]')]}
     coverage = {'indexed_molecule_count': len(exploration['indexed_ids']),
-        'matched_molecule_count': len(exploration['matched_ids']),
         'compared_molecule_count': len(compared_ids),
         'fully_reviewed_molecule_count': len(detailed_ids)}
+    if exploration['matched_ids'] is not None:
+        coverage['matched_molecule_count'] = len(exploration['matched_ids'])
     return full_order, size, all_levels, detailed_catalog, {
         'selection_process': process, 'review_coverage': coverage,
         'compared_ids': sorted(compared_ids), 'fully_reviewed_ids': detailed_order,
@@ -1710,7 +1746,10 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
                     {'reason': str(exc), 'strategy': 'exhaustive'})
                 use_query = False
         if not use_query:
-            catalog = _page_large_evidence(catalog, context, directory, configuration)
+            # Final comparisons and audits can read ordinary records directly.
+            # Keep the exhaustive reference strategy for paired validation.
+            page_budget = MAX_PACKET_CHARACTERS if review_strategy == 'auto' else None
+            catalog = _page_large_evidence(catalog, context, directory, configuration, minimum_size=page_budget)
             order, size, levels = _rank(catalog, context, directory, configuration)
         positions = {key: index for index, key in enumerate(order)}
         if set(positions) != {molecule_id(row) for row in eligible}:
@@ -1738,7 +1777,8 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
                       phase='reconsidering', total=len(entries))
             write_json(directory/'recommendation_review'/'selection_reconsideration.json', exc.details)
             full_context = {**context, 'selection_review_findings': exc.details}
-            catalog = _page_large_evidence(catalog, full_context, directory, configuration)
+            catalog = _page_large_evidence(catalog, full_context, directory, configuration,
+                                          minimum_size=MAX_PACKET_CHARACTERS)
             order, size, levels = _rank(catalog, full_context, directory, configuration)
             positions = {key: index for index, key in enumerate(order)}
             ranked_rows = [{**row, '_recommendation_order': positions[molecule_id(row)]} for row in eligible]

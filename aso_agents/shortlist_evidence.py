@@ -425,6 +425,7 @@ def screening_packet(entries, *, include_provenance=False, local_ids=True):
             'A value_ref cell uses the exact shared_values entry. Null and absent fields are missing evidence. '
             + ('Paged molecules carry source-backed nominated facts and explicit excerpts; consult source_page_reviews. '
                if any(entry.get('evidence_review') for entry in entries) else
+               'The supplied fields are excerpts from the saved evidence. ' if any(entry.get('query_projection') for entry in entries) else
                'Every original fact and source path is included. ' if include_provenance else
                'Technical provenance and duplicate encodings stay in the full catalog for detailed review. ')
             +

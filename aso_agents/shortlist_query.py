@@ -16,7 +16,8 @@ CONTEXT_KEYS = frozenset({'transcript_id', 'reference_accession', 'species', 'as
     'perturbation', 'perturbation_type', 'site_kind', 'junction_kind', 'target_role',
     'context_basis', 'kind', 'expression_tissue', 'Off_target_expression_tissue'})
 UNAVAILABLE = frozenset({'failed', 'error', 'unavailable', 'not_run', 'unsupported',
-    'incomplete', 'incomplete_or_unavailable', 'incomplete_or_censored', 'skipped'})
+    'incomplete', 'incomplete_or_unavailable', 'incomplete_or_censored', 'skipped',
+    'not_evaluated', 'not_requested', 'missing', 'partial', 'censored'})
 
 
 def number(value):
@@ -264,7 +265,8 @@ class CandidateIndex:
                 if '/conditions/' in path or path.rsplit('/', 1)[-1] in {
                     'unit', 'units', 'count_unit', 'mismatch_budget', 'mismatch_policy',
                     'dosage_nm', 'dose_nm', 'transfection_method', 'delivery', 'model', 'model_id',
-                    'assembly', 'assembly_name'}})
+                    'assembly', 'assembly_name', 'expression_tissue', 'Off_target_expression_tissue',
+                    'perturbation', 'perturbation_type', 'target_role', 'site_kind', 'junction_kind'}})
         if len({digest(value) for value in comparability}) > 1:
             raise ValueError('Compare different units, doses, delivery methods or search scopes in separate queries.')
         return set(chosen)

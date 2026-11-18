@@ -31,9 +31,9 @@ def querying_model(phase, payload, index, records, save, configuration):
     response = {'attribute_ids': [field] if field else [],
         'summary': 'The panel comparison retains complementary binding sites and recorded screening evidence.'}
     if phase == 'explore':
-        response.update(candidate_ids=ids, basis_set_ids=[result['set_id']])
+        response.update(candidate_ids=ids, query_slices=[], basis_set_ids=[result['set_id']])
     else:
-        response.update(additional_candidate_ids=ids, strategy_supported=True,
+        response.update(additional_candidate_ids=ids, additional_query_slices=[], strategy_supported=True,
             blocking_issues=[], caveats=[], reviewed_outsider_ids=outsiders)
     return response, []
 
@@ -131,7 +131,7 @@ def test_tool_phase_and_structured_decision_have_separate_provider_contracts(mon
     from aso_agents.shortlist_query import CandidateIndex
     index = CandidateIndex(evidence_catalog(large_pool(50)))
     records, calls = [], []
-    expected = {'candidate_ids': list(index.ids)[:32], 'basis_set_ids': [],
+    expected = {'candidate_ids': list(index.ids)[:32], 'query_slices': [], 'basis_set_ids': [],
                 'attribute_ids': [], 'summary': 'Compare complementary placements.'}
     def runner(agent, input, max_steps):
         payload = json.loads(input)
@@ -159,7 +159,8 @@ def test_query_provenance_keeps_large_sets_outside_comparison_membership(tmp_pat
         result = tool({'input_sets': ['all'], 'combine': 'union', 'predicates': [],
             'join': 'all', 'context_policy': 'any', 'rationale': 'Compare distinct binding sites.',
             'order_by': [], 'offset': 0, 'limit': 32})
-        return {'candidate_ids': result['candidate_ids'], 'basis_set_ids': [result['set_id']],
+        return {'candidate_ids': [], 'query_slices': [{'set_id': result['set_id'], 'offset': 0, 'take': 32}],
+            'basis_set_ids': [result['set_id']],
             'attribute_ids': [], 'summary': 'Compare distinct binding sites.'}, []
     monkeypatch.setattr(exploration, '_run_model', model)
     result = exploration._session('explore', {'working_limit': 64}, index, tmp_path,
@@ -182,7 +183,7 @@ def test_query_errors_are_recorded_without_becoming_successful_operations():
 def test_complete_ordinary_finalist_evidence_reaches_ranking_without_eager_page_calls(tmp_path, monkeypatch):
     rows = large_pool(140)
     for row in rows:
-        row['source_record'] = 'evidence ' * 6000
+        row['provenance'] = {'source_record': 'evidence ' * 6000}
     monkeypatch.setattr(exploration, '_run_model', querying_model)
     full_calls = []
     def reviewer(kind, payload, schema):

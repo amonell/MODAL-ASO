@@ -88,11 +88,33 @@ def test_model_changes_membership_preserves_pool_and_exports_sources(tmp_path, f
     assert receipt['status'] == 'completed'
     assert receipt['reviewed_molecule_count'] == 7
     assert rows == before
-    assert [call[0] for call in fake_model] == ['rank', 'explain', 'audit']
+    assert [call[0] for call in fake_model] == ['rank', 'explain', 'audit', 'audit']
     for entry in receipt['recommendations'].values():
         assert entry['evidence'][0]['value'] == 'complete_within_declared_scope'
         assert entry['evidence'][0]['source_pointer'].startswith('/rows/')
     assert all('_recommendation_order' not in row for row in selected)
+
+
+def test_mismatch_arrays_supply_scalar_arithmetic_without_imputing_missing_bins(tmp_path, monkeypatch):
+    rows = pool(4)
+    rows[0]['candidate_assessment']['off_target']['counts_by_mismatch'][2] = None
+    observed = []
+    def check_tables(kind, payload, schema):
+        response, metadata = model(kind, payload, schema)
+        if kind == 'explain':
+            for item in response['recommendations']:
+                item['evidence_paths'].append('/contexts/0/candidate_assessment/off_target/counts_by_mismatch')
+        if kind == 'audit':
+            tables = {item['path']: item for item in payload['numeric_comparisons']}
+            prefix = '/contexts/0/candidate_assessment/off_target/counts_by_mismatch/'
+            assert set(tables[prefix+'0']['values']) == {molecule_id(row) for row in rows}
+            assert tables[prefix+'2']['values'] == {molecule_id(row): row['candidate_assessment'][
+                'off_target']['counts_by_mismatch'][2] for row in rows[1:]}
+            observed.append(True)
+        return response, metadata
+    monkeypatch.setattr(review, '_model_call', check_tables)
+    _, _, receipt = run(rows, tmp_path, {'candidate_limit': 4})
+    assert receipt['status'] == 'completed' and observed
 
 
 def test_legacy_metric_labels_are_defined_before_evidence_audit(tmp_path, monkeypatch):
@@ -526,10 +548,10 @@ def test_arithmetic_overrides_a_model_approving_an_incorrect_comparison(tmp_path
     audits = []
     def incorrect_rank(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
-        if kind == 'audit' and not audits:
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields'] and not audits:
             result['quantitative_comparisons'] = [{'candidate_id': payload['selected_ids'][0],
                 'field': 'why_chosen', 'path': '/contexts/0/selection_rank', 'order': 'ascending',
-                'claimed_rank': 1, 'scope_ids': payload['selected_ids']}]
+                'claimed_rank': 1, 'scope_ids': [item['id'] for item in payload['complete_panel']]}]
             audits.append(result)
         if kind == 'repair':
             assert 'give rank 3' in str(payload['review_corrections'])
@@ -720,7 +742,7 @@ def test_each_explanation_batch_owns_its_fields_when_auditor_repeats_other_membe
 def test_panel_numbers_are_checked_as_metadata(tmp_path, monkeypatch, pointer):
     def panel_number(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
-        if kind == 'audit':
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields']:
             result['quantitative_comparisons'] = [{'candidate_id': payload['selected_ids'][0],
                 'field': 'panel_role', 'path': pointer, 'order': 'ascending',
                 'claimed_rank': 1, 'scope_ids': payload['selected_ids']}]
@@ -753,7 +775,7 @@ def test_rna_position_comparisons_use_recorded_strand(tmp_path, monkeypatch):
         row['strand'] = '-'
     def position(kind, payload, schema):
         result, metadata = model(kind, payload, schema)
-        if kind == 'audit':
+        if kind == 'audit' and payload['audit_scope']['include_panel_fields']:
             first = payload['selected_ids'][0]
             result['quantitative_comparisons'] = [{'candidate_id': first, 'field': 'panel_role',
                 'path': '/binding_geometry/' + first + '/start_shift_nt_in_RNA', 'order': 'ascending',

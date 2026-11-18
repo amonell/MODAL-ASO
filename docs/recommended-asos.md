@@ -124,5 +124,11 @@ validated queries, rejected query diagnostics, exact result hashes and model usa
 The proposed comparison IDs are separate from query-set provenance, so a broad
 filter can supply a compact, explicitly chosen comparison. Ordinary measurement
 gaps and objections to the filtering strategy have separate review fields.
+The model can select exact slices of a stored, sorted query result by offset and
+count. This preserves its chosen ordering and avoids copying long candidate-ID
+lists. Final explanation audits use small concurrent batches with the full panel
+as comparison context. Selected source-page audits also run concurrently; every
+original page still receives its assigned check. Mismatch arrays supply a separate
+arithmetic table for each bin, with missing values retained.
 Reopening the report stays
 offline. New installations generate their own index from their run's evidence.

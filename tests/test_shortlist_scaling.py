@@ -120,7 +120,7 @@ def test_supported_audit_fields_can_omit_duplicate_prose(tmp_path, monkeypatch):
 
 def test_panel_audits_run_concurrently_with_full_comparison_context(tmp_path, monkeypatch):
     from threading import Barrier
-    barrier = Barrier(2, timeout=5)
+    barrier = Barrier(3, timeout=5)
     audits = []
     def parallel(kind, payload, schema):
         if kind == 'audit':
@@ -130,7 +130,7 @@ def test_panel_audits_run_concurrently_with_full_comparison_context(tmp_path, mo
     monkeypatch.setattr(review, '_model_call', parallel)
     selected, _, receipt = run(pool(6), tmp_path, {'candidate_limit': 6})
     assert receipt['status'] == 'completed' and len(selected) == 6
-    assert len(audits) == 2
+    assert len(audits) == 3
     ids = [key for payload in audits for key in payload['selected_ids']]
     assert len(ids) == len(set(ids)) == 6
     assert set(ids) == set(receipt['selected_ids'])
@@ -181,7 +181,7 @@ def test_selectivity_uncertainty_is_checked_semantically(tmp_path, monkeypatch):
         return response, metadata
     monkeypatch.setattr(review, '_model_call', uncertainty)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})
-    assert receipt['status'] == 'completed' and calls == ['rank', 'explain', 'audit']
+    assert receipt['status'] == 'completed' and calls == ['rank', 'explain', 'audit', 'audit']
 
 
 def test_host_findings_populate_null_audit_observations_without_extra_generation(tmp_path, monkeypatch):
@@ -205,7 +205,7 @@ def test_host_findings_populate_null_audit_observations_without_extra_generation
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})
     assert receipt['status'] == 'completed'
-    assert calls == ['rank', 'explain', 'audit', 'repair', 'audit']
+    assert calls == ['rank', 'explain', 'audit', 'audit', 'repair', 'audit', 'audit']
 
 
 def test_unsupported_audit_field_still_requires_a_specific_finding(tmp_path, monkeypatch):
@@ -221,8 +221,9 @@ def test_unsupported_audit_field_still_requires_a_specific_finding(tmp_path, mon
         return response, metadata
     monkeypatch.setattr(review, '_model_call', audit)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})
-    assert receipt['status'] == 'completed' and len(count) == 2
-    assert any('concrete evidence_statement' in item for item in count[1]['corrections_needed'])
+    assert receipt['status'] == 'completed' and len(count) == 3
+    assert any('concrete evidence_statement' in item for call in count
+               for item in call.get('corrections_needed', []))
 
 
 def test_four_thousand_candidates_are_reviewed_with_bounded_outputs(tmp_path, monkeypatch):

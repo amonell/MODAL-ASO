@@ -51,9 +51,12 @@ TOOL_SCHEMAS = {
     'read_candidate_evidence': obj({'candidate_id': TEXT, 'page': INTEGER})}
 SUMMARY = {'type': 'string', 'minLength': 1, 'maxLength': 900}
 FINDINGS = array({'type': 'string', 'maxLength': 600}, 8)
-FINAL_SCHEMA = obj({'candidate_ids': IDS, 'basis_set_ids': array(TEXT, 16),
+SLICES = array(obj({'set_id': TEXT, 'offset': INTEGER,
+    'take': {'type': 'integer', 'minimum': 1, 'maximum': 128}}), 16)
+FINAL_SCHEMA = obj({'candidate_ids': IDS, 'query_slices': SLICES, 'basis_set_ids': array(TEXT, 16),
     'attribute_ids': array(TEXT, 12), 'summary': SUMMARY})
 CHALLENGE_SCHEMA = obj({'additional_candidate_ids': array(TEXT, 32),
+    'additional_query_slices': SLICES,
     'attribute_ids': array(TEXT, 12), 'summary': SUMMARY,
     'strategy_supported': {'type': 'boolean'}, 'blocking_issues': FINDINGS,
     'caveats': FINDINGS, 'reviewed_outsider_ids': IDS})
@@ -88,10 +91,14 @@ positions and strong alternatives, preserving unresolved evidence for later revi
 Inspect candidates with compare_candidates and exact source pages with
 read_candidate_evidence as needed. Every original source stays available. Tools
 return bounded pages with next offsets; a page represents only its returned rows.
-Return the actual comparison pool in candidate_ids, within working_limit. Aim for
+Choose the comparison pool with query_slices: each slice names a returned set_id,
+an offset and a take count in its stored sorted order. For example, offset=0 and
+take=48 selects its first 48 members exactly. This avoids copying long ID lists.
+Use candidate_ids for a few individually chosen additions; otherwise use [].
+The combined membership must fit working_limit. Aim for
 32 to 64 alternatives when that many match the chosen criteria. This pool supports
 the later final panel; a four-ASO request still benefits from a larger comparison.
-basis_set_ids records which queries informed that pool and never adds members.
+basis_set_ids records additional query provenance and never adds members.
 Choose candidate IDs from sorted result pages. The native constraint reserve supplies
 feasibility, and its prior ranking supplies no scientific preference. At least one
 actual filtering or sorting query is required. Empty or
@@ -123,6 +130,8 @@ Return additional_candidate_ids to restore worthwhile alternatives, up to
 additional_candidate_limit. Existing proposed candidates remain available for detailed review
 and do not count against that additions limit. working_limit belongs to the initial
 comparison proposal, whose final research panel is chosen in a later step.
+Use additional_query_slices to restore members from a stored query without copying
+their IDs; use an empty array when no such additions are needed.
 Return reviewed_outsider_ids naming every supplied outsider exactly once. strategy_supported
 means the strategy and criteria are defensible after those additions. If assumptions
 remain invalid, set strategy_supported=false with concrete blocking_issues; the full-library reviewer
@@ -222,7 +231,8 @@ def _run_model(phase, payload, index, records, save, configuration):
         # exploration or execute the unserved calls at the previous limit.
         final_agent = Agent(name='ASO Library Decision', instructions=instructions + '\n'
             'The tool phase is complete. Return final JSON using only the recorded results below. '
-            'Return membership in the appropriate candidate ID field. Query set IDs record provenance only. '
+            'Use query slices for stored result membership and candidate IDs for individual additions. '
+            'The separate basis_set_ids field records provenance only. '
             'No new queries can run.',
             tools=[], model=DEFAULT_MODEL, model_settings=decision_settings)
         available = [{'set_id': item['set_id'], 'rationale': item['rationale'],
@@ -243,10 +253,11 @@ def _run_model(phase, payload, index, records, save, configuration):
 
 def _session(phase, payload, index, directory, configuration):
     from jsonschema import Draft7Validator
+    from .shortlist_review import RUBRIC
     basis = {name: digest((Path(__file__).parent/name).read_text()) for name in
              ('shortlist_exploration.py', 'shortlist_query.py', 'shortlist_evidence.py', 'report_attributes.py')}
     key = digest({'version': VERSION, 'phase': phase, 'payload': payload, 'configuration': configuration,
-                  'implementation': basis})
+                  'implementation': basis, 'rubric': digest(RUBRIC)})
     path = Path(directory)/'recommendation_review'/'exploration'/(key+'.json')
     previous = _read(path)
     records = []
@@ -273,38 +284,51 @@ def _session(phase, payload, index, directory, configuration):
     if reusable:
         state['attempts'] = list(previous.get('attempts') or [])
     for record in previous.get('operations', []) if reusable else []:
+        if record.get('result_sha256') != digest(record.get('result')):
+            raise ExplorationExhausted('A saved query result failed its integrity check.')
         if record.get('outcome') == 'error':
             records.append(record)
             continue
         try:
             value = functions[record['tool']](**record['query'])
             if digest(value) != record['result_sha256']:
-                reusable = False
-                break
+                raise ExplorationExhausted('A saved query has different results on the current evidence.')
             records.append(record)
-        except (KeyError, ValueError, TypeError):
-            reusable = False
-            break
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ExplorationExhausted('A saved evidence query could not be replayed.') from exc
     def check(response):
         schema = CHALLENGE_SCHEMA if phase == 'challenge' else FINAL_SCHEMA
         errors = [error.message[:250] for error in Draft7Validator(schema).iter_errors(response)]
         if errors:
             return errors
+        slices = response.get('query_slices', response.get('additional_query_slices', []))
+        for item in slices:
+            if item['set_id'] not in index.ordered_sets:
+                return ['Each query slice must name a returned query set_id.']
+            if item['offset'] + item['take'] > len(index.ordered_sets[item['set_id']]):
+                return ['Query slices must stay within the stored result count.']
         ids = set(_response_ids(response, index))
         for set_id in response.get('basis_set_ids', []):
             if set_id not in index.sets:
                 return ['Return only candidate sets created by your queries.']
         additional = ids-set(payload.get('proposed_ids', [])) if phase == 'challenge' else ids
         limit = payload['additional_candidate_limit'] if phase == 'challenge' else payload['working_limit']
-        if (not ids and phase == 'explore') or not ids <= set(index.ids) or len(additional) > limit:
-            errors.append('Return a nonempty union of known candidates within working_limit.')
+        if not ids and phase == 'explore':
+            errors.append('Choose a nonempty comparison pool using query_slices or known candidate IDs.')
+        unknown = ids-set(index.ids)
+        if unknown:
+            errors.append('Unknown candidate IDs: ' + ', '.join(sorted(unknown))
+                + '. Select stored query slices to avoid copying candidate IDs.')
+        if len(additional) > limit:
+            errors.append(f'The proposed membership contains {len(additional)} candidates; the limit is {limit}. Use smaller query slices.')
         if any(field not in index.fields for field in response['attribute_ids']):
             errors.append('Return discovered attribute IDs.')
         if phase == 'explore' and not any(record['tool'] == 'filter_candidates'
                 and record.get('outcome') != 'error' for record in records):
             errors.append('Use a filtering or sorting query before choosing candidates.')
         if phase == 'explore':
-            sizes = [len(index.sets[key]) for key in response['basis_set_ids'] if index.sets[key]]
+            basis = response['basis_set_ids'] + [item['set_id'] for item in slices]
+            sizes = [len(index.sets[key]) for key in basis if index.sets[key]]
             minimum = min(32, min(sizes, default=len(index.ids)), payload['working_limit'])
             if len(ids) < minimum:
                 errors.append(f'Return at least {minimum} comparison candidates from query results. The final panel is chosen later.')
@@ -312,7 +336,13 @@ def _session(phase, payload, index, directory, configuration):
             outsiders = set(payload['outsider_ids'])
             if set(response['reviewed_outsider_ids']) != outsiders or len(response['reviewed_outsider_ids']) != len(outsiders):
                 errors.append('Review every supplied outsider and report those IDs exactly once.')
-            if not outsiders <= index.compared_ids | index.read_ids:
+            inspected = set(payload['outsider_evidence'].get('ids', []))
+            for record in records:
+                if record['tool'] == 'compare_candidates':
+                    inspected.update(row['id'] for row in record['result'].get('candidates', []))
+                if record['tool'] == 'read_candidate_evidence' and 'records' in record['result']:
+                    inspected.add(record['result']['candidate_id'])
+            if not outsiders <= inspected:
                 errors.append('Retrieve comparison or source evidence for every supplied outsider before approving.')
             if response['strategy_supported'] == bool(response['blocking_issues']):
                 errors.append('strategy_supported must agree with blocking_issues. Put ordinary measurement gaps in caveats.')
@@ -348,7 +378,10 @@ def _session(phase, payload, index, directory, configuration):
 
 
 def _response_ids(response, index):
-    return list(dict.fromkeys(response.get('candidate_ids', response.get('additional_candidate_ids', []))))
+    ids = list(response.get('candidate_ids', response.get('additional_candidate_ids', [])))
+    for item in response.get('query_slices', response.get('additional_query_slices', [])):
+        ids.extend(index.ordered_sets[item['set_id']][item['offset']:item['offset']+item['take']])
+    return list(dict.fromkeys(ids))
 
 
 def project(index, candidate_ids, attribute_ids):
@@ -365,6 +398,7 @@ def project(index, candidate_ids, attribute_ids):
                 facts[pointer] = value
         entry = dict(index.catalog[key])
         entry['review_facts'] = facts
+        entry['query_projection'] = True
         result[key] = entry
     return result
 
@@ -389,7 +423,11 @@ def explore(catalog, context, directory, configuration, reserve_ids):
     basic = [field['id'] for field in descriptors if field['path'].rsplit('/', 1)[-1] in basic_names
              or '/candidate_assessment/off_target/counts_by_mismatch/' in field['path']][:12]
     if basic:
-        payload['initial_distributions'] = index.survey(basic, limit=4)
+        try:
+            payload['initial_distributions'] = index.survey(basic, limit=4)
+        except ValueError:
+            payload['survey_note'] = 'Survey these attributes individually for their measurement conditions.'
+            payload['initial_attribute_ids'] = basic
     _progress(directory, f'Exploring recorded attributes across {len(index.ids):,} ASOs.',
               phase='exploring', total=len(index.ids))
     proposal = _session('explore', payload, index, directory, configuration)
@@ -421,11 +459,12 @@ def explore(catalog, context, directory, configuration, reserve_ids):
         proposed = list(dict.fromkeys(proposed+_response_ids(challenge, index)))
     attributes = list(dict.fromkeys(attributes+(challenge or {}).get('attribute_ids', [])))[:24]
     projection = project(index, proposed, attributes)
-    basis_ids = proposal['basis_set_ids']
-    matched = set().union(*(index.sets[key] for key in basis_ids)) if basis_ids else set(proposed)
+    basis_ids = list(dict.fromkeys(proposal['basis_set_ids'] + [item['set_id'] for item in proposal['query_slices']]))
+    matched = set().union(*(index.sets[key] for key in basis_ids)) if basis_ids else None
     receipt = {'method': 'query_guided', 'indexed_ids': list(index.ids),
         'proposed_ids': proposed, 'challenger_ids': outside, 'attribute_ids': attributes,
-        'compared_ids': sorted(index.compared_ids), 'matched_ids': sorted(matched),
+        'compared_ids': sorted(index.compared_ids | index.read_ids),
+        'matched_ids': sorted(matched) if matched is not None else None,
         'operations': index.operations, 'basis_set_ids': basis_ids,
         'summary': (challenge or proposal)['summary'],
         'source_sha256': payload['input_sha256']}
