@@ -6,7 +6,7 @@
 
 Design and evaluate antisense oligonucleotides from a natural-language request.
 
-[Quick start](#quick-start) · [GUI](#optional-browser-gui) · [Installation](docs/installation.md) · [Examples](docs/examples.md) · [Outputs](docs/outputs.md)
+[Quick start](#quick-start) · [Installation](docs/installation.md) · [Examples](docs/examples.md) · [Outputs](docs/outputs.md)
 
 [Release 1.0.1](https://github.com/amonell/MODAL-ASO/releases/tag/v1.0.1) · [Changes](CHANGELOG.md) · [Report an issue](https://github.com/amonell/MODAL-ASO/issues/new/choose)
 
@@ -98,131 +98,7 @@ This installs the pinned OligoAI model and its Python environment once. Reports 
 
 </details>
 
-## Optional browser GUI
-
-The GUI is an optional browser interface in this repository. There is no separate
-application installer or repository to download. CLI-only users can omit the
-`gui` extra. Use Linux, Windows with WSL2, or Apple silicon macOS and complete
-the [platform prerequisites](docs/installation.md#prerequisites).
-
-### Install the GUI
-
-From your MODAL-ASO repository directory, run:
-
-```bash
-uv sync --frozen --extra splice --extra gui
-uv run --frozen --extra splice --extra gui modal-aso gui
-```
-
-For offline interface testing, run `modal-aso gui --test` (or append `--test`
-to the `uv run ... modal-aso gui` command above). Enter `correctkey` as the
-API key; all other keys fail authentication. This mode uses mock chat updates
-and a frozen PCSK9 run report with shortlist and panel downloads without calling
-an API or running an analysis. Results are clearly labeled as saved previews;
-the original run outputs are never modified.
-
-The two occurrences of `gui` serve different purposes: `--extra gui` includes
-the optional interface dependencies, while `modal-aso gui` launches the browser
-interface. Use the full `uv run` command above each time you start the GUI so
-uv keeps the required extras enabled. Press **Ctrl+C** to stop it.
-
-For a fresh clone, first follow [Quick start](#quick-start) to install the
-scientific tools and references. Adding the GUI does not replace that setup.
-The commands above use the committed `uv.lock`; do not regenerate it to install
-the interface.
-
-### Update or reinstall the GUI
-
-Stop the running GUI with **Ctrl+C** in its launch terminal. In the repository
-directory, download published source changes and sync the optional dependencies:
-
-```bash
-git pull --ff-only
-uv sync --frozen --extra splice --extra gui
-uv run --frozen --extra splice --extra gui modal-aso gui
-```
-
-If the changes are already present in your local checkout, skip `git pull` and
-run the two `uv` commands. Sync installs any missing GUI dependencies; deleting
-the repository or virtual environment is unnecessary. If Git reports conflicting
-local changes, preserve those changes before updating; do not force an overwrite.
-
-Open the local URL printed in the terminal, usually `http://localhost:8501`,
-and refresh an existing browser tab after restarting. On Windows, run these
-commands inside WSL2 and open the URL in your Windows browser. Stopping the
-server ends the current chat session, so save any outputs you need first.
-
-### Configure and use the interface
-
-OpenRouter defaults to `deepseek/deepseek-v4.1-flash-1017`. The compatible model catalog loads after you enter your key. Reasoning effort defaults to the highest supported level advertised for the selected model, and you can choose a lower level. Choose OpenRouter or OpenAI and paste your API key. With OpenRouter, optionally
-load the compatible model catalog and select a model and reasoning effort.
-Model and reasoning selections set the existing `OPENROUTER_MODEL`
-and `OPENROUTER_REASONING_EFFORT` variables inside the analysis worker.
-Direct OpenAI uses its existing per-agent CLI configuration; the framework has
-no equivalent global OpenAI override, so the GUI provides no global model or
-reasoning selector for that provider. Click
-**Validate and open chat**. Validation makes a small billable API request to
-check authentication, model access and structured tool calling. Errors identify
-the affected setting; chat stays closed until validation succeeds.
-
-The OpenRouter catalog requires advertised tools and structured outputs. Effort
-options follow its live per-model reasoning metadata. Models without effort
-metadata expose only inherited settings.
-Catalog support and a successful check do not guarantee every future request
-will succeed. Model availability, provider limits and tool installations can
-change.
-
-The local server binds to `127.0.0.1`. Keys stay in session memory and are not
-written to configuration files. Each analysis runs in its own process using the
-existing controller and CLI runtime bootstrap. GUI choices use only existing CLI
-environment variables. The GUI does not rewrite prepared model requests, clear
-inherited routing settings, or patch SDK serialization. Scientific prompts, tools, ranking and report
-generation are unchanged. Chat collects clarification answers; Results embeds
-the existing HTML report; Files offers output downloads and Markdown previews.
-The controller's existing user-facing CLI commentary appears as assistant
-messages in Chat and remains for the session, with a three-dot activity indicator
-while work is in progress. Low-level tool-start, tool-completion and model-response
-events are hidden by default; enable **Show technical activity** to inspect them.
-Internal planner reasoning and raw tool arguments are not displayed.
-Files lists each output with its own Download button; Markdown files
-also have expandable previews. Native subprocess diagnostics may
-still appear in the launch terminal. Closing the server
-ends the GUI session; conversation persistence and restart recovery are not yet
-provided. On Windows, launch inside WSL2 and open the printed localhost URL in
-your Windows browser.
-
-The GUI controller adapter is in `aso_agents/gui/worker.py`. If the controller's
-public arguments or callbacks change, update this adapter and its contract tests
-rather than adapting the scientific engine to the GUI.
-
-Under **Advanced · timeout and retries**, OpenRouter users can set the existing
-`OPENROUTER_TIMEOUT_SECONDS` and `OPENROUTER_MAX_RETRIES` options. Unchecked
-controls inherit CLI settings. These are network timeouts and SDK retries, not a
-total run deadline. The setup probe uses its own 40-second timeout and no retries,
-without changing analysis settings.
-
-Run the GUI regression tests with:
-
-```bash
-uv sync --frozen --extra splice --extra dev --extra gui
-.venv/bin/python -m pytest tests/test_gui*.py tests/test_llm_provider.py
-```
-
-Compatibility metadata follows the [OpenRouter model catalog](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)
-and [per-model reasoning options](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
-Parity tests compare full captured CLI and GUI requests, including prompts,
-reasoning settings, schemas, tools and continuation history, using deterministic
-replies. Identical configuration follows the same execution path; real LLM replies
-can still vary between runs.
-
-The GUI extra constrains Streamlit and Starlette to a tested combination.
-Streamlit's gzip middleware is incompatible with newer Starlette internals;
-an affected installation can report `Expected ASGI message 'http.response.start',
-but got 'http.response.body'` while serving browser files. Stop the GUI,
-repeat the frozen GUI install command above, then relaunch it. HTTP middleware
-regression tests cover file responses with and without compression headers.
-
-## Output files
+## Your results
 
 | File | Contents |
 | :--- | :--- |
