@@ -233,3 +233,37 @@ def mismatch_citation_findings(draft, claims, catalog):
                        'selection_impact': 'text_only' if correct else 'uncertain',
                        'replacement': item[field] if correct else None, 'sources': correct, 'superseded_sources': []})
     return issues
+
+
+def apply_mismatch_findings(audit, findings, expand_reference):
+    """Merge verified bin citations into the reviewer's edits, also on receipt replay."""
+    if not findings:
+        return
+    # Earlier validations can have attached several missing bin references to
+    # one citation-only repair. Rebuild those exact repairs from the claims.
+    # Independently supplied replacements, extra evidence and objections stay.
+    verified_sources = {}
+    for issue in findings:
+        verified_sources.setdefault((issue['candidate_id'], issue['field']), []).extend(issue['sources'])
+    def generated_repair(edit):
+        if edit.get('selection_impact') != 'text_only' or not edit.get('sources'):
+            return False
+        known = verified_sources.get((edit['candidate_id'], edit.get('field')), [])
+        return all(ref in known for ref in edit['sources']) and any(
+            {**edit, 'sources': issue['sources']} == issue for issue in findings)
+    audit['issues'] = [edit for edit in audit['issues'] if not generated_repair(edit)]
+    for issue in findings:
+        wording_edits = [edit for edit in audit['issues']
+            if issue['selection_impact'] == edit.get('selection_impact') == 'text_only'
+            and (edit['candidate_id'], edit.get('field')) == (issue['candidate_id'], issue['field'])
+            and edit.get('replacement')]
+        combined = [list({(ref['candidate_id'], expand_reference(ref['path'])): ref
+            for ref in (edit.get('sources') or []) + issue['sources']}.values()) for edit in wording_edits]
+        if wording_edits and all(len(refs) <= 8 for refs in combined):
+            for edit, refs in zip(wording_edits, combined):
+                edit['sources'] = refs
+        elif issue not in audit['issues']:
+            audit['issues'].append(dict(issue))
+        for field in audit['field_reviews']:
+            if (field['candidate_id'], field['field']) == (issue['candidate_id'], issue['field']):
+                field.update(supported=False, evidence_statement=issue['problem'])

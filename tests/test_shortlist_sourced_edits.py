@@ -5,7 +5,7 @@ import pytest
 
 from aso_agents import shortlist_review as review
 from aso_agents.shortlist_evidence import citation, evidence_catalog, panel_binding_geometry
-from aso_agents.shortlist_facts import render_phrases, sourced_audit_edit, verified_phrases
+from aso_agents.shortlist_facts import apply_mismatch_findings, render_phrases, sourced_audit_edit, verified_phrases
 from test_shortlist_review import model, pool, run
 
 
@@ -169,6 +169,31 @@ def test_large_final_comparison_gets_the_existing_bounded_allowance_on_first_rea
     for size in (1, review.SCREEN_PACKET_CHARACTERS):
         review._call('select', {'evidence': {'source': 'a' * size}}, schema, lambda value: [], tmp_path, {})
     assert budgets == [review.DEFAULT_OUTPUT_TOKENS, review.MAX_OUTPUT_TOKENS]
+
+
+@pytest.mark.parametrize('other_reference_count', [0, 6, 8])
+def test_saved_citation_fixes_are_stable_when_several_bins_are_missing(other_reference_count):
+    def source(path):
+        return {'candidate_id': 'molecule', 'path': path}
+    common = {'candidate_id': 'molecule', 'field': 'why_chosen', 'selection_impact': 'text_only',
+              'replacement': 'The original wording.', 'superseded_sources': []}
+    findings = [{**common, 'problem': f'Cite bin {n}.', 'sources': [source(f'/counts/{n}')]} for n in range(3)]
+    independent = {**common, 'problem': 'Describe the binding position.', 'replacement': 'The revised wording.',
+                   'sources': [source(f'/original/{n}') for n in range(other_reference_count)]}
+    uncertain = {**common, 'problem': 'The two original counts disagree.', 'selection_impact': 'uncertain',
+                 'sources': [source('/original/evidence')], 'replacement': None}
+    audit = {'issues': [deepcopy(uncertain)] + ([deepcopy(independent)] if other_reference_count else []),
+             'field_reviews': [{'candidate_id': 'molecule', 'field': 'why_chosen', 'supported': True}]}
+    apply_mismatch_findings(audit, findings, str)
+    first = deepcopy(audit)
+    for _ in range(2):
+        apply_mismatch_findings(audit, findings, str)
+        assert audit == first
+    assert uncertain in audit['issues'] and not audit['field_reviews'][0]['supported']
+    all_sources = [ref for entry in audit['issues'] for ref in entry['sources']]
+    assert all(issue['sources'][0] in all_sources for issue in findings)
+    if other_reference_count:
+        assert any(entry['replacement'] == independent['replacement'] for entry in audit['issues'])
 
 
 def test_terminal_audit_blocks_a_still_unsupported_panel(tmp_path, monkeypatch):

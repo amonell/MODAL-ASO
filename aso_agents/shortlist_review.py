@@ -16,7 +16,7 @@ from pathlib import Path
 import time
 
 from .artifact_io import write_json
-from .shortlist_facts import mismatch_citation_findings, render_phrases, sourced_audit_edit, verified_phrases
+from .shortlist_facts import apply_mismatch_findings, mismatch_citation_findings, render_phrases, sourced_audit_edit, verified_phrases
 from .candidate_presentation import molecule_key
 from .splice_recommendations import finite_number
 from .shortlist_evidence import (citation, clean, compact_packet, compact_screening_rows, digest,
@@ -1526,24 +1526,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     else:
                         scoped.append(claim)
                 audit['mismatch_count_claims'] = scoped
-                for issue in mismatch_citation_findings(response, scoped, allowed):
-                    # An independently proposed wording change can carry the
-                    # original bin citation too. A missing pointer alone does
-                    # not propose a second, competing version of the sentence.
-                    wording_edits = [finding for finding in audit['issues']
-                        if issue['selection_impact'] == finding.get('selection_impact') == 'text_only'
-                        and finding['candidate_id'] == issue['candidate_id'] and finding.get('field') == issue['field']
-                        and finding.get('replacement')]
-                    combined_sources = [list({(ref['candidate_id'], expand_reference(ref['path'])): ref
-                        for ref in (edit.get('sources') or []) + issue['sources']}.values()) for edit in wording_edits]
-                    if wording_edits and all(len(refs) <= 8 for refs in combined_sources):
-                        for edit, refs in zip(wording_edits, combined_sources):
-                            edit['sources'] = refs
-                    elif issue not in audit['issues']:
-                        audit['issues'].append(issue)
-                    for item in fields:
-                        if (item['candidate_id'], item['field']) == (issue['candidate_id'], issue['field']):
-                            item.update(supported=False, evidence_statement=issue['problem'])
+                apply_mismatch_findings(audit, mismatch_citation_findings(response, scoped, allowed), expand_reference)
                 return errors
             comparison_paths = {path for item in response['recommendations'] for path in item['evidence_paths']}
             comparison_paths.update({'/panel_order', '/binding_geometry/start_shift_genomic_bp',
