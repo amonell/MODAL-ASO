@@ -50,7 +50,9 @@ def test_missing_or_incomparable_screening_stays_in_original_evidence():
     assert next(iter(phrases.values()))['text'] == 'the screen found 0 genes with an exact sequence match'
 
 
-def test_sourced_auditor_edit_rechecks_complete_text_and_replaces_wrong_citation(tmp_path, monkeypatch):
+@pytest.mark.parametrize('rounds', [1, 6])
+def test_sourced_auditor_edit_rechecks_complete_text_and_replaces_wrong_citation(tmp_path, monkeypatch, rounds):
+    monkeypatch.setattr(review, 'EDITORIAL_ROUNDS', rounds)
     path = '/contexts/0/candidate_assessment/off_target/counts_by_mismatch/'
     drafts, calls = [], []
     def reviewer(kind, payload, schema):
@@ -149,3 +151,53 @@ def test_large_final_comparison_gets_the_existing_bounded_allowance_on_first_rea
     for size in (1, review.SCREEN_PACKET_CHARACTERS):
         review._call('select', {'evidence': {'source': 'a' * size}}, schema, lambda value: [], tmp_path, {})
     assert budgets == [review.DEFAULT_OUTPUT_TOKENS, review.MAX_OUTPUT_TOKENS]
+
+
+def test_terminal_audit_blocks_a_still_unsupported_panel(tmp_path, monkeypatch):
+    monkeypatch.setattr(review, 'EDITORIAL_ROUNDS', 1)
+    audits = []
+    def disagree(kind, payload, schema):
+        result, metadata = model(kind, payload, schema)
+        if kind == 'audit':
+            item = payload['draft']['recommendations'][0]
+            key = item['candidate_id']
+            audits.append(item['tradeoff'])
+            field = next(row for row in result['field_reviews'] if row['candidate_id'] == key and row['field'] == 'tradeoff')
+            field.update(supported=False, evidence_statement='The original record leaves the activity unresolved.')
+            result['issues'] = [{'candidate_id': key, 'field': 'tradeoff', 'selection_impact': 'text_only',
+                'problem': field['evidence_statement'], 'replacement': 'This activity remains unresolved.' if len(audits) == 1
+                    else 'This revised statement still needs evidence.',
+                'sources': [{'candidate_id': key, 'path': '/contexts/0/candidate_assessment/unavailable_evidence'}]}]
+        return result, metadata
+    monkeypatch.setattr(review, '_model_call', disagree)
+    _, _, result = run(pool(2), tmp_path, {'candidate_limit': 1})
+    assert len(audits) == 2 and audits[-1] == 'This activity remains unresolved.'
+    assert result['status'] == 'unavailable' and result['failure_code'] == 'explanation_evidence_review_incomplete'
+
+
+def test_sourced_replacement_with_poor_wording_gets_a_focused_edit_before_the_full_audit(tmp_path, monkeypatch):
+    calls, repair_fields, drafts = [], [], []
+    def edit(kind, payload, schema):
+        calls.append(kind)
+        result, meta = model(kind, payload, schema)
+        if kind == 'audit':
+            drafts.append(deepcopy(payload['draft']))
+            if len(drafts) == 1:
+                key = payload['selected_ids'][0]
+                field = next(row for row in result['field_reviews'] if row['candidate_id'] == key and row['field'] == 'tradeoff')
+                field.update(supported=False, evidence_statement='Describe the recorded limitation.')
+                result['issues'] = [{'candidate_id': key, 'selection_impact': 'text_only', 'field': 'tradeoff',
+                    'problem': 'State the actual evidence gap.', 'replacement': 'Accessibility is predicted rather than measured.',
+                    'sources': [{'candidate_id': key, 'path': '/contexts/0/candidate_assessment/unavailable_evidence'}]}]
+        if kind == 'repair':
+            assert payload['repair_mode'] == 'wording'
+            repair_fields.append(payload['repair_fields'])
+            result['recommendations'][0]['tradeoff'] = 'Target RNA accessibility remains unmeasured.'
+        return result, meta
+    monkeypatch.setattr(review, '_model_call', edit)
+    _, _, result = run(pool(3), tmp_path, {'candidate_limit': 2})
+    assert result['status'] == 'completed' and len(drafts) == 2
+    assert repair_fields == [{result['selected_ids'][0]: ['tradeoff']}]
+    assert 'selection_reconsideration' not in calls and calls.count('repair') == 1
+    assert drafts[0]['recommendations'][1] == drafts[1]['recommendations'][1]
+    assert drafts[1]['recommendations'][0]['tradeoff'] == 'Target RNA accessibility remains unmeasured.'

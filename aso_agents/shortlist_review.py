@@ -516,6 +516,9 @@ citations. Supply summary and size_reason only when repair_panel is true; otherw
 both must be null. The host preserves all other recommendations exactly. Make the
 smallest factual correction that resolves the issues; avoid introducing new claims.
 Use checked_field_observations to replace the specific unsupported statements.
+For a wording repair, keep the relevant observation in one direct sentence.
+Omit local rank commentary and explanations of why an irrelevant metric was set
+aside. Describe the specific unresolved activity, placement or coverage directly.
 Use the supplied coordinate_observations for RNA direction and overlap geometry.
 Describe the expression-weighted score as recorded expression of matching RNAs.
 Use the metric's meaning in every corrected field, including short parenthetical
@@ -589,6 +592,8 @@ that no other claim in this entry uses. Use verified_phrases handles in a
 replacement where applicable. For materially contrary evidence, a missing
 selection requirement, or uncertainty about membership, use reconsider or
 uncertain and replacement=null. Every revised draft receives another complete audit.
+Write publishable replacements in plain language. Give the biological reason or
+limitation directly. Leave internal ranks and unrelated measurements in the evidence.
 The audit_scope assigns candidate IDs and whether to check the panel summary and
 size_reason. Review every claim in those assigned fields against the complete
 supplied evidence, including comparisons with other ASOs. Return reviewed_ids,
@@ -1288,7 +1293,9 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 saved_schema['properties']['recommendations']['items']['properties'][field].pop('maxItems', None)
             if not _validate(draft, saved_schema, lambda value: explain_check(value, check_prose=False)):
                 response = draft
-        for attempt in range(EDITORIAL_ROUNDS):
+        remaining_rounds, verifying_final_edit = EDITORIAL_ROUNDS, False
+        while remaining_rounds:
+            remaining_rounds -= 1
             if response is None:
                 # Validate the rendered text while retaining the original model
                 # response for schema checks when this component is reopened.
@@ -1336,7 +1343,10 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     if any((patch[key] is not None) != repair_panel for key in ('summary', 'size_reason')):
                         return ['Supply panel text exactly when repair_panel is true; otherwise use null.']
                     merged = merge(patch)
-                    errors = explain_check(merged)
+                    # Preserve completed scientific corrections when a separate
+                    # wording issue remains. The local gate below identifies its
+                    # exact field before the full independent audit can run.
+                    errors = explain_check(merged, check_prose=bool(audit.get('wording_only')))
                     if digest(merged) == digest(response):
                         errors.append('The requested correction left the draft unchanged. '
                                       'Correct the flagged wording or add the evidence needed to support it.')
@@ -1355,6 +1365,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                         for source in fact['paths'].values() for cited in cited_paths)]}
                 patch = _call('repair', {**payload, 'evidence': repair_packet, 'previous_draft': response,
                     'review_corrections': corrections, 'repair_candidate_ids': sorted(repair_ids),
+                    'repair_mode': 'wording' if audit.get('wording_only') else 'evidence',
                     'checked_field_observations': [item for item in audit['field_reviews'] if not item['supported']],
                     'numeric_comparisons': numeric_comparisons,
                     'repair_fields': repair_fields, 'repair_panel': repair_panel},
@@ -1606,7 +1617,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     raise ReviewUnavailable('source_audit_corrections_exceed_review_capacity')
                 payload['source_page_findings'] = source_findings
             edited = sourced_audit_edit(response, audit, allowed, expand_reference)
-            if edited is not None and explain_check(edited):
+            if edited is not None and explain_check(edited, check_prose=False):
                 edited = None
             classified_finding = any(issue.get('selection_impact') for issue in audit['issues'])
             if reconsider and edited is None and (source_findings or classified_finding or any(
@@ -1624,10 +1635,14 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                                  'decision': decision, 'draft_molecule_count': len(response['recommendations'])})
             write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
                                         'draft_sha256': digest(response), 'audit': audit})
-            if edited is not None:
+            if edited is not None and not verifying_final_edit:
                 # The next iteration independently audits the complete rendered
                 # draft and every original source page, including unchanged fields.
                 response, corrections = edited, []
+                if remaining_rounds == 0:
+                    # A sourced edit on the last editorial round still needs its
+                    # audit. That check cannot authorize another editing round.
+                    remaining_rounds, verifying_final_edit = 1, True
                 continue
             if not audit['issues']:
                 for item in response['recommendations']:
