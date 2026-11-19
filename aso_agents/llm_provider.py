@@ -27,6 +27,7 @@ from aso_agents.resource_limits import acquire_resource, defer_resource, resourc
 from aso_agents.llm_transport import (
     TransportRetryPolicy,
     avoid_failed_provider,
+    openrouter_credit_error_hint,
     reservation_retry_delay,
     retryable_transport_error,
     transport_error_details,
@@ -689,12 +690,14 @@ def create_response(
                 )
                 if will_retry:
                     continue
+                hint = openrouter_credit_error_hint(details) if resolved_config.name == "openrouter" else ""
                 raise RuntimeError(
                     "LLM API transport failed for provider "
                     f"'{attribution['provider']}', logical model "
                     f"{attribution['requested_model']!r}, resolved model "
                     f"{attribution['resolved_model']!r} ({type(exc).__name__}; "
                     f"HTTP {details.get('status_code', 'unknown')})."
+                    + (f" {hint}" if hint else "")
                 ) from None
 
             try:

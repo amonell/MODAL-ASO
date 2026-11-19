@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an optional browser GUI with provider setup, chat, report and file panels,
+  responsive scrolling, and offline `--test` previews. Group SDK serialization
+  warnings under optional technical activity. The GUI uses the existing analysis
+  controller and provider transport ([#4](https://github.com/amonell/MODAL-ASO/issues/4)).
 - Count distinct ASOs across overlapping shortlist queries and show the realized
   pool for review. Cite original measurements for target overlap, genomic spacing
   and mismatch counts. Repair invalid replacement filters using recorded conditions.

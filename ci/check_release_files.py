@@ -14,7 +14,10 @@ with zipfile.ZipFile(wheels[0]) as archive:
     names = archive.namelist()
     metadata = BytesParser().parsebytes(archive.read(f"modal_aso-{version}.dist-info/METADATA"))
     assert metadata["Name"] == "modal-aso" and metadata["Version"] == version
-    required = ["aso_agents/cli.py", "aso_agents/encode_rbp_peaks.py", "aso_chemistry.py",
+    required = ["aso_agents/gui/app.py", "aso_agents/gui/artifacts.py", "aso_agents/gui/server.py", "aso_agents/gui/worker.py",
+                "aso_agents/resources/gui/mechanisms.png", "aso_agents/resources/gui/mechanisms-mobile.png",
+                "aso_agents/resources/gui/test_run/preview.json", "aso_agents/resources/gui/test_run/report.html.gz",
+                "aso_agents/cli.py", "aso_agents/encode_rbp_peaks.py", "aso_chemistry.py",
                 "aso_agents/safeguard_review.py",
                 "aso_agents/splice_recovery.py",
                 "aso_agents/splice_measurement_windows.py",
@@ -38,8 +41,8 @@ if sdists:
     assert sdists[0].name == f"modal_aso-{version}.tar.gz", sdists[0].name
     with tarfile.open(sdists[0]) as archive:
         prefix = f"modal_aso-{version}/"
-        required_source = ["uv.lock", "CITATION.cff", "CHANGELOG.md", "CONTRIBUTING.md",
-                           "ci/check_version.py", "tests/fixtures/mapt_group_regression.json"]
+        required_source = ["uv.lock", "CITATION.cff", "CHANGELOG.md", "CONTRIBUTING.md", "ci/check_version.py", "tests/fixtures/mapt_group_regression.json",
+                           "aso_agents/gui/app.py", "aso_agents/resources/gui/test_run/report.html.gz"]
         names = set(archive.getnames())
         assert all(prefix + name in names for name in required_source), required_source
         metadata = BytesParser().parsebytes(archive.extractfile(f"modal_aso-{version}/PKG-INFO").read())

@@ -1089,6 +1089,45 @@ def test_transport_errors_are_focused_and_redact_underlying_message(
     assert secret not in message
 
 
+@pytest.mark.parametrize(('limit_source', 'hint'), [
+    ('openrouter_key_limit', 'remaining budget for the selected API key'),
+    ('openrouter_credits', 'could not reserve enough credits for this request'),
+    ('openrouter_in_flight_budget', 'Wait at least 13 seconds before retrying.'),
+    (None, 'Check the account credits and the selected API key'),
+])
+def test_openrouter_402_reports_safe_budget_hint_without_retry(monkeypatch, tmp_path, limit_source, hint):
+    import httpx
+    from openai import APIStatusError
+    from types import SimpleNamespace
+
+    error = {
+        'code': 402,
+        'message': 'private provider detail',
+        'metadata': {'limit_source': limit_source, 'remedy_hint': 'private upstream hint'},
+    }
+    response = httpx.Response(402, json={'error': error}, headers={'Retry-After': '12.3'},
+                              request=httpx.Request('POST', 'https://example.invalid/v1/responses'))
+    attempts = []
+
+    def create(**request):
+        attempts.append(request)
+        raise APIStatusError('private SDK message', response=response, body=error)
+
+    # A temporary reservation is retryable when enabled. Disable retries for
+    # that case so this test exercises the diagnostic returned to the caller.
+    retries = '0' if limit_source == 'openrouter_in_flight_budget' else '1'
+    monkeypatch.setenv('ASO_LLM_TRANSPORT_RETRIES', retries)
+    monkeypatch.setenv('ASO_RESOURCE_LOCK_ROOT', str(tmp_path / 'locks'))
+    monkeypatch.setattr(llm_provider, '_get_client', lambda config: SimpleNamespace(responses=SimpleNamespace(create=create)))
+    config = llm_provider.get_provider_config({'ASO_LLM_PROVIDER': 'openrouter', 'OPENROUTER_API_KEY': 'test-key'})
+    with pytest.raises(RuntimeError) as caught:
+        llm_provider.create_response({'model': 'modal-default', 'input': []}, config)
+    assert 'HTTP 402' in str(caught.value)
+    assert hint in str(caught.value)
+    assert 'private ' not in str(caught.value)
+    assert len(attempts) == 1
+
+
 @pytest.mark.parametrize('reason,headers,retries,expected_calls', [
     ('openrouter_in_flight_budget', {'retry-after': '120'}, None, 2),
     ('openrouter_in_flight_budget', {'retry-after': '120'}, '1', 2),

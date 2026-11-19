@@ -1,0 +1,36 @@
+{
+    "source_run":  "goal_1794942511_PCSK9",
+    "description":  "Saved PCSK9 run outputs for offline GUI preview. No new analysis is performed.",
+    "files":  [
+                  {
+                      "path":  "report.html",
+                      "sha256":  "9a7fe32eb15cf2045b856d1e25ff319638978f570b155aca5c6df0a55574370f",
+                      "bytes":  9647140
+                  },
+                  {
+                      "path":  "report.md",
+                      "sha256":  "300b843029bbc2e36c7d78abdd741cca2144be76afb8bd7b39a5f3470ce58c8b",
+                      "bytes":  54568
+                  },
+                  {
+                      "path":  "artifacts/candidates/recommended_shortlist.csv",
+                      "sha256":  "fd0b022ab341d4b1ccf9020b326cdfabc520f6a5293d2ef31588bbbb7bd08135",
+                      "bytes":  29459
+                  },
+                  {
+                      "path":  "artifacts/candidates/recommended_shortlist.json",
+                      "sha256":  "6cb782faa009bdfa11e6a46844b5f1771833269bd99792c944d434eb503addda",
+                      "bytes":  213612
+                  },
+                  {
+                      "path":  "artifacts/candidates/recommended_shortlist.md",
+                      "sha256":  "1593fded328adac05ed087b62ba15e1fb8d43c8da3e1f730c6dadea123589115",
+                      "bytes":  3442
+                  },
+                  {
+                      "path":  "artifacts/candidates/design_panel.csv",
+                      "sha256":  "b53e5d4e4f8fca3b720828db0f0cb6b280d76d3b9398f1ccff30fc70bb18590d",
+                      "bytes":  240932
+                  }
+              ]
+}

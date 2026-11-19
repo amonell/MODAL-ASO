@@ -137,7 +137,7 @@ def _assets(args):
     return 1 if args.action == "verify" and any(row["status"] not in {"verified", "optional"} for rows in values.values() for row in rows) else 0
 
 
-def _run(argv):
+def _run(argv, *, clarification_resolver=None, result_callback=None, event_callback=None):
     # Set locations before importing pipeline modules with cached configuration.
     locations = argparse.ArgumentParser(add_help=False)
     locations.add_argument("--data-dir", type=Path)
@@ -188,7 +188,18 @@ def _run(argv):
             if intake_model != default_model:
                 startup.write(f"Intake language model: {intake_model}.\n")
     outcome = {}
-    run(argv=remainder, result_callback=outcome.update)
+
+    def capture_result(result):
+        outcome.update(result)
+        if result_callback is not None:
+            result_callback(result)
+
+    callbacks = {"result_callback": capture_result}
+    if clarification_resolver is not None:
+        callbacks["clarification_resolver"] = clarification_resolver
+    if event_callback is not None:
+        callbacks["event_callback"] = event_callback
+    run(argv=remainder, **callbacks)
     return 0 if not outcome or outcome.get("status") in {"run_complete", "needs_user_input", "completed"} else 1
 
 
@@ -197,6 +208,9 @@ def main(argv=None):
     try:
         if sys.platform == "win32" and argv and argv[0] not in {"--help", "-h", "--version"}:
             raise RuntimeError("On Windows, run MODAL-ASO inside WSL2: https://learn.microsoft.com/windows/wsl/install")
+        if argv and argv[0] == "gui":
+            from .gui.launcher import launch
+            return launch(argv[1:])
         if argv and argv[0] not in {"setup", "doctor", "assets", "--help", "-h", "--version"}:
             return _run(argv[1:] if argv[0] == "run" else argv)
         parser = argparse.ArgumentParser(prog="modal-aso", description='Design and evaluate ASOs. Run: modal-aso "your request"')
@@ -204,6 +218,7 @@ def main(argv=None):
                             help="Skip model-based shortlist review; retain analysis, reports and a provisional panel")
         parser.add_argument("--version", action="version", version=f"MODAL-ASO {__version__}")
         sub = parser.add_subparsers(dest="command")
+        sub.add_parser("gui", help="Launch the optional local browser interface")
         setup = sub.add_parser("setup", help="Install reusable tools, references and models")
         setup.add_argument("--data-dir", type=Path, help="Persistent data directory (saved for future sessions)")
         setup.add_argument("--species", nargs="+", choices=["human", "mouse"], default=["human"])
