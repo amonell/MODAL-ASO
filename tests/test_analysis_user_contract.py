@@ -30,7 +30,7 @@ def prepared_task(tmp_path, monkeypatch, *, request=USER_REQUEST,
                 'task_request_envelope': pipeline._task_scoped_request_envelope(envelope, task),
                 'task_context': {}}
     monkeypatch.setattr(pipeline, '_task_output_dir', lambda *a, **k: tmp_path / 'task')
-    monkeypatch.setattr(pipeline, '_build_sandbox_declared_inputs', lambda *a: {'observations': [2, 3]})
+    monkeypatch.setattr(pipeline, '_build_sandbox_declared_inputs', lambda *_args, **_kwargs: {'observations': [2, 3]})
     monkeypatch.setattr(pipeline, '_should_finalize_current_task', lambda *a: False)
     monkeypatch.setattr(pipeline, '_complete_v2_task', lambda **kw: kw)
     monkeypatch.setattr(pipeline, '_tool_failure', lambda **kw: kw)
