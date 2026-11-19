@@ -2,36 +2,24 @@
 
 ## Unreleased
 
-- Add an optional browser GUI with provider setup, chat, report and file panels,
-  responsive scrolling, and offline `--test` previews. Group SDK serialization
-  warnings under optional technical activity. The GUI uses the existing analysis
-  controller and provider transport ([#4](https://github.com/amonell/MODAL-ASO/issues/4)).
-- Count distinct ASOs across overlapping shortlist queries and show the realized
-  pool for review. Cite original measurements for target overlap, genomic spacing
-  and mismatch counts. Repair invalid replacement filters using recorded conditions.
-  Trace disputed comparison members to their individual picks or stored query positions.
-  Honor temporary OpenRouter reservation cooldowns. Reuse verified mismatch citations
-  when resuming an audit. Apply sourced wording corrections and independently check
-  the complete revised panel. A final summary correction can cite original records
-  from the selected molecules. A reviewer can still reopen selection when evidence affects
-  which molecules to recommend. ([#43](https://github.com/amonell/MODAL-ASO/issues/43))
-- Give the shortlist reviewer structured tools to survey, filter and compare large
-  candidate libraries before detailed evidence review. Check omitted alternatives,
-  preserve native panel requirements, and retain every ASO in reports and exports.
-  Record separate survey, comparison and complete-review counts with resumable
-  run-local receipts (#38). Recommendation membership and ordering can change.
-- Preserve exon-defined transcript groups through clarification, scoring and review. Resolve physical exon identity before design, keep partial transcript membership explicit, and report group coverage separately from selectivity (#31). New group-aware runs can rank candidates differently; historical scientific artifacts retain their recorded values.
-- Bound generated analysis programs to five minutes by default, terminate their process groups, and retain timeout diagnostics. Configure the budget through `ASO_ANALYSIS_TIMEOUT_SECONDS` (#1).
-- Keep provisional ASOs visible when recommendation review is incomplete, with review status and diagnostics carried into reports and terminal completion (#22).
-- Add independent signed junction filters, consistent splice-effect colors, one-row-per-ASO basket exports with all context evidence, readable safeguard details, and searchable filter history. Simplify the default attribute chooser and table while retaining saved ranks and full evidence (#23–#29).
+## 1.1.0 — 2026-11-19
 
-- Keep dense ASO binding maps readable with region navigation, spaced rows,
-  collision-free labels, expandable splice-site details and optional value plots.
-  Every saved ASO and prediction remains available in the table and downloads.
+### Browser interface
 
-- Show the saved original request above design approaches, including reports
-  regenerated from archived request metadata. Keep compiled objectives as the
-  fallback when the original wording is unavailable ([#18](https://github.com/amonell/MODAL-ASO/issues/18)).
+- Run `modal-aso gui` to submit requests, answer clarification questions, resume a run, and open its report and downloads in one browser tab. Browser and terminal runs share the same controller, provider settings and saved outputs. The optional `gui` extra includes a preview you can explore offline with `modal-aso gui --test`. [PR #47](https://github.com/amonell/MODAL-ASO/pull/47)
+- OpenRouter credit and budget errors include guidance on what to check. Technical SDK warnings are available in the activity details. [PR #47](https://github.com/amonell/MODAL-ASO/pull/47)
+
+### Recommendations and reports
+
+- The shortlist reviewer can survey, filter and compare a large library before reviewing individual candidates. It counts distinct candidates across searches and checks omitted alternatives against the evidence. These changes can affect which ASOs it recommends and their order. The full candidate set stays available in reports and downloads. [PR #40](https://github.com/amonell/MODAL-ASO/pull/40) · [PR #44](https://github.com/amonell/MODAL-ASO/pull/44)
+- Review resumes from saved comparisons and can correct a rationale against its original measurements. If review pauses, the report identifies provisional candidates and the terminal shows the review status. [PR #34](https://github.com/amonell/MODAL-ASO/pull/34) · [PR #44](https://github.com/amonell/MODAL-ASO/pull/44)
+- Requests about exon-defined transcript groups keep the selected group through clarification, scoring and review. Reports distinguish coverage of the group from selectivity for it. This can change candidate rankings in new runs. [PR #33](https://github.com/amonell/MODAL-ASO/pull/33)
+- Reports lead with the original request when available. Dense binding maps have region navigation, spaced labels and expandable splice-site details. Signed junction filters, filter history and one-row-per-ASO basket exports make it easier to compare and share candidates. [PR #19](https://github.com/amonell/MODAL-ASO/pull/19) · [PR #21](https://github.com/amonell/MODAL-ASO/pull/21) · [PR #35](https://github.com/amonell/MODAL-ASO/pull/35)
+
+### Questions and file analysis
+
+- Questions about supplied files use the full input records and retain the evidence for the answer. A missing input prompts for a file, an empty result can complete with a count of zero, and resumed analyses retain earlier exports. [PR #46](https://github.com/amonell/MODAL-ASO/pull/46)
+- Generated analysis programs have a five-minute default time limit and save diagnostics when it expires. Set `ASO_ANALYSIS_TIMEOUT_SECONDS` to adjust it. [PR #34](https://github.com/amonell/MODAL-ASO/pull/34)
 
 ## 1.0.1 — 2026-11-16
 

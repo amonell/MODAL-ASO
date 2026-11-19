@@ -42,6 +42,7 @@ if sdists:
     with tarfile.open(sdists[0]) as archive:
         prefix = f"modal_aso-{version}/"
         required_source = ["uv.lock", "CITATION.cff", "CHANGELOG.md", "CONTRIBUTING.md", "ci/check_version.py", "tests/fixtures/mapt_group_regression.json",
+                           "docs/installation.md", "docs/assets/mechanisms.png", "docs/assets/mechanisms-mobile.png",
                            "aso_agents/gui/app.py", "aso_agents/resources/gui/test_run/report.html.gz"]
         names = set(archive.getnames())
         assert all(prefix + name in names for name in required_source), required_source

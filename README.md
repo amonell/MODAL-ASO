@@ -8,7 +8,7 @@ Design and evaluate antisense oligonucleotides from a natural-language request.
 
 [Quick start](#quick-start) · [GUI](#optional-browser-gui) · [Installation](docs/installation.md) · [Examples](docs/examples.md) · [Outputs](docs/outputs.md)
 
-[Release 1.0.1](https://github.com/amonell/MODAL-ASO/releases/tag/v1.0.1) · [Changes](CHANGELOG.md) · [Report an issue](https://github.com/amonell/MODAL-ASO/issues/new/choose)
+[Release 1.1.0](https://github.com/amonell/MODAL-ASO/releases/tag/v1.1.0) · [Changes](CHANGELOG.md) · [Report an issue](https://github.com/amonell/MODAL-ASO/issues/new/choose)
 
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-164A79?style=flat-square)
 ![License GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-0FA3BE?style=flat-square)
@@ -37,7 +37,7 @@ MODAL-ASO connects transcript selection, candidate design, chemistry, off-target
 Use **Linux**, **Windows with WSL2**, or **Apple silicon macOS**. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the [platform prerequisites](docs/installation.md#prerequisites).
 
 ```bash
-git clone --branch v1.0.1 https://github.com/amonell/MODAL-ASO.git
+git clone --branch v1.1.0 https://github.com/amonell/MODAL-ASO.git
 cd MODAL-ASO
 uv sync --frozen --extra splice
 source .venv/bin/activate
@@ -133,19 +133,18 @@ the interface.
 
 ### Update or reinstall the GUI
 
-Stop the running GUI with **Ctrl+C** in its launch terminal. In the repository
-directory, download published source changes and sync the optional dependencies:
+Stop the GUI with **Ctrl+C** in its launch terminal. If you installed from a
+release tag, run these commands in the repository to open version 1.1.0:
 
 ```bash
-git pull --ff-only
+git fetch origin tag v1.1.0
+git switch --detach v1.1.0
 uv sync --frozen --extra splice --extra gui
 uv run --frozen --extra splice --extra gui modal-aso gui
 ```
 
-If the changes are already present in your local checkout, skip `git pull` and
-run the two `uv` commands. Sync installs any missing GUI dependencies; deleting
-the repository or virtual environment is unnecessary. If Git reports conflicting
-local changes, preserve those changes before updating; do not force an overwrite.
+If you track the `main` branch, use `git pull --ff-only` for the Git update.
+To reinstall the GUI in your current checkout, run just the two `uv` commands.
 
 Open the local URL printed in the terminal, usually `http://localhost:8501`,
 and refresh an existing browser tab after restarting. On Windows, run these
