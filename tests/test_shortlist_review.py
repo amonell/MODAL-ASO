@@ -791,9 +791,9 @@ def test_panel_binding_geometry_uses_transcript_direction_and_skips_ambiguous_pl
     catalog = evidence_catalog(rows)
     ids = [molecule_id(row) for row in rows]
     geometry = panel_binding_geometry(catalog, ids)
-    assert geometry[ids[0]]['start_shift_nt_in_RNA'] == 0
-    assert geometry[ids[1]]['start_shift_nt_in_RNA'] == shift
-    assert geometry[ids[2]]['start_shift_nt_in_RNA'] == shift * 2
+    assert geometry[ids[0]]['start_shift_genomic_bp'] == 0
+    assert geometry[ids[1]]['start_shift_genomic_bp'] == shift
+    assert geometry[ids[2]]['start_shift_genomic_bp'] == shift * 2
     assert geometry[ids[1]]['start_direction_from_anchor'] == ('downstream' if strand == '+' else 'upstream')
     rows.append({**deepcopy(rows[1]), 'binding_intervals_bed0_half_open': [['chr1', 800, 816]]})
     assert ids[1] not in panel_binding_geometry(evidence_catalog(rows), ids)
@@ -808,7 +808,7 @@ def test_rna_position_comparisons_use_recorded_strand(tmp_path, monkeypatch):
         if kind == 'audit' and payload['audit_scope']['include_panel_fields']:
             first = payload['selected_ids'][0]
             result['quantitative_comparisons'] = [{'candidate_id': first, 'field': 'panel_role',
-                'path': '/binding_geometry/' + first + '/start_shift_nt_in_RNA', 'order': 'ascending',
+                'path': '/binding_geometry/' + first + '/start_shift_genomic_bp', 'order': 'ascending',
                 'claimed_rank': 1, 'scope_ids': payload['selected_ids']}]
             assert payload['binding_geometry'][payload['selected_ids'][1]]['start_direction_from_anchor'] == 'downstream'
         return result, metadata

@@ -165,6 +165,16 @@ def transport_error_details(exc: Exception) -> dict[str, Any]:
     return _safe_value(details)
 
 
+def reservation_retry_delay(details: Mapping[str, Any]) -> float | None:
+    """Read OpenRouter's explicit temporary reservation limit and release time."""
+    if details.get("status_code") != 402 or details.get("headers", {}).get("x-should-retry") == "false":
+        return None
+    provider = details.get("provider_error")
+    if not isinstance(provider, Mapping) or provider.get("limit_source") != "openrouter_in_flight_budget":
+        return None
+    return retry_after_seconds(details.get("headers", {}))
+
+
 def retryable_transport_error(exc: Exception, details: Mapping[str, Any]) -> bool:
     if details.get("headers", {}).get("x-should-retry") == "false":
         return False

@@ -101,7 +101,7 @@ def coordinate_observations(row, geometry):
 
 
 def panel_binding_geometry(catalog, selected_ids):
-    """Compare unambiguous contiguous binding placements in RNA direction."""
+    """Measure genomic start and end distances along the transcribed strand."""
     anchors, result = {}, {}
     for order, key in enumerate(selected_ids, 1):
         placements = set()
@@ -130,7 +130,7 @@ def panel_binding_geometry(catalog, selected_ids):
         result[key] = {'panel_order': order, 'chrom': chrom, 'strand': strand,
             'binding_interval_1based_inclusive': [start, end],
             'relative_to_candidate_id': anchor[0], 'relative_to_panel_order': anchor[1],
-            'start_shift_nt_in_RNA': start_shift, 'end_shift_nt_in_RNA': end_shift,
+            'start_shift_genomic_bp': start_shift, 'end_shift_genomic_bp': end_shift,
             'start_direction_from_anchor': 'upstream' if start_shift < 0 else 'downstream' if start_shift > 0 else 'aligned',
             'end_direction_from_anchor': 'upstream' if end_shift < 0 else 'downstream' if end_shift > 0 else 'aligned'}
     return result
@@ -155,6 +155,8 @@ def evidence_catalog(pool):
         assessment = row.get('candidate_assessment') or {}
         activity = row.get('oligoai_evaluation') or {}
         geometry = export_context(row)
+        from .shortlist_facts import binding_sources
+        entry.setdefault('binding_sources', []).append(binding_sources(row, geometry, context))
         entry['coordinate_observations'].extend({'context': context, **item}
             for item in coordinate_observations(row, geometry))
         entry['overview'].append({'context': context,
