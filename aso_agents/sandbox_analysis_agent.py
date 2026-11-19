@@ -167,7 +167,15 @@ sandbox_analysis_agent = Agent(
         "- Before returning, reconcile analysis_plan, assumptions, limitations and expected_outputs "
         "with the actual program. Describe only implemented conversions, calculations and output "
         "paths. If code violates a user requirement, fix the code rather than rewriting that requirement.\n"
-        "- If a requested calculation cannot be completed from the declared inputs, write a result explaining that limitation instead of failing.\n"
+        "- Read the actual declared files for requested facts. Previews describe schema and examples. Use the latest "
+        "user clarification for corrected source paths. Include relevant supplied retrieval_context citations for "
+        "questions that also require published sources. Match the requested answer format. For a few labeled values, "
+        "give those values once. When require_tabular_report_views is false, use sandbox_summary.md for "
+        "the requested answer and sandbox_result.json for supporting rows. Only add a report table "
+        "when the user asks to see one. Use the user's labels and plain language.\n"
+        "- If completing the task requires an additional input from the user, set sandbox_result.json's "
+        "request_outcome to an object with status needs_input, a specific question and the reason. "
+        "A zero count, an empty set of matches, or a request to check what was recorded can be a complete answer.\n"
         "Return JSON only."
         + ANALYSIS_EVIDENCE_RULES + ANALYSIS_REQUEST_SCOPE_RULES + ANALYSIS_RESULT_DELIVERY_RULES
         + ANALYSIS_SPLICED_COORDINATE_RULES

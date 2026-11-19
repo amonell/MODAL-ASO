@@ -117,6 +117,7 @@ CANONICAL_TASK_CONTEXT_FIELDS = frozenset(
         "num_mismatches",
         "off_target_screening",
         "artifact_refs",
+        "artifact_operation",
         "chemistry",
         "chemistry_policy",
         "oligoai_evaluation",
@@ -142,6 +143,7 @@ CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS = {
     "off_target_screening": "For supplied-ASO evaluation or comparison, enabled requests external transcriptome gene screening and disabled explicitly excludes that screening. Matching against the requested reference transcripts still runs. Preserve explicit user exclusions independently from local-reference mismatch counts; omit when unspecified to retain normal screening.",
     "oligoai_evaluation": "Explicit OligoAI prediction conditions: enabled, dosage_nm, transfection_method, unmodeled_conditions and unresolved_conditions. Preserve requested dose/delivery; omit unstated values so runtime assumptions remain labelled.",
     "artifact_refs": "User-supplied run, file, or artifact references consumed by this task.",
+    "artifact_operation": "The complete purpose of an artifact analysis. Use read_records for questions, lookups, calculations, or mixed requests. Use inventory only to locate files, rank_candidates only for a new ranking, and annotation_overview only for a general annotation summary.",
     "chemistry": "User-supplied ASO chemistry or mechanism context for this task.",
     "chemistry_policy": "Explicit chemical-architecture selection policy: select or leave_unspecified, independent of biological mechanism.",
     "comparison_contract": "User-specified physical eligibility and deterministic pooled sequence-metric ranking for a comparison task.",
@@ -429,6 +431,7 @@ _JSON_SCALAR_SCHEMA = {
 _ARTIFACT_REF_SCHEMA = _closed_object(
     {
         "path": {"type": "string"},
+        "required": {"type": "boolean", "description": "Defaults to true. Set false for a conditional input or a request to check availability itself."},
         "artifact_type": {"type": "string"},
         "label": {"type": "string"},
     }
@@ -437,6 +440,7 @@ _ARTIFACT_REF_SCHEMA = _closed_object(
 _PROVIDED_ASO_FILE_SCHEMA = _closed_object(
     {
         "path": {"type": "string"},
+        "required": {"type": "boolean", "description": "Defaults to true. Set false for a conditional input or a request to check availability itself."},
         "file_format": {"type": "string"},
         "label": {"type": "string"},
     }
@@ -1082,6 +1086,8 @@ CANONICAL_GOAL_FIELD_SCHEMAS = {
 
 
 CANONICAL_TASK_CONTEXT_FIELD_SCHEMAS = {
+    "artifact_operation": {"type": "string", "enum": ["read_records", "inventory", "rank_candidates", "annotation_overview"],
+                           "description": CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS["artifact_operation"]},
     "num_mismatches": {"type": "integer", "minimum": 0, "description": "Requested off-target substitution search budget for this task, independent of hit-count filters."},
     "off_target_screening": {"type": "string", "enum": ["enabled", "disabled"],
                              "description": CANONICAL_TASK_CONTEXT_FIELD_SEMANTICS["off_target_screening"]},
