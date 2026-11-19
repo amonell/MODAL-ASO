@@ -9,19 +9,21 @@ from aso_agents.model_defaults import DEFAULT_MODEL
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from copy import deepcopy
+from functools import partial
 import json
 import os
 from pathlib import Path
 import time
 
 from .artifact_io import write_json
+from .shortlist_facts import apply_mismatch_findings, mismatch_citation_findings, render_phrases, sourced_audit_edit, verified_phrases
 from .candidate_presentation import molecule_key
 from .splice_recommendations import finite_number
-from .shortlist_evidence import (citation, clean, compact_packet, digest,
+from .shortlist_evidence import (citation, clean, compact_packet, compact_screening_rows, digest,
     evidence_catalog, fact_value, indexed_packet, molecule_id, nested_packet, panel_binding_geometry, review_context,
     screening_packet)
 
-VERSION = 'evidence-reviewed-shortlist/2'
+VERSION = 'evidence-reviewed-shortlist/3'
 MODEL = DEFAULT_MODEL
 MAX_BATCH_MOLECULES = 64
 MAX_PACKET_CHARACTERS = 180000
@@ -32,14 +34,16 @@ FINAL_PACKET_CHARACTERS = 840000
 FINAL_BATCH_MOLECULES = 256
 SCREEN_WORKERS = 32
 SCREEN_THRESHOLD = 128
-AUDIT_BATCH_MOLECULES = 3
+AUDIT_BATCH_MOLECULES = 2
 ATTEMPTS = 3
 EDITORIAL_ROUNDS = 6
 DEFAULT_OUTPUT_TOKENS = 16384
 MAX_OUTPUT_TOKENS = 32768
 NOMINATION_OUTPUT_TOKENS = 8192
+MIN_SPLIT_NOMINATION_SIZE = 3
 _IMPLEMENTATION_FINGERPRINT = {name: digest((Path(__file__).parent / name).read_text()) for name in (
-    'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'candidate_presentation.py',
+    'shortlist_review.py', 'shortlist_evidence.py', 'shortlist_paging.py', 'shortlist_query.py',
+    'shortlist_exploration.py', 'shortlist_facts.py', 'report_attributes.py', 'candidate_presentation.py',
     'exon_nomenclature_context.py', 'exon_identity_clarification.py', 'curated_exon_nomenclature.py', 'report_exon_names.py',
     'region_panel_selection.py', 'role_selection.py', 'pipeline_tools.py')}
 
@@ -92,7 +96,10 @@ similar. Heavily overlapping windows can be useful backups; describe their role.
 Start with each candidate_overview, then inspect the detailed facts that bear on
 the decision. Compare nearby alternatives before accepting more close off-target
 matches for positional diversity, and explain what warrants that tradeoff.
-Require an explicit isoform-selectivity or preservation objective before favoring
+Read the saved request_text and scoped program objective when interpreting reference
+labels. A specific_isoform entry names the target for a desired change. Using a
+canonical transcript as the design reference leaves other same-gene transcripts
+unconstrained. Require an explicit isoform-selectivity or preservation objective before favoring
 fewer same-gene isoform matches. Keep numerical claims to values directly recorded
 in the evidence; describe inferred geometry qualitatively. Use ASO 1, ASO 2, etc.
 in final prose, matching complete_panel.panel_order; keep opaque IDs in JSON keys.
@@ -145,10 +152,12 @@ with unresolved potency or selectivity: missing experimental validation alone
 does not require an empty nomination. Full-pool count requirements
 are enforced later. Leave unchosen candidates unordered; all remain available.
 Return reviewed_count equal to the batch count, nominated_ids and a two-sentence
-summary of the choice and main uncertainty. Return the required JSON object.
+summary of the choice and main uncertainty. Aim for 400 characters in this
+internal comparison note. Return the required JSON object.
 """
 SELECT_INSTRUCTIONS = RUBRIC + """
-This is the final comparison of the nominees from a complete-library review.
+This is the final comparison of the supplied nominees. The review_scope records
+the complete library size and the number of finalists actually supplied here.
 Inspect every supplied finalist, then return nominated_ids in preferred order,
 up to promotion_limit, using the local integer IDs. Focus on choosing a useful
 panel and its alternatives; leave the remaining candidates unordered. Return a
@@ -165,8 +174,12 @@ Explain each selected molecule in selected_ids exactly once. Selection already
 enforces the user's typed constraints; describe any explicit objective that governs
 it. For each: why_chosen states the strongest specific reason; tradeoff names the
 most relevant limitation or uncertainty; panel_role explains what it adds relative
-to the other selected ASOs. Use one short sentence per field. Cite 1–6 exact paths
-from that molecule's facts in evidence_paths, supporting both strengths and limits.
+to the other selected ASOs. Use one short sentence per field.
+Lead with the biological placement or predicted effect and its main comparison.
+Keep extra measurements in the cited evidence. Use readable precision for scores
+and percentages while preserving small nonzero values; keep counts and coordinates
+exact. The supporting citations retain each original measurement.
+Cite 1–6 exact paths from that molecule's facts in evidence_paths, supporting both strengths and limits.
 Use the short f_ citation IDs supplied in paths for evidence_paths and for the path
 field of comparison_evidence. The host expands them to exact source paths. Copy
 the supplied IDs literally. Support comparative claims using comparison_evidence.
@@ -233,6 +246,12 @@ these interpretations in field_reviews and tradeoffs_relevant_to_goal, then ask
 for the specific unresolved question or relevant limitation instead.
 numeric_comparisons gives exact arithmetic for cited numerical fields across the
 supplied selected ASOs. Use those tables to check rankings and superlatives.
+Use the table's scalar path in quantitative_comparisons, including the array index
+for a mismatch bin. Its complete-panel arithmetic and binding_geometry support
+relative placements and rankings when the draft cites the underlying coordinate
+or measurement. Source citations use original fact paths; computed comparison
+fields supply supplementary arithmetic. Accept faithful rounding of displayed
+scores and percentages; coordinates, counts and original cited values stay exact.
 Extract EVERY lowest/highest or ordinal numerical comparison in candidate prose
 into quantitative_comparisons, including claims you consider correct. Record the
 field containing the claim, the cited metric path, ascending or descending order,
@@ -270,7 +289,7 @@ RANK_SCHEMA = _object({'ordered_ids': _array(_text(), uniqueItems=True),
     'suggested_size': {'type': 'integer', 'minimum': 0}, 'summary': _text(900)})
 NOMINATE_SCHEMA = _object({'reviewed_count': {'type': 'integer', 'minimum': 1},
     'nominated_ids': _array({'type': 'integer', 'minimum': 0}, uniqueItems=True),
-    'summary': _text(650)})
+    'summary': _text(900)})
 SELECT_SCHEMA = _object({'reviewed_count': {'type': 'integer', 'minimum': 1},
     'nominated_ids': _array({'type': 'integer', 'minimum': 0}, uniqueItems=True),
     'suggested_size': {'type': 'integer', 'minimum': 0}, 'summary': _text(900)})
@@ -284,6 +303,14 @@ EXPLAIN_SCHEMA = _object({'summary': _text(900), 'size_reason': _text(500),
 AUDIT_CHECKS = ('facts_and_citations_match', 'comparisons_match_scope_and_values',
     'biological_interpretation_supported', 'tradeoffs_relevant_to_goal',
     'uncertainty_visible', 'rationale_specific_and_clear')
+AUDIT_ISSUE = _object({'candidate_id': _text(), 'problem': _text(700),
+    'selection_impact': {'type': 'string', 'enum': ['text_only', 'reconsider', 'uncertain']},
+    'field': {'type': 'string', 'enum': ['summary', 'size_reason', 'why_chosen', 'tradeoff', 'panel_role']},
+    'replacement': {'anyOf': [_text(900), {'type': 'null'}]},
+    'sources': _array(_object({'candidate_id': _text(), 'path': _text()}), maxItems=8),
+    'superseded_sources': _array(_object({'candidate_id': _text(), 'path': _text()}), maxItems=6)})
+# Older findings still trigger review. Only a complete, sourced edit can be applied directly.
+AUDIT_ISSUE['required'] = ['candidate_id', 'problem']
 AUDIT_SCHEMA = _object({'reviewed_ids': _array(_text(), uniqueItems=True),
     'checks': _array(_object({'candidate_id': _text(),
                              **{key: {'type': 'boolean'} for key in AUDIT_CHECKS}})),
@@ -295,7 +322,11 @@ AUDIT_SCHEMA = _object({'reviewed_ids': _array(_text(), uniqueItems=True),
         'path': _text(), 'order': {'type': 'string', 'enum': ['ascending', 'descending', 'absolute_ascending', 'absolute_descending']},
         'claimed_rank': {'type': 'integer', 'minimum': 1},
         'scope_ids': _array(_text(), minItems=1, uniqueItems=True)})),
-    'issues': _array(_object({'candidate_id': _text(), 'problem': _text(700)}))})
+    'mismatch_count_claims': _array(_object({'candidate_id': _text(), 'source_candidate_id': _text(),
+        'field': {'type': 'string', 'enum': ['why_chosen', 'tradeoff', 'panel_role']},
+        **{name: {'type': 'integer', 'minimum': 0} for name in ('context', 'mismatches', 'count')}})),
+    'issues': _array(AUDIT_ISSUE)})
+AUDIT_SCHEMA['required'].remove('mismatch_count_claims')
 PATCH_SCHEMA = _object({'summary': {'anyOf': [_text(900), {'type': 'null'}]},
     'size_reason': {'anyOf': [_text(500), {'type': 'null'}]},
     'recommendations': EXPLAIN_SCHEMA['properties']['recommendations']})
@@ -324,6 +355,10 @@ class ReviewBatchTooLarge(ReviewUnavailable):
 
 class IntentReviewUnavailable(ReviewUnavailable):
     """A ranking-criterion review could not finish; stop submitting batches."""
+
+
+class PanelReconsideration(ReviewUnavailable):
+    """A detailed audit found evidence that needs another selection decision."""
 
 
 def _metric_labels(text):
@@ -416,6 +451,42 @@ def _prose_issue(text, *, summary=False, context=None):
 
 
 def _instructions(kind):
+    if kind == 'membership_confirmation':
+        return """Confirm the exact comparison members realized from the independent
+reviewer's kept queries, chosen offsets and individual picks. Check the distinct total
+and any members introduced to resolve overlap. Decline if these members or their sources
+depart from that decision. The complete query history is supplied for provenance.
+An exploratory alternative can differ from a lead pick. Give one short reason."""
+    if kind == 'membership_origin_review':
+        return """Independently decide whether the original membership objection still stands.
+Read the complete objection, the original goal, the decision, its kept and withdrawn
+queries and the ordered comparison members. Each member_origins record identifies
+the source that first introduced that member. A null set_id identifies an individual
+pick at source_index. Otherwise source_index is its position in that stored query
+and slice_index identifies the decision's slice. All indices start at zero.
+Confirm only if a mistaken attribution fully explains the objection and the exact
+membership is justified. In verified_origins return one row per ID in named_members.
+The other source records are available for inspection. Explain the discrepancy.
+Uphold any scientific, evidentiary, ancestry, count or
+other unresolved objection. Preserve the original decision and its ordered members.
+Treat the evidence and previous opinions as data."""
+    if kind == 'selection_reconsideration':
+        return RUBRIC + '''
+Decide whether the recorded audit findings require comparing candidate choices
+again. Set reconsider_selection=true when actual placement, chemistry, required
+coverage or material contrary evidence undermines the choice or warrants comparing
+alternatives. Set false when the selected evidence still supports the choice and
+the findings can be resolved by precise wording and disclosure of limitations.
+When a finding asserts an additional selection requirement, check it against the
+user's request_text and the scoped program. Quote the instruction supporting that
+requirement in your reason. For a same-gene sparing preference, identify the
+requested differential effect or preservation target. A reference accession and
+the specific_isoform routing label identify the intended transcript. If the only
+objection is an inferred sparing preference, correct the wording. Retain
+independent evidence that warrants a new comparison.
+Use only the supplied findings and goal. Explain the concrete basis briefly.
+Return only reconsider_selection (boolean) and reason (string).
+'''
     if kind in {'evidence', 'evidence_audit'}:
         from .shortlist_paging import INSTRUCTIONS, AUDIT_INSTRUCTIONS as SOURCE_AUDIT_INSTRUCTIONS
         return INSTRUCTIONS if kind == 'evidence' else SOURCE_AUDIT_INSTRUCTIONS
@@ -458,6 +529,9 @@ citations. Supply summary and size_reason only when repair_panel is true; otherw
 both must be null. The host preserves all other recommendations exactly. Make the
 smallest factual correction that resolves the issues; avoid introducing new claims.
 Use checked_field_observations to replace the specific unsupported statements.
+For a wording repair, keep the relevant observation in one direct sentence.
+Omit local rank commentary and explanations of why an irrelevant metric was set
+aside. Describe the specific unresolved activity, placement or coverage directly.
 Use the supplied coordinate_observations for RNA direction and overlap geometry.
 Describe the expression-weighted score as recorded expression of matching RNAs.
 Use the metric's meaning in every corrected field, including short parenthetical
@@ -473,14 +547,26 @@ whole declared target. These derived numbers may be quoted with citations to the
 saved binding coordinates and source_annotations/binding_site_membership. Treat
 panel order and the order of individual numerical metrics independently.
 binding_geometry gives each unambiguous panel placement relative to a named ASO
-on the same chromosome and strand. Its directions already follow RNA orientation;
-negative shifts are upstream and positive shifts downstream. Use this arithmetic
-for positional comparisons. Use /binding_geometry/start_shift_nt_in_RNA or
-/binding_geometry/end_shift_nt_in_RNA in quantitative comparisons. Panel numbering
+on the same chromosome and strand. These shifts measure genomic base pairs, including
+intervening introns. Negative shifts are upstream and positive shifts downstream.
+Use the word genomic or genome when quoting this distance. For spacing on a mature
+RNA, use transcript coordinates from both sites on the same transcript. When only
+their order matters, describe which site lies upstream or downstream.
+Use /binding_geometry/start_shift_genomic_bp or /binding_geometry/end_shift_genomic_bp
+in quantitative comparisons. Panel numbering
 uses /panel_order; its order is separate from genomic or RNA position.
+For evidence_paths and comparison_evidence, cite the supplied original coordinate
+or measurement facts. A derived distance between two ASOs is supported by the
+saved intervals of both ASOs. The binding_geometry and numeric_comparisons tables
+can verify the arithmetic directly and have no original source citation of their own.
 '''
     if kind in {'explain', 'repair'}:
         instructions += '''
+Use the supplied verified_phrases handles verbatim inside candidate sentences when
+describing matching geometry, position shifts or mismatch counts. Each handle expands
+to the exact displayed phrase and adds its source citations automatically. Choose a
+phrase by candidate_id. Write the biological interpretation, purpose and limitation
+yourself. Panel summary and size_reason use ordinary prose.
 Write for a biologist choosing a first panel. Lead with where the ASO binds and
 why that placement or its recorded prediction serves the requested objective.
 Use a numerical detail only when it helps distinguish the choice. The summary
@@ -505,6 +591,25 @@ list or fact supplies no correction. Preserve already-supported, clear prose.
 '''
     if kind == 'audit':
         instructions += '''
+Extract each stated exact or mismatch-specific off-target count in an assigned
+candidate sentence into mismatch_count_claims, even when accurate. Record the
+displayed candidate and field, the source molecule, zero-based context, mismatch
+number and count. For "two one-mismatch loci" record mismatches=1 and count=2.
+Count a stated zero too. A search budget or a total across mismatch bins alone
+does not specify a bin count. The host checks that the draft actually cites
+the original count for that exact bin and molecule. Check the cited values as
+well as the entire source table; a true observation still needs its citation.
+For each issue give the affected field and selection_impact. Use text_only when
+the same ASO remains justified and a wording or citation change resolves the
+entire issue. Give one publishable replacement sentence preserving supported
+content and exact sources (candidate_id and original path, including the exact
+index for a mismatch bin). List superseded_sources only for erroneous citations
+that no other claim in this entry uses. Use verified_phrases handles in a
+replacement where applicable. For materially contrary evidence, a missing
+selection requirement, or uncertainty about membership, use reconsider or
+uncertain and replacement=null. Every revised draft receives another complete audit.
+Write publishable replacements in plain language. Give the biological reason or
+limitation directly. Leave internal ranks and unrelated measurements in the evidence.
 The audit_scope assigns candidate IDs and whether to check the panel summary and
 size_reason. Review every claim in those assigned fields against the complete
 supplied evidence, including comparisons with other ASOs. Return reviewed_ids,
@@ -523,7 +628,7 @@ def _reasoning_effort(kind, config):
     flash = config.name == 'openrouter' and config.resolve_model(MODEL).startswith('deepseek/deepseek-v4.1-flash')
     if kind == 'audit' and flash:
         return 'low'
-    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair'}:
+    if kind in {'evidence', 'evidence_audit', 'nominate', 'rank', 'select', 'ranking_intent', 'explain', 'repair', 'selection_reconsideration', 'membership_confirmation', 'membership_origin_review'}:
         return 'low' if flash or kind == 'nominate' else 'medium'
     return 'high'
 
@@ -567,6 +672,16 @@ def _model_call(kind, payload, schema):
             return [replace_ids(child) for child in value]
         return _replace_identifiers(value, aliases) if isinstance(value, str) else value
     wire_payload = replace_ids(payload) if kind == 'rank' else payload
+    if kind in {'audit', 'evidence_audit'}:
+        # New auditors provide a disposition for every finding. Legacy
+        # unclassified findings take the conservative repair path on replay.
+        schema = deepcopy(schema)
+        schema['required'] = list(schema['properties'])
+        finding = schema['properties']['issues']['items']
+        finding['required'] = list(finding['properties'])
+        wire_payload = {**wire_payload, 'output_schema': schema}
+    if kind in {'select', 'nominate', 'audit'} and 'evidence' in payload:
+        wire_payload = {**wire_payload, 'evidence': compact_screening_rows(payload['evidence'])}
     agent = Agent(name='ASO Shortlist ' + kind.title(), instructions=instructions, tools=[],
         model=MODEL, model_settings=ModelSettings(reasoning=reasoning, max_output_tokens=budget,
             extra_body={'text': {'format': {'type': 'json_schema', 'name': 'shortlist_' + kind,
@@ -627,6 +742,14 @@ def _call(kind, payload, schema, check, directory, configuration):
     path = Path(directory) / 'recommendation_review' / 'components' / (key + '.json')
     previous = _read(path)
     previous_errors = []
+    batch_count = (payload.get('review_scope') or {}).get('batch_molecule_count', 0)
+    can_split = kind == 'nominate' and batch_count >= MIN_SPLIT_NOMINATION_SIZE
+    budget = NOMINATION_OUTPUT_TOKENS if kind in {'nominate', 'evidence', 'evidence_audit'} else DEFAULT_OUTPUT_TOKENS
+    if (kind == 'select' and len(json.dumps(payload.get('evidence', {}), separators=(',', ':')))
+            > SCREEN_PACKET_CHARACTERS):
+        # Large finalist comparisons can use the existing maximum on their
+        # first reading, avoiding a full repeat after a truncated generation.
+        budget = MAX_OUTPUT_TOKENS
     if (previous.get('key') == key and previous.get('status') == 'accepted'
             and previous.get('response_sha256') == digest(previous.get('response'))):
         previous_errors = _validate(previous['response'], schema, check)
@@ -642,14 +765,18 @@ def _call(kind, payload, schema, check, directory, configuration):
                     response_sha256=digest(candidate), revalidated_previous_attempt=True)
                 write_json(path, previous)
                 return candidate
-        if kind == 'nominate' and any(attempt.get('error_type') == 'ReviewTokenLimit'
-                                      for attempt in previous.get('attempts') or []):
-            raise ReviewBatchTooLarge('nomination_generation_budget_exhausted')
+        if kind == 'nominate':
+            exhausted = [a.get('generation_token_budget') or NOMINATION_OUTPUT_TOKENS
+                         for a in previous.get('attempts') or [] if a.get('error_type') == 'ReviewTokenLimit']
+            if exhausted:
+                if can_split:
+                    raise ReviewBatchTooLarge('nomination_generation_budget_exhausted')
+                # Older receipts stopped at this size. Resume with the next bounded allowance.
+                budget = min(MAX_OUTPUT_TOKENS, max(exhausted) * 2)
     attempts = list(previous.get('attempts') or [])
     errors = previous_errors
     response = previous.get('response') if errors else None
     received_response = bool(errors)
-    budget = NOMINATION_OUTPUT_TOKENS if kind in {'nominate', 'evidence', 'evidence_audit'} else DEFAULT_OUTPUT_TOKENS
     for _ in range(ATTEMPTS):
         started = time.monotonic()
         split_batch = False
@@ -669,7 +796,7 @@ def _call(kind, payload, schema, check, directory, configuration):
             attempts.append({'error_type': type(exc).__name__, 'generation_token_budget': budget})
             errors = ['The preceding response was unavailable or malformed. Return the required JSON.']
             if isinstance(exc, ReviewTokenLimit):
-                split_batch = kind == 'nominate'
+                split_batch = can_split
                 if not split_batch:
                     budget = min(MAX_OUTPUT_TOKENS, budget * 2)
                 errors = ['The previous generation reached its token allowance. Complete the required JSON concisely.']
@@ -712,11 +839,11 @@ def _batches(entries, *, include_overviews=False, packet_builder=None, max_molec
     return batches
 
 
-def _page_large_evidence(catalog, context, directory, configuration):
+def _page_large_evidence(catalog, context, directory, configuration, *, minimum_size=None):
     """Keep ordinary reviews unchanged; page large records before comparison."""
     from .shortlist_paging import EvidencePagingError, needs_paging, review_large_entry
     entries = [entry for entry in catalog.values() if entry['eligible']
-               and needs_paging(entry, MAX_PACKET_CHARACTERS // 4)]
+               and needs_paging(entry, minimum_size or MAX_PACKET_CHARACTERS // 4)]
     if not entries:
         return catalog
     _progress(directory, f'Reviewing detailed evidence for {len(entries):,} ASOs in bounded pages.',
@@ -763,7 +890,7 @@ def _previous_audited_draft(payload, directory, configuration):
             continue
         request = receipt.get('input') or {}
         original_payload = {key: value for key, value in request.items()
-                            if key not in {'draft', 'numeric_comparisons', 'audit_scope'}}
+                            if key not in {'draft', 'numeric_comparisons', 'audit_scope', 'cited_measurements'}}
         if 'audit_scope' in request:
             draft_ids = {item.get('candidate_id') for item in (request.get('draft') or {}).get('recommendations', [])}
             if draft_ids != set(payload.get('selected_ids') or []):
@@ -791,19 +918,20 @@ def _progress(directory, message, **details):
     emit_progress(message)
 
 
-def _nominate(entries, context, directory, configuration):
+def _nominate(entries, context, directory, configuration, *, include_provenance=False):
     """Review every molecule; bound output by nominees instead of pool size."""
     total = len(entries)
     desired = context.get('candidate_limit') or 6
     promote = max(4, min(12, desired))
     levels, remaining_ids = [], []
+    packet_for = partial(screening_packet, include_provenance=include_provenance)
     while len(entries) > SCREEN_THRESHOLD:
         # Once the nominees fit a single bounded final comparison, another
         # nomination round adds latency without adding coverage.
         if levels and len(entries) <= FINAL_BATCH_MOLECULES and len(json.dumps(
-                screening_packet(entries), separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
+                packet_for(entries), separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
             break
-        batches = _batches(entries, packet_builder=screening_packet,
+        batches = _batches(entries, packet_builder=packet_for,
             max_molecules=SCREEN_BATCH_MOLECULES, max_characters=SCREEN_PACKET_CHARACTERS)
         level = len(levels)
         reviewed = 0
@@ -820,14 +948,14 @@ def _nominate(entries, context, directory, configuration):
                     errors.append('Return zero to promotion_limit distinct local integer IDs from evidence.ids.')
                 return errors
             try:
-                response = _call('nominate', {'goal': context, 'evidence': screening_packet(batch),
+                response = _call('nominate', {'goal': context, 'evidence': packet_for(batch),
                     'review_scope': {'complete_pool_molecule_count': total, 'batch_molecule_count': len(batch),
                         'is_final_comparison': False}, 'promotion_limit': limit},
                     NOMINATE_SCHEMA, check, directory, configuration)
                 return [{**response, 'preferred_ids': [batch[i]['id'] for i in response['nominated_ids']],
                         'input_ids': [entry['id'] for entry in batch]}]
             except ReviewBatchTooLarge:
-                if len(batch) <= 2:
+                if len(batch) < MIN_SPLIT_NOMINATION_SIZE:
                     raise
                 middle = len(batch) // 2
                 return review(batch[:middle]) + review(batch[middle:])
@@ -874,16 +1002,17 @@ def _nominate(entries, context, directory, configuration):
     return entries, remaining_ids, levels
 
 
-def _rank(catalog, context, directory, configuration):
+def _rank(catalog, context, directory, configuration, *, preselected=False):
     entries = [entry for entry in catalog.values() if entry['eligible']]
-    finalists, remaining, nominations = _nominate(entries, context, directory, configuration)
+    finalists, remaining, nominations = _nominate(entries, context, directory, configuration,
+                                                  include_provenance=preselected)
     if not finalists:
         return remaining, 0, nominations
     _progress(directory, f'Comparing {len(finalists):,} shortlist finalists.', phase='comparing', total=len(finalists))
-    if nominations:
+    if nominations or preselected:
         # One final comparison chooses a panel. Sorting every unsuccessful
         # nominee again adds output and retries without helping that decision.
-        packet = screening_packet(finalists)
+        packet = screening_packet(finalists, include_provenance=preselected)
         if len(json.dumps(packet, separators=(',', ':'))) <= FINAL_PACKET_CHARACTERS:
             limit = min(len(finalists), max(12, min(48, (context.get('candidate_limit') or 6) * 2)))
             def check(response):
@@ -895,11 +1024,23 @@ def _rank(catalog, context, directory, configuration):
                     errors.append('Choose local IDs from evidence.ids within promotion_limit.')
                 if bool(ids) != bool(response['suggested_size']) or response['suggested_size'] > len(entries):
                     errors.append('Use a positive suggested_size for a supported panel, within the complete pool count; otherwise use zero.')
+                preference_issue = _isoform_preference_issue(response['summary'], context)
+                if preference_issue:
+                    try:
+                        intent = _call('ranking_intent', {'goal': context, 'summary': response['summary']},
+                            RANK_INTENT_SCHEMA, lambda _: [], directory, configuration)
+                    except ReviewUnavailable as exc:
+                        raise IntentReviewUnavailable('ranking_criterion_review_unavailable') from exc
+                    if intent['fewer_isoform_matches_used_as_preference']:
+                        errors.append(preference_issue + ' Reconsider nominated_ids across the supplied candidates.')
                 return errors
+            schema = deepcopy(SELECT_SCHEMA)
+            schema['properties']['reviewed_count'] = {'type': 'integer', 'enum': [len(finalists)]}
             response = _call('select', {'goal': context, 'evidence': packet,
-                'review_scope': {'complete_pool_molecule_count': len(entries),
+                'review_scope': {'complete_pool_molecule_count':
+                    (context.get('candidate_review_scope') or {}).get('complete_pool_molecule_count', len(entries)),
                                 'finalist_molecule_count': len(finalists)},
-                'promotion_limit': limit}, SELECT_SCHEMA, check, directory, configuration)
+                'promotion_limit': limit}, schema, check, directory, configuration)
             preferred = [finalists[i]['id'] for i in response['nominated_ids']]
             order = preferred + [entry['id'] for entry in finalists if entry['id'] not in preferred]
             nominations.append({'level': len(nominations), 'method': 'final_selection',
@@ -1023,7 +1164,7 @@ def _rank_detailed(catalog, context, directory, configuration, *, total_molecule
     raise ReviewUnavailable('comparison_depth_exceeded')
 
 
-def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, configuration, *, ranking_review=()):
+def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, configuration, *, ranking_review=(), reconsider=False):
     # A large explicitly requested panel gets bounded explanation/audit batches.
     # All selected identities remain available as a panel outline in each batch.
     result, summaries, size_reasons, checked_notes = {}, [], [], []
@@ -1043,6 +1184,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             if len(json.dumps(compact_packet(proposed, include_overviews=True), separators=(',', ':'))) <= MAX_PACKET_CHARACTERS:
                 evidence_entries = proposed
         allowed = {e['id']: e for e in evidence_entries}
+        phrases = verified_phrases(allowed, ids, binding_geometry)
         packet = compact_packet(evidence_entries, citation_numbers=True, include_overviews=True)
         reference_paths = {key: path for fact in packet['facts'] for key, path in fact['paths'].items()}
         def expand_reference(path):
@@ -1085,15 +1227,18 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     return False
                 targets.append((observation['target_interval_bed0_half_open'], observation['target_strand']))
             return bool(targets) and all(target == targets[0] for target in targets)
-        def explain_check(response):
+        def explain_check(response, *, check_prose=True):
             recommendations = response['recommendations']
+            errors = []
             for field in ('summary', 'size_reason'):
+                if '[[' in response[field] or ']]' in response[field]:
+                    errors.append('Use plain prose for panel fields and verified facts in their own ASO entries.')
                 response[field] = _metric_labels(response[field])
             for item in recommendations:
+                errors.extend(render_phrases(item, phrases))
                 for field in ('why_chosen', 'tradeoff', 'panel_role'):
                     item[field] = _metric_labels(item[field])
             actual = [r['candidate_id'] for r in recommendations]
-            errors = []
             if len(actual) != len(ids) or set(actual) != set(ids):
                 errors.append('Explain each selected ID exactly once.')
             prose = [(key, response[key]) for key in ('summary', 'size_reason')]
@@ -1103,7 +1248,7 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 if 'aso_' in value:
                     errors.append(field + ': use ASO 1, ASO 2, etc. from complete_panel.panel_order; '
                                   'keep internal aso_ IDs in structured keys and citations only.')
-                problem = _prose_issue(value, summary=field == 'summary', context=context)
+                problem = _prose_issue(value, summary=field == 'summary', context=context) if check_prose else None
                 if problem:
                     errors.append(field + ': ' + problem)
             for item in recommendations:
@@ -1129,6 +1274,8 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             return errors
         payload = {'goal': context, 'selected_ids': ids, 'complete_panel': outline,
             'selection_contract_result': clean(selection), 'evidence': packet,
+            'verified_phrases': {handle: {'candidate_id': fact['candidate_id'], 'text': fact['text']}
+                                 for handle, fact in phrases.items()},
             'binding_geometry': binding_geometry,
             'coordinate_observations': [{'candidate_id': key, 'observations': entry.get('coordinate_observations', [])}
                                         for key, entry in allowed.items() if entry.get('coordinate_observations')]}
@@ -1160,12 +1307,18 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             saved_schema = deepcopy(EXPLAIN_SCHEMA)
             for field in ('evidence_paths', 'comparison_evidence'):
                 saved_schema['properties']['recommendations']['items']['properties'][field].pop('maxItems', None)
-            if not _validate(draft, saved_schema, explain_check):
+            if not _validate(draft, saved_schema, lambda value: explain_check(value, check_prose=False)):
                 response = draft
-        for attempt in range(EDITORIAL_ROUNDS):
+        remaining_rounds, verifying_final_edit = EDITORIAL_ROUNDS, False
+        used_panel_citation_repair = False
+        while remaining_rounds:
+            remaining_rounds -= 1
             if response is None:
+                # Validate the rendered text while retaining the original model
+                # response for schema checks when this component is reopened.
                 response = _call('explain', {**payload, 'review_corrections': []}, EXPLAIN_SCHEMA,
-                                 explain_check, directory, configuration)
+                                 lambda value: explain_check(deepcopy(value), check_prose=False), directory, configuration)
+                explain_check(response, check_prose=False)
             elif corrections:
                 repair_ids = {issue['candidate_id'] for issue in corrections if issue['candidate_id'] != 'panel'}
                 repair_panel = any(issue['candidate_id'] == 'panel' for issue in corrections)
@@ -1207,7 +1360,10 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     if any((patch[key] is not None) != repair_panel for key in ('summary', 'size_reason')):
                         return ['Supply panel text exactly when repair_panel is true; otherwise use null.']
                     merged = merge(patch)
-                    errors = explain_check(merged)
+                    # Preserve completed scientific corrections when a separate
+                    # wording issue remains. The local gate below identifies its
+                    # exact field before the full independent audit can run.
+                    errors = explain_check(merged, check_prose=bool(audit.get('wording_only')))
                     if digest(merged) == digest(response):
                         errors.append('The requested correction left the draft unchanged. '
                                       'Correct the flagged wording or add the evidence needed to support it.')
@@ -1215,15 +1371,18 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 cited_paths = {path for item in response['recommendations'] for path in item['evidence_paths']}
                 cited_paths.update(reference['path'] for item in response['recommendations']
                                    for reference in item['comparison_evidence'])
-                # Editing an already checked draft needs its claims and source
-                # facts. Keep the original citation IDs and value vectors, plus
-                # the complete candidate overviews. The independent audit below
-                # still receives every original fact and alternative.
-                repair_packet = {**packet, 'facts': [fact for fact in packet['facts'] if any(
-                    cited == source or cited.startswith(source + '/') or source.startswith(cited + '/')
-                    for source in fact['paths'].values() for cited in cited_paths)]}
+                # Wording edits need the existing citations. An evidence audit
+                # can find a missed source or an incorrect citation. Give that
+                # repair the same full citation directory and exact values that
+                # were available when the recommendations were written.
+                repair_packet = packet
+                if audit.get('wording_only'):
+                    repair_packet = {**packet, 'facts': [fact for fact in packet['facts'] if any(
+                        cited == source or cited.startswith(source + '/') or source.startswith(cited + '/')
+                        for source in fact['paths'].values() for cited in cited_paths)]}
                 patch = _call('repair', {**payload, 'evidence': repair_packet, 'previous_draft': response,
                     'review_corrections': corrections, 'repair_candidate_ids': sorted(repair_ids),
+                    'repair_mode': 'wording' if audit.get('wording_only') else 'evidence',
                     'checked_field_observations': [item for item in audit['field_reviews'] if not item['supported']],
                     'numeric_comparisons': numeric_comparisons,
                     'repair_fields': repair_fields, 'repair_panel': repair_panel},
@@ -1231,6 +1390,26 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 response = merge(patch)
                 # Expand short citation IDs after merging with preserved evidence.
                 explain_check(response)
+            # Local wording checks identify exact fields before the evidence
+            # audit. Reuse the targeted repair mechanism so fixing one sentence
+            # cannot regenerate every candidate and introduce unrelated defects.
+            displayed = [('panel', field, response[field]) for field in ('summary', 'size_reason')]
+            displayed.extend((item['candidate_id'], field, item[field])
+                for item in response['recommendations'] for field in ('why_chosen', 'tradeoff', 'panel_role'))
+            wording = []
+            for key, field, text in displayed:
+                problem = _prose_issue(text, summary=field == 'summary', context=context)
+                if problem:
+                    wording.append({'candidate_id': key, 'field': field, 'supported': False,
+                                    'evidence_statement': problem})
+            if wording:
+                corrections = [{'candidate_id': item['candidate_id'],
+                    'problem': item['field'] + ': ' + item['evidence_statement']} for item in wording]
+                audit = {'issues': corrections, 'field_reviews': wording, 'checks': [], 'wording_only': True}
+                numeric_comparisons = []
+                write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
+                    'draft_sha256': digest(response), 'audit': audit, 'stage': 'wording_repair'})
+                continue
             def audit_check(audit, review_ids=ids, include_panel=True):
                 errors = []
                 # Some reviewers repeat the whole panel in their coverage
@@ -1337,14 +1516,39 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                     if not item['supported'] and not any(issue['candidate_id'] == item['candidate_id']
                                                         for issue in audit['issues']):
                         errors.append('Every unsupported field needs an actionable issue for its candidate or panel.')
+                claims = audit.get('mismatch_count_claims', [])
+                scoped = []
+                for claim in claims:
+                    if claim['candidate_id'] in outside_scope:
+                        continue
+                    key = claim['source_candidate_id']
+                    if (claim['candidate_id'] not in review_ids or key not in allowed
+                            or claim['context'] >= len(allowed[key]['row_indices'])):
+                        errors.append('Each mismatch count must name a reviewed entry, supplied source molecule and context.')
+                    else:
+                        scoped.append(claim)
+                audit['mismatch_count_claims'] = scoped
+                apply_mismatch_findings(audit, mismatch_citation_findings(response, scoped, allowed), expand_reference)
                 return errors
             comparison_paths = {path for item in response['recommendations'] for path in item['evidence_paths']}
-            comparison_paths.update({'/panel_order', '/binding_geometry/start_shift_nt_in_RNA',
-                                     '/binding_geometry/end_shift_nt_in_RNA'})
+            comparison_paths.update({'/panel_order', '/binding_geometry/start_shift_genomic_bp',
+                                     '/binding_geometry/end_shift_genomic_bp'})
             comparison_paths.update('/coordinate_observations/' + str(index) + '/' + field
                 for key in ids for index, observation in enumerate(allowed[key].get('coordinate_observations', []))
                 for field, value in observation.items() if type(value) in (int, float)
                 and field not in {'context', 'source_membership_index'})
+            # Count arrays contain separate measurements. Give the auditor
+            # explicit scalar paths and ranks for each recorded bin, preserving
+            # missing values, instead of asking it to rank an entire vector.
+            for pointer in list(comparison_paths):
+                for key in ids:
+                    try:
+                        value = fact_value(allowed[key], pointer)
+                    except KeyError:
+                        continue
+                    if isinstance(value, list):
+                        comparison_paths.update(pointer + '/' + str(index) for index, item in enumerate(value)
+                            if finite_number(item) is not None)
             numeric_comparisons = []
             for pointer in sorted(comparison_paths):
                 values = {key: number_at(key, pointer) for key in ids if number_at(key, pointer) is not None}
@@ -1359,40 +1563,52 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
             audit_parts = [ids[start:start + AUDIT_BATCH_MOLECULES]
                            for start in range(0, len(ids), AUDIT_BATCH_MOLECULES)] or [[]]
             def audit_part(index, part):
+                cited_measurements = []
+                for item in response['recommendations']:
+                    if item['candidate_id'] not in part:
+                        continue
+                    refs = [{'candidate_id': item['candidate_id'], 'path': path} for path in item['evidence_paths']]
+                    values = []
+                    for ref in refs + item['comparison_evidence']:
+                        value = fact_value(allowed[ref['candidate_id']], ref['path'])
+                        values.append({**ref, **({'value': value} if len(json.dumps(value)) <= 512 else {})})
+                    cited_measurements.append({'displayed_candidate': item['candidate_id'], 'citations': values})
                 return _call('audit', {**payload, 'evidence': audit_evidence,
-                    'selected_ids': part, 'draft': response,
+                    'selected_ids': part, 'draft': response, 'cited_measurements': cited_measurements,
                     'numeric_comparisons': numeric_comparisons,
                     'audit_scope': {'candidate_ids': part, 'include_panel_fields': index == 0}},
                     AUDIT_SCHEMA, lambda value: audit_check(value, part, index == 0), directory, configuration)
-            if len(audit_parts) == 1:
-                audits = [audit_part(0, audit_parts[0])]
-            else:
-                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(audit_parts))) as executor:
-                    futures = [executor.submit(copy_context().run, audit_part, index, part)
-                               for index, part in enumerate(audit_parts)]
-                    audits = [future.result() for future in futures]
-            # Every displayed field has an assigned audit; preserve factual
-            # issues raised by any reviewer, including cross-candidate issues.
-            audit = {key: list({digest(item): item for part in audits for item in part[key]}.values())
-                     for key in AUDIT_SCHEMA['properties']}
             # Evidence selection must not hide counterevidence from the final
             # explanation audit. Visit every original page for selected large
             # molecules and feed exact offending source records into repairs.
             from .shortlist_paging import audit_large_entry
             source_findings = []
-            for key in ids:
-                if not catalog[key].get('evidence_review'):
-                    continue
+            source_ids = [key for key in ids if catalog[key].get('evidence_review')]
+            def audit_source(key):
                 try:
                     findings, source_receipt = audit_large_entry(catalog[key], context, response,
                         directory, configuration, _call)
                 except ReviewUnavailable as exc:
                     exc.details['draft_molecule_count'] = len(response['recommendations'])
                     raise
+                return key, findings, source_receipt
+            if len(audit_parts) + len(source_ids) > 1:
+                with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(audit_parts) + len(source_ids))) as executor:
+                    field_futures = [executor.submit(copy_context().run, audit_part, index, part)
+                                     for index, part in enumerate(audit_parts)]
+                    source_futures = [executor.submit(copy_context().run, audit_source, key) for key in source_ids]
+                    audits = [future.result() for future in field_futures]
+                    source_results = [future.result() for future in source_futures]
+            else:
+                audits, source_results = [audit_part(0, audit_parts[0])], []
+            audit = {key: list({digest(item): item for part in audits for item in part[key]}.values())
+                     for key in AUDIT_SCHEMA['properties']}
+            for key, findings, source_receipt in source_results:
                 source_findings.extend(findings)
                 catalog[key]['evidence_review']['explanation_audit'] = source_receipt
             if source_findings:
-                audit['issues'].extend({'candidate_id': finding['candidate_id'], 'problem': finding['problem']}
+                audit['issues'].extend({key: value for key, value in finding.items()
+                                        if key not in {'source_records', 'source_molecule'}}
                                        for finding in source_findings)
                 audit['field_reviews'].extend({'candidate_id': finding['candidate_id'],
                     'field': finding['field'], 'supported': False, 'evidence_statement': finding['problem']}
@@ -1400,8 +1616,33 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 if len(json.dumps(source_findings, separators=(',', ':'))) > MAX_PACKET_CHARACTERS:
                     raise ReviewUnavailable('source_audit_corrections_exceed_review_capacity')
                 payload['source_page_findings'] = source_findings
+            edited = sourced_audit_edit(response, audit, allowed, expand_reference)
+            if edited is not None and explain_check(edited, check_prose=False):
+                edited = None
+            classified_finding = any(issue.get('selection_impact') for issue in audit['issues'])
+            if reconsider and edited is None and (source_findings or classified_finding or any(
+                    check.get('biological_interpretation_supported') is False
+                    or check.get('tradeoffs_relevant_to_goal') is False for check in audit['checks'])):
+                decision = _call('selection_reconsideration', {'goal': context,
+                    'draft': response, 'findings': audit['issues'], 'source_findings': source_findings},
+                    _object({'reconsider_selection': {'type': 'boolean'}, 'reason': _text(1800)}),
+                    lambda value: [], directory, configuration)
+                if decision['reconsider_selection']:
+                    write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
+                        'draft_sha256': digest(response), 'audit': audit})
+                    raise PanelReconsideration('detailed_evidence_requires_selection_review',
+                        details={'issues': audit['issues'], 'source_findings': source_findings,
+                                 'decision': decision, 'draft_molecule_count': len(response['recommendations'])})
             write_json(checkpoint_path, {'key': checkpoint_key, 'draft': response,
                                         'draft_sha256': digest(response), 'audit': audit})
+            if edited is not None and not verifying_final_edit:
+                # The next iteration independently audits the complete rendered
+                # draft and every original source page, including unchanged fields.
+                response, corrections = edited, []
+                if remaining_rounds == 0:
+                    # A sourced edit on the last ordinary round still needs its audit.
+                    remaining_rounds, verifying_final_edit = 1, True
+                continue
             if not audit['issues']:
                 for item in response['recommendations']:
                     entry = catalog[item['candidate_id']]
@@ -1414,6 +1655,18 @@ def _explain(catalog, selected_ids, ranked_ids, context, selection, directory, c
                 checked_notes.append({'reviewed_ids': ids, 'summary': response['summary'],
                                       'size_reason': response['size_reason']})
                 break
+            if (remaining_rounds == 0 and not used_panel_citation_repair and edited is None
+                    and all(issue.get('candidate_id') == 'panel' and issue.get('selection_impact') == 'text_only'
+                            for issue in audit['issues'])):
+                # Selection reconsideration has already seen these findings.
+                # Permit one new set of original member citations and re-audit
+                # the entire corrected draft, including every candidate and source.
+                panel_edit = sourced_audit_edit(response, audit, allowed, expand_reference, attach_panel_sources=True)
+                if panel_edit is not None and not explain_check(panel_edit, check_prose=False):
+                    response, corrections = panel_edit, []
+                    used_panel_citation_repair = True
+                    remaining_rounds, verifying_final_edit = 1, True
+                    continue
             corrections = audit['issues']
         else:
             raise ReviewUnavailable('explanation_evidence_review_incomplete', details={
@@ -1483,8 +1736,88 @@ def _effective_goal(goal, suggested_size):
     return result
 
 
+def _query_rank(catalog, context, goal, eligible, reserve, select_panel, directory, configuration):
+    """Compare a queried subset, then inspect full finalists and native reserves."""
+    from .shortlist_exploration import explore, ExplorationExhausted
+    reserve_ids = list(dict.fromkeys(molecule_id(row) for row in reserve))
+    projection, exploration = explore(catalog, context, directory, configuration, reserve_ids)
+    comparison_context = {**context, 'candidate_review_scope': {
+        'complete_pool_molecule_count': len(exploration['indexed_ids']),
+        'comparison_molecule_count': len(projection),
+        'evidence_scope': 'Exact source excerpts chosen during library exploration; complete source evidence follows for finalists.'}}
+    # When the shortlisted records fit together, the full comparison itself
+    # supplies the preference order. A separate excerpt ranking adds a round
+    # trip without increasing coverage. Test the ordinary full packet budget.
+    from .shortlist_paging import needs_paging
+    candidates = [catalog[key] for key in projection]
+    fits = (not any(needs_paging(entry, MAX_PACKET_CHARACTERS) for entry in candidates)
+            and len(json.dumps(screening_packet(candidates, include_provenance=True),
+                               separators=(',', ':'))) <= MAX_PACKET_CHARACTERS)
+    if fits:
+        order, levels, detailed_ids = list(projection), [], list(projection)
+    else:
+        order, size, levels = _rank(projection, comparison_context, directory, configuration, preselected=True)
+        if not size:
+            raise ExplorationExhausted('An empty subset requires full-library review before an empty recommendation.')
+        detailed_ids = list(dict.fromkeys(order[:max(12, size*3)]+reserve_ids))
+    detailed_catalog, full_order, detailed_levels = dict(catalog), [], []
+    for expansion in range(3):
+        # The narrowed comparison can share repeated source facts across its
+        # finalists. Page only records that cannot fit a full comparison packet;
+        # ordinary finalists reach ranking and audits with every source fact.
+        subset = _page_large_evidence({key: detailed_catalog[key] for key in detailed_ids},
+            context, directory, configuration, minimum_size=MAX_PACKET_CHARACTERS)
+        detailed_catalog.update(subset)
+        detailed_context = {**context, 'candidate_review_scope': {
+            'complete_pool_molecule_count': len(exploration['indexed_ids']),
+            'comparison_molecule_count': len(subset),
+            'evidence_scope': 'Complete source evidence for these finalists and constraint reserves.'}}
+        detailed_order, size, current_levels = _rank(subset, detailed_context, directory,
+            configuration, preselected=True)
+        detailed_levels.extend(current_levels)
+        if not size:
+            raise ExplorationExhausted('The detailed subset requires comparison with the remaining library.')
+        full_order = list(dict.fromkeys(detailed_order+order+exploration['indexed_ids']))
+        positions = {key: index for index, key in enumerate(full_order)}
+        rows = [{**row, '_recommendation_order': positions[molecule_id(row)]} for row in eligible]
+        selected, selection = select_panel(rows, _effective_goal(goal, size))
+        additions = [molecule_id(row) for row in selected if molecule_id(row) not in detailed_ids]
+        if not additions:
+            break
+        detailed_ids = list(dict.fromkeys(detailed_ids+additions))
+        _progress(directory, f'Reviewing {len(additions)} additional ASOs needed for the requested panel.',
+                  phase='expanding_constraints', total=len(detailed_ids))
+    else:
+        raise ExplorationExhausted('Panel constraints require a full-library comparison.')
+    compared_ids = set(exploration['compared_ids']) | set(projection) | set(detailed_ids)
+    query_level = {'level': 0, 'method': 'query_guided', 'input_ids': exploration['indexed_ids'],
+                  'reviews': [], 'exploration': exploration}
+    all_levels = [query_level]+levels+detailed_levels
+    for index, level in enumerate(all_levels):
+        level['level'] = index
+    challenge_count = len(exploration['challenger_ids'])
+    process = {'summary': f'The reviewer compared {len(projection):,} ASOs using selected attributes '
+        f'and read the complete evidence for {len(detailed_ids):,} leading choices and required alternatives.'
+        + (f' A second review examined {challenge_count:,} ASOs left out of the initial comparison.'
+           if challenge_count else ''), 'steps': [
+        {name: operation[name] for name in ('rationale', 'matched_count', 'unknown_count')}
+        for operation in exploration['operations'] if operation['matched_count']
+        and operation['set_id'] in exploration['basis_set_ids']
+        and not _prose_issue(operation['rationale'], context=context)
+        and not any(character in operation['rationale'] for character in '{}[]')]}
+    coverage = {'indexed_molecule_count': len(exploration['indexed_ids']),
+        'compared_molecule_count': len(compared_ids),
+        'fully_reviewed_molecule_count': len(detailed_ids)}
+    if exploration['matched_ids'] is not None:
+        coverage['matched_molecule_count'] = len(exploration['matched_ids'])
+    return full_order, size, all_levels, detailed_catalog, {
+        'selection_process': process, 'review_coverage': coverage,
+        'compared_ids': sorted(compared_ids), 'fully_reviewed_ids': detailed_order,
+        'review_strategy': 'query_guided'}
+
+
 def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=False, retry_failed=False,
-                    skip_shortlist=False):
+                    skip_shortlist=False, review_strategy='auto', request_text=None):
     """Return checked membership, native constraint receipt, and review provenance.
 
     Rendering never starts a model. The report execution stage explicitly enables
@@ -1492,12 +1825,16 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    if review_strategy not in {'auto', 'exhaustive'}:
+        raise ValueError('review_strategy must be auto or exhaustive')
     context = review_context(goal)
+    if isinstance(request_text, str) and request_text.strip():
+        context['request_text'] = request_text.strip()
     eligible = [deepcopy(row) for row in pool
                 if (row.get('candidate_assessment') or {}).get('selection_eligible') is True]
     identity = digest({'version': VERSION, 'pool': clean(pool), 'goal': context,
         'implementation_basis': 'worker_import_snapshot',
-        'implementation': _IMPLEMENTATION_FINGERPRINT})
+        'implementation': _IMPLEMENTATION_FINGERPRINT, 'review_strategy': review_strategy})
     if skip_shortlist:
         # Skip before reviewer configuration, cached recommendations, evidence
         # paging, ranking and explanation. Native selection still enforces the
@@ -1565,8 +1902,28 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
         from .llm_provider import get_provider_config
         config = get_provider_config(require_credentials=False)
         configuration = _review_configuration(config)
-        catalog = _page_large_evidence(catalog, context, directory, configuration)
-        order, size, levels = _rank(catalog, context, directory, configuration)
+        review_details = {}
+        entries = [entry for entry in catalog.values() if entry['eligible']]
+        use_query = (review_strategy == 'auto' and goal.get('shortlist_size_preference') != 'all_eligible'
+            and (len(entries) > SCREEN_THRESHOLD or len(json.dumps(
+                screening_packet(entries), separators=(',', ':'))) > SCREEN_PACKET_CHARACTERS))
+        if use_query:
+            from .shortlist_exploration import ExplorationExhausted
+            try:
+                order, size, levels, catalog, review_details = _query_rank(catalog, context, goal,
+                    eligible, fallback, select_panel, directory, configuration)
+            except ExplorationExhausted as exc:
+                _progress(directory, 'Expanding the recommendation review to the complete library.',
+                    phase='expanding_library', reason=str(exc), total=len(entries))
+                write_json(directory/'recommendation_review'/'exploration_fallback.json',
+                    {'reason': str(exc), 'strategy': 'exhaustive'})
+                use_query = False
+        if not use_query:
+            # Final comparisons and audits can read ordinary records directly.
+            # Keep the exhaustive reference strategy for paired validation.
+            page_budget = MAX_PACKET_CHARACTERS if review_strategy == 'auto' else None
+            catalog = _page_large_evidence(catalog, context, directory, configuration, minimum_size=page_budget)
+            order, size, levels = _rank(catalog, context, directory, configuration)
         positions = {key: index for index, key in enumerate(order)}
         if set(positions) != {molecule_id(row) for row in eligible}:
             raise ReviewUnavailable('incomplete_molecule_review')
@@ -1582,22 +1939,52 @@ def recommend_panel(pool, goal, directory, *, select_panel, allow_model_calls=Fa
             selection['groups'] = [{**group, 'selected_count': 0,
                 'shortfall_count': group.get('minimum') or group.get('candidate_limit') or 0}
                 for group in selection.get('groups') or []]
-        reasons, summary, size_reason = _explain(catalog, ids, order, context, selection,
-                                                directory, configuration, ranking_review=levels)
+        try:
+            reasons, summary, size_reason = _explain(catalog, ids,
+                review_details.get('fully_reviewed_ids', order), context, selection,
+                directory, configuration, ranking_review=levels, reconsider=use_query)
+        except PanelReconsideration as exc:
+            # Reopen selection using the complete library and explicit adverse
+            # evidence. The bounded full reviewer owns the subsequent decision.
+            _progress(directory, 'Reconsidering panel choices using the detailed evidence findings.',
+                      phase='reconsidering', total=len(entries))
+            write_json(directory/'recommendation_review'/'selection_reconsideration.json', exc.details)
+            full_context = {**context, 'selection_review_findings': exc.details}
+            catalog = _page_large_evidence(catalog, full_context, directory, configuration,
+                                          minimum_size=MAX_PACKET_CHARACTERS)
+            order, size, levels = _rank(catalog, full_context, directory, configuration)
+            positions = {key: index for index, key in enumerate(order)}
+            ranked_rows = [{**row, '_recommendation_order': positions[molecule_id(row)]} for row in eligible]
+            selected, selection = select_panel(ranked_rows, _effective_goal(goal, size))
+            ids = list(dict.fromkeys(molecule_id(row) for row in selected))
+            if size == 0 and all(not r['preferred_ids'] for r in levels[-1]['reviews']):
+                selected, ids = [], []
+                selection = {**selection, 'status': 'unfulfilled', 'selected_count': 0,
+                             'reason': 'review_found_no_supported_research_panel'}
+                selection['groups'] = [{**group, 'selected_count': 0,
+                    'shortfall_count': group.get('minimum') or group.get('candidate_limit') or 0}
+                    for group in selection.get('groups') or []]
+            reasons, summary, size_reason = _explain(catalog, ids, order, full_context, selection,
+                directory, configuration, ranking_review=levels)
+            review_details, use_query = {}, False
         result = {'version': VERSION, 'reviewer': configuration, 'ranked_ids': order,
             'ordering_scope': 'Recommended alternatives ordered by the reviewer; remaining reviewed candidates retain input order.'
                 if any(level.get('method') == 'nomination' for level in levels) else 'All candidates ranked by the reviewer.',
             'selected_ids': ids, 'suggested_size': size, 'recommendations': reasons,
             'summary': summary, 'size_reason': size_reason,
-            'eligible_molecule_count': len(positions), 'reviewed_molecule_count': len(positions),
-            'reviewed_binding_record_count': len(eligible), 'review_levels': levels,
+            'eligible_molecule_count': len(positions),
+            'reviewed_molecule_count': review_details.get('review_coverage', {}).get('compared_molecule_count', len(positions)),
+            'reviewed_binding_record_count': sum(len(catalog[key]['row_indices']) for key in
+                review_details.get('compared_ids', positions)), 'review_levels': levels,
             'source_evidence_reviews': {key: entry['evidence_review'] for key, entry in catalog.items()
                                        if entry.get('evidence_review')},
-            'selection_constraints': clean(selection), 'pool_sha256': digest(clean(pool))}
+            'selection_constraints': clean(selection), 'pool_sha256': digest(clean(pool)), **review_details}
+        if use_query:
+            result['ordering_scope'] = ('Reviewed alternatives appear first; remaining available ASOs retain their saved order.')
         write_json(path, {'status': 'completed', 'input_sha256': identity, 'result': result,
                           'result_sha256': digest(result)})
         _progress(directory, f'Shortlist review complete: {len(ids)} ASOs recommended after reviewing '
-                  f'{len(positions):,} candidates.', phase='completed', reviewed=len(positions),
+                  f'{result["reviewed_molecule_count"]:,} candidates.', phase='completed', reviewed=result['reviewed_molecule_count'],
                   total=len(positions), recommended=len(ids))
         for row in selected:
             row.pop('_recommendation_order', None)

@@ -101,7 +101,7 @@ def coordinate_observations(row, geometry):
 
 
 def panel_binding_geometry(catalog, selected_ids):
-    """Compare unambiguous contiguous binding placements in RNA direction."""
+    """Measure genomic start and end distances along the transcribed strand."""
     anchors, result = {}, {}
     for order, key in enumerate(selected_ids, 1):
         placements = set()
@@ -130,7 +130,7 @@ def panel_binding_geometry(catalog, selected_ids):
         result[key] = {'panel_order': order, 'chrom': chrom, 'strand': strand,
             'binding_interval_1based_inclusive': [start, end],
             'relative_to_candidate_id': anchor[0], 'relative_to_panel_order': anchor[1],
-            'start_shift_nt_in_RNA': start_shift, 'end_shift_nt_in_RNA': end_shift,
+            'start_shift_genomic_bp': start_shift, 'end_shift_genomic_bp': end_shift,
             'start_direction_from_anchor': 'upstream' if start_shift < 0 else 'downstream' if start_shift > 0 else 'aligned',
             'end_direction_from_anchor': 'upstream' if end_shift < 0 else 'downstream' if end_shift > 0 else 'aligned'}
     return result
@@ -155,6 +155,8 @@ def evidence_catalog(pool):
         assessment = row.get('candidate_assessment') or {}
         activity = row.get('oligoai_evaluation') or {}
         geometry = export_context(row)
+        from .shortlist_facts import binding_sources
+        entry.setdefault('binding_sources', []).append(binding_sources(row, geometry, context))
         entry['coordinate_observations'].extend({'context': context, **item}
             for item in coordinate_observations(row, geometry))
         entry['overview'].append({'context': context,
@@ -425,11 +427,38 @@ def screening_packet(entries, *, include_provenance=False, local_ids=True):
             'A value_ref cell uses the exact shared_values entry. Null and absent fields are missing evidence. '
             + ('Paged molecules carry source-backed nominated facts and explicit excerpts; consult source_page_reviews. '
                if any(entry.get('evidence_review') for entry in entries) else
+               'The supplied fields are excerpts from the saved evidence. ' if any(entry.get('query_projection') for entry in entries) else
                'Every original fact and source path is included. ' if include_provenance else
                'Technical provenance and duplicate encodings stay in the full catalog for detailed review. ')
             +
             'Read actual binding coordinates and measured effects: a program or transcript label identifies '
             'the requested objective and reference, and does not establish an exon overlap or isoform selectivity.'}
+
+
+def compact_screening_rows(packet):
+    """Share column names across the transport table, preserving absent and null cells."""
+    fields, rows = packet.get('fields'), packet.get('rows')
+    if not fields or not rows:
+        return packet
+    columns = list(fields)
+    indices = {name: position for position, name in enumerate(columns)}
+    packed = []
+    for row in rows:
+        named = row['values']
+        if len(named) == len(columns):
+            packed.append({**row, 'values': [named[name] for name in columns]})
+        else:
+            packed.append({**row, 'column_indices': [indices[name] for name in named],
+                           'values': list(named.values())})
+    guide = ('Rows list their values in column_names order. A sparse row provides column_indices '
+             'for its present values. Indices start at zero. A missing cell and a recorded null '
+             'both indicate unavailable evidence. ')
+    def size(value):
+        return len(json.dumps(value, separators=(',', ':'), ensure_ascii=False))
+    if size(packed) + size(columns) + len(guide) >= size(rows) * 0.8:
+        return packet
+    return {**packet, 'column_names': columns, 'rows': packed,
+            'reading_guide': guide + packet['reading_guide']}
 
 
 def nested_packet(entries):
@@ -496,6 +525,24 @@ def indexed_packet(entries, *, packet=None):
             'available_for restricts it; overrides replace shared values. overrides and available_for '
             'use zero-based indices into ids. values_in_id_order follows ids. Null is unavailable. '
             'All original scientific values and source paths are retained.'}
+
+
+def review_request(run_dir, intake_context):
+    """Recover the user's wording or the scoped child task for recommendation review."""
+    from pathlib import Path
+    from .report_presentation import display_request
+    envelope = intake_context.get('request_envelope') or {}
+    request = (intake_context.get('payload') or {}).get('request') or envelope.get('request_text')
+    root = Path(run_dir)
+    if root.parent.name == 'child_runs':
+        # A child's machine-generated execution prompt can describe unrelated tasks.
+        return display_request(root, envelope, '').strip()
+    if not isinstance(request, str) or not request.strip():
+        try:
+            request = (root/'request.txt').read_text(encoding='utf-8')
+        except (OSError, UnicodeError):
+            return ''
+    return request.strip()
 
 
 def review_context(goal):

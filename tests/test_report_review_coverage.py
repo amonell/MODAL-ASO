@@ -33,3 +33,24 @@ def test_legacy_and_provisional_receipts_keep_their_original_coverage_meaning():
     assert 'Provisional panel' in rendered
     assert 'Unapproved proposal' not in rendered
     assert 'ASOs reviewed' not in rendered
+
+
+def test_new_run_projection_carries_saved_review_coverage_into_html(tmp_path):
+    import json
+    from aso_agents.report_explorer_data import project_run
+    from aso_agents.readable_report import basic_document
+    from test_report_explorer import run_fixture
+    run_fixture(tmp_path)
+    path = tmp_path/'artifacts/candidates/recommended_shortlist.json'
+    saved = json.loads(path.read_text())
+    saved['review'] = {'status': 'completed', 'summary': 'A complementary research panel.',
+        'review_strategy': 'query_guided',
+        'review_coverage': {'indexed_molecule_count': 4057, 'matched_molecule_count': 100,
+            'compared_molecule_count': 64, 'fully_reviewed_molecule_count': 12},
+        'selection_process': {'summary': 'Compared recorded activity and binding positions.', 'steps': []}}
+    path.write_text(json.dumps(saved))
+    data = project_run(tmp_path)
+    assert data['recommendation_review']['review_coverage'] == saved['review']['review_coverage']
+    rendered = basic_document('Test', '# Results', candidate_data=data)
+    assert '1 recommended from 4,057 eligible ASOs.' in rendered
+    assert 'ASOs individually compared</dt><dd>64' in rendered

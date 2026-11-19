@@ -29918,9 +29918,11 @@ def _build_v2_generated_design_artifacts(run_dir: str, *, review_recommendations
         candidate_scope="assessed_pool_before_panel_selection")
     eligible_rows = [row for row in assessment_pool if row["candidate_assessment"]["selection_eligible"]]
     eligible_rows = [row for _, row in _sort_generated_candidate_indexed_rows(list(enumerate(eligible_rows)))]
+    from .shortlist_evidence import review_request
     from .shortlist_review import recommend_panel
     eligible_rows, candidate_selection, recommendation_review = recommend_panel(
         assessment_pool, structured_goal, generated_set_path.parent,
+        request_text=review_request(run_dir, context),
         select_panel=lambda rows, goal: _select_generated_design_panel(
             rows, goal, directory=generated_set_path.parent,
             region_status=global_region_filter["status"],

@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 
 from aso_agents import shortlist_review as review
-from aso_agents.shortlist_evidence import evidence_catalog, screening_packet, molecule_id
+from aso_agents.shortlist_evidence import compact_screening_rows, evidence_catalog, screening_packet, molecule_id
 from test_shortlist_review import pool, model, run
 
 REAL_MODEL_CALL = review._model_call
@@ -58,6 +58,22 @@ def test_screening_roundtrip_preserves_every_fact_context_and_missing_value():
     assert expand_packet(packet) == {i: entry['facts'] for i, entry in enumerate(entries)}
     assert packet['shared_values']
     assert entries == before
+
+
+def test_wire_table_roundtrip_distinguishes_missing_cells_and_recorded_nulls():
+    rows = pool(40)
+    for i, row in enumerate(rows):
+        for j in range(20):
+            if i != j:
+                row['complete_measurement_under_named_condition_' + str(j)] = None if i == j + 1 else i * j
+    packet = screening_packet(list(evidence_catalog(rows).values()), include_provenance=True)
+    packed = compact_screening_rows(packet)
+    assert len(json.dumps(packed)) < len(json.dumps(packet))
+    columns = packed['column_names']
+    for original, encoded in zip(packet['rows'], packed['rows']):
+        indices = encoded.get('column_indices', list(range(len(columns))))
+        assert original == {'id': encoded['id'], 'values': dict(zip(
+            [columns[i] for i in indices], encoded['values'], strict=True))}
 
 
 def test_nomination_keeps_scientific_fields_and_future_measurements():
@@ -120,7 +136,7 @@ def test_supported_audit_fields_can_omit_duplicate_prose(tmp_path, monkeypatch):
 
 def test_panel_audits_run_concurrently_with_full_comparison_context(tmp_path, monkeypatch):
     from threading import Barrier
-    barrier = Barrier(2, timeout=5)
+    barrier = Barrier(3, timeout=5)
     audits = []
     def parallel(kind, payload, schema):
         if kind == 'audit':
@@ -130,7 +146,7 @@ def test_panel_audits_run_concurrently_with_full_comparison_context(tmp_path, mo
     monkeypatch.setattr(review, '_model_call', parallel)
     selected, _, receipt = run(pool(6), tmp_path, {'candidate_limit': 6})
     assert receipt['status'] == 'completed' and len(selected) == 6
-    assert len(audits) == 2
+    assert len(audits) == 3
     ids = [key for payload in audits for key in payload['selected_ids']]
     assert len(ids) == len(set(ids)) == 6
     assert set(ids) == set(receipt['selected_ids'])
@@ -181,7 +197,7 @@ def test_selectivity_uncertainty_is_checked_semantically(tmp_path, monkeypatch):
         return response, metadata
     monkeypatch.setattr(review, '_model_call', uncertainty)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})
-    assert receipt['status'] == 'completed' and calls == ['rank', 'explain', 'audit']
+    assert receipt['status'] == 'completed' and calls == ['rank', 'explain', 'audit', 'audit']
 
 
 def test_host_findings_populate_null_audit_observations_without_extra_generation(tmp_path, monkeypatch):
@@ -205,7 +221,7 @@ def test_host_findings_populate_null_audit_observations_without_extra_generation
     monkeypatch.setattr(review, '_model_call', wording)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})
     assert receipt['status'] == 'completed'
-    assert calls == ['rank', 'explain', 'audit', 'repair', 'audit']
+    assert calls == ['rank', 'explain', 'audit', 'audit', 'repair', 'audit', 'audit']
 
 
 def test_unsupported_audit_field_still_requires_a_specific_finding(tmp_path, monkeypatch):
@@ -221,8 +237,9 @@ def test_unsupported_audit_field_still_requires_a_specific_finding(tmp_path, mon
         return response, metadata
     monkeypatch.setattr(review, '_model_call', audit)
     _, _, receipt = run(pool(), tmp_path, {'candidate_limit': 3})
-    assert receipt['status'] == 'completed' and len(count) == 2
-    assert any('concrete evidence_statement' in item for item in count[1]['corrections_needed'])
+    assert receipt['status'] == 'completed' and len(count) == 3
+    assert any('concrete evidence_statement' in item for call in count
+               for item in call.get('corrections_needed', []))
 
 
 def test_four_thousand_candidates_are_reviewed_with_bounded_outputs(tmp_path, monkeypatch):
@@ -339,6 +356,31 @@ def test_nomination_token_limit_splits_instead_of_repeating_a_large_generation(t
     assert sizes == []
 
 
+def test_smallest_nomination_can_finish_and_resume_after_generation_limit(tmp_path, monkeypatch):
+    import pytest
+    budgets = []
+    def nominate(kind, payload, schema):
+        budgets.append(payload['_generation_token_budget'])
+        if budgets[-1] == review.NOMINATION_OUTPUT_TOKENS:
+            raise review.ReviewTokenLimit('fixture used its output allowance')
+        return {'reviewed_count': 2, 'nominated_ids': [1], 'summary': 'Includes the required placement.'}, []
+    monkeypatch.setattr(review, '_model_call', nominate)
+    def compare(directory):
+        return review._call('nominate', {'review_scope': {'batch_molecule_count': 2}},
+            review.NOMINATE_SCHEMA, lambda value: [], directory, {})
+    assert compare(tmp_path/'fresh')['nominated_ids'] == [1]
+    assert budgets == [8192, 16384]
+    budgets.clear()
+    with monkeypatch.context() as limited:
+        limited.setattr(review, 'ATTEMPTS', 1)
+        with pytest.raises(review.ReviewUnavailable):
+            compare(tmp_path/'resumed')
+    assert compare(tmp_path/'resumed')['nominated_ids'] == [1]
+    assert budgets == [8192, 16384]
+    assert compare(tmp_path/'resumed')['nominated_ids'] == [1]
+    assert len(budgets) == 2
+
+
 def test_nomination_workers_keep_run_trace_and_preserve_full_pool_for_constraints(tmp_path, monkeypatch):
     from aso_agents.telemetry import evaluation_trace, current_evaluation_trace
     seen = []
@@ -352,7 +394,7 @@ def test_nomination_workers_keep_run_trace_and_preserve_full_pool_for_constraint
         return [next(row for row in ordered if row['selection_rank'] == 1)], {'status': 'complete'}
     with evaluation_trace({'case': 'nomination coverage'}) as trace:
         selected, _, receipt = review.recommend_panel(rows, {'candidate_limit': 1}, tmp_path,
-            select_panel=selector, allow_model_calls=True)
+            select_panel=selector, allow_model_calls=True, review_strategy='exhaustive')
     assert receipt['status'] == 'completed'
     assert selected[0]['selection_rank'] == 1
     assert set(seen) == {trace.trace_id}
@@ -370,10 +412,13 @@ def test_nomination_model_settings_use_bounded_reasoning_and_minified_input(monk
     monkeypatch.setenv('OPENROUTER_MODEL', 'deepseek/deepseek-v4.1-flash-1017')
     monkeypatch.delenv('OPENROUTER_REASONING_EFFORT', raising=False)
     REAL_MODEL_CALL('nominate', {'evidence': {'ids': [0, 1]}, '_generation_token_budget': 8192}, {})
-    REAL_MODEL_CALL('audit', {}, {})
+    REAL_MODEL_CALL('audit', {}, review.AUDIT_SCHEMA)
     REAL_MODEL_CALL('audit_summary', {}, {})
     assert seen[0][0].reasoning == {'effort': 'low'}
     assert seen[1][0].reasoning == {'effort': 'low'}
+    audit_schema = seen[1][0].extra_body['text']['format']['schema']
+    assert 'mismatch_count_claims' in audit_schema['required']
+    assert 'selection_impact' in audit_schema['properties']['issues']['items']['required']
     assert seen[2][0].reasoning == {'effort': 'high'}
     assert seen[0][0].max_output_tokens == 8192
     assert seen[0][1] == '{"evidence":{"ids":[0,1]}}'

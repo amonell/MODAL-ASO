@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import hmac
 import json
 import math
@@ -22,11 +23,12 @@ from aso_agents.model_defaults import (
     DEFAULT_MODEL, DEFAULT_SMALL_MODEL, DEFAULT_OPENROUTER_MODEL, DEFAULT_PROVIDER,
 )
 from aso_agents.structured_stream import consume_guarded_response, root_array_constraints
-from aso_agents.resource_limits import acquire_resource, defer_resource, scoped_resource_name
+from aso_agents.resource_limits import acquire_resource, defer_resource, resource_cooldown_seconds, scoped_resource_name
 from aso_agents.llm_transport import (
     TransportRetryPolicy,
     avoid_failed_provider,
     openrouter_credit_error_hint,
+    reservation_retry_delay,
     retryable_transport_error,
     transport_error_details,
 )
@@ -80,6 +82,10 @@ _ClientCacheKey = tuple[
 ]
 _CLIENT_CACHE: dict[_ClientCacheKey, OpenAI] = {}
 _CLIENT_CACHE_LOCK = threading.Lock()
+
+
+class TransientGenerationError(RuntimeError):
+    """The provider explicitly reported a temporary failure before returning a generation."""
 
 
 @dataclass(frozen=True)
@@ -585,6 +591,8 @@ def create_response(
         if resolved_config.name == "openrouter"
         else TransportRetryPolicy()
     )
+    automatic_reservation_retry = (resolved_config.name == "openrouter" and resolved_config.max_retries != 0
+                                   and "ASO_LLM_TRANSPORT_RETRIES" not in os.environ)
     if retry_policy.retries:
         # Own retries here so waits release admission slots and publish a
         # provider-wide cooldown instead of multiplying hidden SDK retries.
@@ -625,9 +633,20 @@ def create_response(
     # A legitimate first generation may outlast the retry window. Start that
     # window only when the first retryable failure has actually arrived.
     retry_started: float | None = None
-    for attempt in range(retry_policy.retries + 1):
-        admission = acquire_resource(resource_name) if resource_name else nullcontext()
-        with admission:
+    reservation_resource = None
+    if automatic_reservation_retry or retry_policy.retries:
+        key_digest = hashlib.sha256(resolved_config.api_key.encode()).hexdigest()[:16]
+        reservation_resource = scoped_resource_name("openrouter_reservations", key_digest)
+    retrying_reservation = False
+    for attempt in range(max(retry_policy.retries, int(automatic_reservation_retry)) + 1):
+        # Only requests affected by a provider reservation queue for its release.
+        waiting = reservation_resource and (
+            retrying_reservation or resource_cooldown_seconds(reservation_resource) > 0
+        )
+        reservation = acquire_resource(reservation_resource) if waiting else nullcontext()
+        admit_route = resource_name and (not waiting or resource_name != reservation_resource)
+        admission = acquire_resource(resource_name) if admit_route else nullcontext()
+        with reservation, admission:
             pending_call = begin_llm_call(attribution)
             call_prepared = copy.deepcopy(prepared)
             instrument_openrouter_request(call_prepared, pending_call)
@@ -641,23 +660,27 @@ def create_response(
                     response = client.responses.create(**call_prepared)
             except Exception as exc:
                 details = transport_error_details(exc)
-                delay = retry_policy.delay(attempt, details) if retry_policy.retries else 0.0
-                eligible = retryable_transport_error(exc, details)
+                hint = reservation_retry_delay(details) if reservation_resource else None
+                retries = max(retry_policy.retries, int(hint is not None and automatic_reservation_retry))
+                delay = retry_policy.delay(attempt, details) if retries else 0.0
+                eligible = hint is not None or retryable_transport_error(exc, details)
                 if eligible and retry_started is None:
                     retry_started = time.monotonic()
                 will_retry = (
-                    eligible and retry_started is not None and attempt < retry_policy.retries
+                    eligible and retry_started is not None and attempt < retries
                     and time.monotonic() - retry_started + delay <= retry_policy.budget_seconds
                 )
-                if retry_policy.retries and eligible:
-                    # Publish before releasing admission so the next waiter
-                    # observes the cooldown. Never sleep while holding a slot.
+                if hint is not None and retries:
+                    retrying_reservation = True
+                    if delay <= retry_policy.budget_seconds:
+                        defer_resource(reservation_resource, delay)
+                elif retry_policy.retries and eligible:
                     defer_resource(resource_name, delay)
                 details.update({
                     "attempt": attempt + 1, "will_retry": will_retry,
                     "cooldown_seconds": round(delay, 3) if eligible else 0.0,
                 })
-                if will_retry:
+                if will_retry and hint is None:
                     details["excluded_providers_for_retry"] = avoid_failed_provider(prepared, details)
                 fail_llm_call(
                     pending_call,
@@ -768,7 +791,11 @@ def create_response(
                 else:
                     error_parts = [str(raw_error).strip()] if str(raw_error or "").strip() else []
                 failure_detail = "; ".join(error_parts) or "provider returned status=failed"
-                raise RuntimeError(
+                exception = RuntimeError
+                if (resolved_config.name == "openrouter" and error_code == "server_error"
+                        and "ASO_LLM_TRANSPORT_RETRIES" not in os.environ):
+                    exception = TransientGenerationError
+                raise exception(
                     "LLM API response failed for provider "
                     f"'{attribution['provider']}', logical model "
                     f"{attribution['requested_model']!r}, resolved model "
