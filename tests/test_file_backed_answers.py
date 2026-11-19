@@ -49,6 +49,7 @@ def test_lookup_reads_final_row_and_keeps_response_contract(tmp_path, monkeypatc
     def generate(payload):
         declared = payload["declared_inputs"]
         assert payload["request_text"] == request
+        assert payload["require_tabular_report_views"] == (kind == "sandbox_analysis")
         assert str(table) in [item["path"] for item in declared["artifact_refs"]]
         if kind != "sandbox_analysis":
             assert "observation details" not in json.dumps(declared)

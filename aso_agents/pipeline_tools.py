@@ -46125,7 +46125,7 @@ def _execute_sandbox_analysis(
             "declared_inputs": declared_inputs,
             "execution_root": str(sandbox_dir),
             "resource_limits": {"timeout_seconds": execution_timeout},
-            "require_tabular_report_views": True,
+            "require_tabular_report_views": response_basename == "sandbox_analysis" or bool(requested_paths),
         },
         generate=_run_sandbox_analysis_sync,
         review_program=_run_analysis_contract_review_sync,
