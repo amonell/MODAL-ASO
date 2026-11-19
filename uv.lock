@@ -1027,7 +1027,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/70/db/23f8b5d86c9385299
 
 [[package]]
 name = "modal-aso"
-version = "1.0.1"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },

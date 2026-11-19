@@ -30,7 +30,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then foll
 
 ## Install from a ZIP
 
-Download and extract the source ZIP from the [1.0.1 release](https://github.com/amonell/MODAL-ASO/releases/tag/v1.0.1). Open a terminal in the extracted folder:
+Download and extract the source ZIP from the [1.1.0 release](https://github.com/amonell/MODAL-ASO/releases/tag/v1.1.0). Open a terminal in the extracted folder:
 
 ```bash
 uv sync --frozen --extra splice
@@ -42,15 +42,17 @@ Model source code is fetched automatically at pinned revisions.
 
 ## Install a wheel
 
-Download the wheel from [GitHub Releases](https://github.com/amonell/MODAL-ASO/releases). For version 1.0.1:
+Download the wheel from [GitHub Releases](https://github.com/amonell/MODAL-ASO/releases). For version 1.1.0:
 
 ```bash
 uv venv --python 3.11 --managed-python
 source .venv/bin/activate
-uv pip install "./modal_aso-1.0.1-py3-none-any.whl[splice]"
+uv pip install "./modal_aso-1.1.0-py3-none-any.whl[splice]"
 modal-aso --version
 modal-aso setup --species human --features tools references splice
 ```
+
+To include the browser interface, use `[splice,gui]` in the wheel install command. Launch it with `modal-aso gui`. You can explore the bundled example offline with `modal-aso gui --test`.
 
 The source installation uses `uv.lock` to reproduce the full Python environment.
 
@@ -115,11 +117,11 @@ The required-model check exercises the isolated runtime and GPU before any LLM r
 
 ## Upgrade
 
-Choose a version from [GitHub Releases](https://github.com/amonell/MODAL-ASO/releases), then check out its tag. For 1.0.1:
+Choose a version from [GitHub Releases](https://github.com/amonell/MODAL-ASO/releases), then check out its tag. For 1.1.0:
 
 ```bash
 git fetch origin --tags
-git checkout v1.0.1
+git checkout v1.1.0
 uv sync --frozen --extra splice
 source .venv/bin/activate
 modal-aso doctor
