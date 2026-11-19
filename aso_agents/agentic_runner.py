@@ -269,6 +269,10 @@ class _RunController:
         self.agent.tools = [self._bind(tool) for tool in pipeline_controller_agent.tools]
 
     def _bind(self, tool: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
+        signature = inspect.signature(tool)
+        if "state_path" not in signature.parameters:
+            return tool
+
         @wraps(tool)
         def invoke(**arguments: Any) -> Dict[str, Any]:
             current = _live_state_path(self.path)
@@ -279,10 +283,16 @@ class _RunController:
                 self.path = _live_state_path(result["state_path"])
             return result
 
-        signature = inspect.signature(tool)
         invoke.__signature__ = signature.replace(parameters=[
             param for name, param in signature.parameters.items() if name != "state_path"
         ])
+        schema = getattr(tool, "_tool_parameters_schema", None)
+        if schema is not None:
+            invoke._tool_parameters_schema = {
+                **schema,
+                "properties": {key: value for key, value in schema["properties"].items() if key != "state_path"},
+                "required": [key for key in schema.get("required", []) if key != "state_path"],
+            }
         return invoke
 
 
@@ -755,7 +765,7 @@ def run_agentic_pipeline(
         parsed["decision_log_path"] = _write_decision_log(
             resolved_state, controller_input, run_result.responses or [], run_result.final_output,
         )
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         parsed["agent_trace_error"] = str(exc)
     parsed["controller_status_raw"] = parsed.get("status")
     for field in ("error", "run_dir", "artifacts", "pending_questions"):

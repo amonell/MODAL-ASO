@@ -235,16 +235,21 @@ class _AnalysisNeedsInput(Exception):
         self.outcome = outcome
 
 
-def _withhold_unfinished_exports(paths: list[Path], local: Path, archives: list[dict]) -> None:
+def _withhold_unfinished_exports(originals: dict[Path, Path | None], local: Path) -> None:
     """Keep a paused attempt's partial files and restore any prior deliveries."""
-    originals = {Path(item['path']): Path(item['archive']) for item in archives}
-    for index, path in enumerate(paths):
+    for index, (path, original) in enumerate(originals.items()):
         if path.exists() or path.is_symlink():
             target = local / 'unfinished_exports' / str(index)
             target.parent.mkdir(exist_ok=True)
             shutil.move(str(path), str(target))
-        if path in originals:
-            shutil.copy2(originals[path], path)
+        if original is not None:
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+                restored = Path(handle.name)
+            try:
+                shutil.copy2(original, restored)
+                restored.replace(path)
+            finally:
+                restored.unlink(missing_ok=True)
 
 
 def execute_analysis_program(
@@ -281,6 +286,7 @@ def execute_analysis_program(
     if set(expected_outputs) & set(readonly_outputs):
         raise ValueError('Generated output paths must not replace read-only input files')
     errors, attempts = [], []
+    original_exports: dict[Path, Path | None] = {}
     last_program = None
     request = dict(payload)
     request['requested_output_paths'] = [str(p) for p in required_outputs]
@@ -407,6 +413,9 @@ def execute_analysis_program(
             # relying on delayed/coarse/unstable filesystem timestamps. Keep
             # the previous bytes as evidence, including on unsuccessful retries.
             _archive_previous_outputs(expected_outputs, local, archived_outputs)
+            if allow_input_clarification and not original_exports:
+                backups = {item['path']: Path(item['archive']) for item in archived_outputs}
+                original_exports = {path: backups.get(str(path)) for path in required_outputs}
             if computed_root is not None:
                 if computed_root.exists() or computed_root.is_symlink():
                     if computed_root.is_symlink() or not computed_root.is_dir():
@@ -437,7 +446,7 @@ def execute_analysis_program(
                 if allow_input_clarification and isinstance(outcome, dict) and outcome.get('status') == 'needs_input':
                     if not isinstance(outcome.get('question'), str) or not outcome['question'].strip():
                         raise ValueError('A request for additional input must include a specific question.')
-                    _withhold_unfinished_exports(required_outputs, local, archived_outputs)
+                    _withhold_unfinished_exports(original_exports, local)
                     raise _AnalysisNeedsInput(outcome)
                 if isinstance(preview, dict):
                     from .design_workbooks import render_design_workbook_plans

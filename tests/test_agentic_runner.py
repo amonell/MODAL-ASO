@@ -414,3 +414,22 @@ def test_simultaneous_new_runs_get_distinct_controller_states(tmp_path, monkeypa
     assert len({result["run_dir"] for result in results}) == 2
     for request, result in zip(requests, results):
         assert json.loads(Path(result["state_path"]).read_text())["request"] == request
+
+
+def test_binding_keeps_tool_constraints_and_does_not_modify_shared_schemas(tmp_path):
+    from agents import _build_function_schema
+
+    def detail(state_path: str, field: str):
+        return {"path": state_path, "field": field}
+
+    detail._tool_parameters_schema = {
+        "type": "object", "additionalProperties": False,
+        "properties": {"state_path": {"type": "string"}, "field": {"enum": ["status", "phase"]}},
+        "required": ["state_path", "field"],
+    }
+    bound = agentic_runner._RunController(str(tmp_path / "run_state.json"))._bind(detail)
+    schema = _build_function_schema(bound)["parameters"]
+    assert schema["properties"] == {"field": {"enum": ["status", "phase"]}}
+    assert schema["required"] == ["field"]
+    assert "state_path" in detail._tool_parameters_schema["properties"]
+    assert bound(field="phase") == {"path": str(tmp_path / "run_state.json"), "field": "phase"}

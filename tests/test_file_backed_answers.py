@@ -116,7 +116,8 @@ def test_required_optional_and_disappearing_files(tmp_path, kind, monkeypatch):
     assert not pipeline._request_validation_summary(envelope)["blocked_task_ids"]
 
 
-def test_clarification_withholds_partial_export_and_restores_prior_delivery(tmp_path, monkeypatch):
+@pytest.mark.parametrize("retry", [False, True])
+def test_clarification_withholds_partial_export_and_restores_prior_delivery(tmp_path, monkeypatch, retry):
     source = tmp_path / "measurement.csv"
     source.write_text("channel_a,channel_b\n1,2\n")
     target = tmp_path / "calculated.csv"
@@ -126,10 +127,12 @@ def test_clarification_withholds_partial_export_and_restores_prior_delivery(tmp_
     question = "Which channel contains the signal?"
     outcome = {"status": "needs_input", "question": question, "reason": "Two signal channels are present."}
 
-    def generate(_):
+    def generate(payload):
+        guard = 'raise ValueError("retry calculation")' if retry and "execution_repair" not in payload else ""
         return {"python_code": dedent(f"""
             from pathlib import Path
             Path({str(target)!r}).write_text("partial export")
+            {guard}
             Path("sandbox_result.json").write_text({json.dumps({"request_outcome": outcome})!r})
             Path("sandbox_summary.md").write_text({question!r})
         """)}
@@ -140,9 +143,9 @@ def test_clarification_withholds_partial_export_and_restores_prior_delivery(tmp_
     assert question in saved["pending_questions"], result
     assert saved["task_statuses"]["inspect"]["status"] != "completed"
     assert target.read_text() == "prior delivery\n"
-    receipts = list(tmp_path.rglob("execution.json"))
-    assert len(receipts) == 1
-    assert json.loads(receipts[0].read_text())["status"] == "needs_input"
+    receipts = sorted(tmp_path.rglob("execution.json"))
+    assert len(receipts) == (2 if retry else 1)
+    assert json.loads(receipts[-1].read_text())["status"] == "needs_input"
 
 
 def test_file_backed_answer_retains_external_evidence(tmp_path, monkeypatch):
