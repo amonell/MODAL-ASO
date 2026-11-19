@@ -300,8 +300,4 @@ def test_canonical_state_path_follows_renamed_goal_dir(tmp_path: Path) -> None:
     assert not stale.exists()
     assert pipeline_tools._state_path_to_obj(str(stale)) == state_path
     assert agentic_runner._canonical_state_path(str(stale)) == str(state_path)
-    assert agentic_runner._authoritative_state_path(
-        existing_state_path=str(stale),
-        controller_state_path=None,
-        responses=[],
-    ) == str(state_path)
+    assert agentic_runner._RunController(str(stale)).path == state_path
