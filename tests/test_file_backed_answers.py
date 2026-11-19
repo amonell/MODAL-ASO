@@ -78,8 +78,13 @@ def test_lookup_reads_final_row_and_keeps_response_contract(tmp_path, monkeypatc
     response = json.loads(next(tmp_path.rglob(basename + ".json")).read_text())
     assert response["sandbox_result"]["count"] == 7
     assert response["sandbox_result"]["last"] == last
-    assert json.loads(state.read_text())["task_statuses"]["inspect"]["status"] == "completed"
+    saved = json.loads(state.read_text())
+    assert saved["task_statuses"]["inspect"]["status"] == "completed"
     assert table.read_bytes() == original
+    table.unlink()
+    assert "inspect" not in pipeline._load_state(str(state))["blocked_task_ids"]
+    saved.update(status="completed", phase="pipeline_complete", last_tool="inspect_run_outputs", integrity={"ok": True})
+    assert pipeline._derive_next_actions(saved)["terminal_status"] == "run_complete"
 
 
 @pytest.mark.parametrize("kind", ROUTES)

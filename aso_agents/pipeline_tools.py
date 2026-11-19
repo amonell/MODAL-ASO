@@ -12530,7 +12530,20 @@ def _sync_request_metadata_from_envelope(
     }
     dependencies = _normalize_request_dependencies(request_envelope.get("task_dependencies"), task_ids, tasks)
     state["task_graph"] = {"tasks": tasks, "dependencies": dependencies}
-    validation = _request_validation_summary({**deepcopy(request_envelope), "tasks": deepcopy(tasks), "task_dependencies": deepcopy(dependencies)})
+    task_statuses = state.get("task_statuses")
+    if not isinstance(task_statuses, dict):
+        task_statuses = {}
+        state["task_statuses"] = task_statuses
+    completed = {
+        task_id for task_id, entry in task_statuses.items()
+        if isinstance(entry, dict) and entry.get("status") == "completed"
+    }
+    if state.get("status") == "completed":
+        completed.update(task_ids)
+    validation = _request_validation_summary(
+        {**deepcopy(request_envelope), "tasks": deepcopy(tasks), "task_dependencies": deepcopy(dependencies)},
+        completed_task_ids=completed,
+    )
     merged_validation = deepcopy(validation.get("tasks") if isinstance(validation.get("tasks"), dict) else {})
     valid_task_id_order = [
         str(task.get("task_id") or "").strip()
@@ -12632,10 +12645,6 @@ def _sync_request_metadata_from_envelope(
         for task in tasks
         if isinstance(task, dict) and str(task.get("task_id") or "").strip()
     }
-    task_statuses = state.get("task_statuses")
-    if not isinstance(task_statuses, dict):
-        task_statuses = {}
-        state["task_statuses"] = task_statuses
     task_artifacts = state.get("task_artifacts")
     if not isinstance(task_artifacts, dict):
         task_artifacts = {}
@@ -23238,7 +23247,9 @@ def _design_goal_execution_contract_issues(
     return ["context.structured_goal.species"]
 
 
-def _request_validation_summary(request_envelope: Dict[str, Any]) -> Dict[str, Any]:
+def _request_validation_summary(
+    request_envelope: Dict[str, Any], *, completed_task_ids: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
     tasks = [task for task in (request_envelope.get("tasks") or []) if isinstance(task, dict)]
     design_task_count = sum(1 for task in tasks if _normalize_task_type_value(task.get("task_type")) == "design_new_asos")
     task_ids = {str(task.get("task_id") or "").strip() for task in tasks if str(task.get("task_id") or "").strip()}
@@ -23342,7 +23353,9 @@ def _request_validation_summary(request_envelope: Dict[str, Any]) -> Dict[str, A
                     _design_goal_execution_contract_issues(context_goal)
                 )
         elif task_type in {"analyze_artifact", "answer_question", "sandbox_analysis"}:
-            missing = _missing_analysis_inputs(context)
+            # Availability gates execution. A completed calculation can be reopened
+            # from its saved evidence after its original input has moved.
+            missing = [] if task_id in (completed_task_ids or ()) else _missing_analysis_inputs(context)
             if missing and deps:
                 upstream = _upstream_task_ids(task_id, dependency_map)
                 future_outputs = {
