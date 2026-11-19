@@ -68,6 +68,27 @@ def test_openrouter_catalog_requires_tools_and_structured_outputs(monkeypatch):
     assert list_models("openrouter", "key") == {"vendor/compatible": ["default"]}
 
 
+@pytest.mark.parametrize(("failure", "message"), [
+    ("Timeout", "did not respond in time"),
+    ("SSLError", "could not be verified"),
+    ("ConnectionError", "Check your internet connection"),
+    (404, "Check the API base URL"),
+    (503, "returned a server error"),
+])
+def test_openrouter_catalog_explains_transport_failures(monkeypatch, failure, message):
+    import requests
+
+    def get(*args, **kwargs):
+        if isinstance(failure, str):
+            raise getattr(requests.exceptions, failure)("private transport details")
+        return NS(status_code=failure)
+
+    monkeypatch.setattr(requests, "get", get)
+    with pytest.raises(SetupError, match=message) as error:
+        list_models("openrouter", "test-key")
+    assert "private transport details" not in str(error.value)
+
+
 def test_openrouter_efforts_follow_live_metadata():
     from aso_agents.gui.config import catalog_efforts
     assert catalog_efforts({"reasoning": {"supported_efforts": ["none", "low", "max"], "mandatory": True}}) == ["default", "low", "max"]
@@ -136,8 +157,11 @@ def test_chat_stream_buffers_narration_and_redacts_keys():
     stream.write("transcript.\nsecret-")
     stream.write("key\nFinal message")
     stream.finish()
+    stream.write("Still running: Choosing transcript (30s elapsed).\n")
+    stream.write("Still running: Choosing transcript (1m 00s elapsed).\n")
     assert [events.get_nowait() for _ in range(3)] == [
         ("message", "Choosing transcript."), ("message", "[redacted]"), ("message", "Final message")]
+    assert events.empty()
 
 
 def test_machine_result_is_not_shown_as_agent_narration():

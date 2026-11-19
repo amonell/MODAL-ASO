@@ -152,13 +152,30 @@ def list_models(provider, key):
             import requests
             from aso_agents.llm_provider import get_provider_config
             config = get_provider_config(environment_for(Settings(provider, key)))
-            response = requests.get(config.base_url.rstrip("/") + "/models",
-                                    headers={**config.default_headers, "Authorization": "Bearer " + key.strip()}, timeout=30)
+            try:
+                response = requests.get(config.base_url.rstrip("/") + "/models",
+                                        headers={**config.default_headers, "Authorization": "Bearer " + key.strip()},
+                                        timeout=30)
+            except requests.exceptions.Timeout:
+                raise SetupError("Timeout", "OpenRouter did not respond in time. Try loading the catalog again.") from None
+            except requests.exceptions.SSLError:
+                raise SetupError("Secure connection", "The connection to OpenRouter could not be verified. Check your network or proxy settings.") from None
+            except requests.exceptions.ConnectionError:
+                raise SetupError("Connection", "Could not reach OpenRouter. Check your internet connection and try again.") from None
+            if response.status_code == 404:
+                raise SetupError("Catalog unavailable", "The configured OpenRouter endpoint does not provide a model catalog. Check the API base URL.")
+            if 500 <= response.status_code < 600:
+                raise SetupError("Catalog unavailable", "OpenRouter returned a server error. Try loading the catalog again in a moment.")
             if response.status_code != 200:
                 error = RuntimeError()
                 error.status_code = response.status_code
                 raise error
-            rows = response.json()["data"]
+            try:
+                rows = response.json()["data"]
+            except (KeyError, TypeError, ValueError):
+                rows = None
+            if not isinstance(rows, list):
+                raise SetupError("Unexpected response", "The configured OpenRouter endpoint did not return a model list. Check the API base URL.")
             return dict(sorted((row["id"], catalog_efforts(row)) for row in rows
                                if {"tools", "structured_outputs"}.issubset(row.get("supported_parameters", []))))
         # The models endpoint has no capability flags: expose only known tool/

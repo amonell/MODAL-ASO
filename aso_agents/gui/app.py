@@ -6,8 +6,10 @@ from base64 import b64encode
 import os
 import shlex
 import sys
+from time import monotonic
 from importlib import reload
 import streamlit as st
+from aso_agents.cli_progress import elapsed_text
 from aso_agents.gui.config import ALL_EFFORTS, DEFAULT_OPENROUTER_MODEL, Settings, SetupError, credential_name, list_models, configuration_preview
 from aso_agents.llm_provider import selected_provider_name
 from aso_agents.gui.worker import start
@@ -215,7 +217,7 @@ def main():
                     state.models = load_models(provider, effective_key)
                     state.catalog_identity = identity
                 except SetupError as exc:
-                    st.warning(f"{exc.field}: {exc} You can still use the terminal model or enter an exact model ID.")
+                    st.warning(f"Could not load the model catalog. {exc} You can still use the terminal setting or enter a model ID.")
                     loading_models.empty()
                 else:
                     loading_models.empty()
@@ -327,9 +329,6 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                         state.messages.append(("assistant", value))
                 elif kind == "result":
                     state.result = value
-                    message = (f"UI preview ready. Results and Files show saved outputs from {value['preview_source']}. No new analysis was run."
-                               if test_mode and value.get('preview_source') else result_message(value))
-                    state.messages.append(("assistant", message))
                 elif kind == "error":
                     state.messages.append(("assistant", value))
                 elif kind == "diagnostic":
@@ -348,6 +347,16 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     else:
                         state.messages.append(("diagnostic", value))
                 elif kind == "done":
+                    started_at = state.pop("job_started_at", None)
+                    elapsed = elapsed_text(monotonic() - started_at) if started_at is not None else None
+                    if "result" in state:
+                        result = state.result
+                        if test_mode and result.get("preview_source"):
+                            headline = f"UI preview ready in {elapsed}." if elapsed else "UI preview ready."
+                            message = f"{headline} Results and Files show saved outputs from {result['preview_source']}. No new analysis was run."
+                        else:
+                            message = result_message(result, elapsed=elapsed)
+                        state.messages.append(("assistant", message))
                     state.pop("job", None)
                     state.pop("questions", None)
                     st.rerun()
@@ -414,11 +423,13 @@ host.requestAnimationFrame(() => host.requestAnimationFrame(() => {
                     options = shlex.split(flags)
                     if resume:
                         options.extend(["--agentic-state-path", resume_path.strip()])
+                    started_at = monotonic()
                     state.job = start_job(state.validated, request or "", options) if options else start_job(state.validated, request or "")
                 except (OSError, ValueError, RuntimeError) as exc:
                     st.error(str(exc))
                     return
                 display_request = request or f"Resume {resume_path.strip()}"
+                state.job_started_at = started_at
                 state.messages.append(("user", display_request))
                 state.pop("result", None)
                 state.seen_commentary = set()

@@ -71,7 +71,7 @@ def test_chat_delegates_request_and_collects_clarification(monkeypatch):
         events.put(("questions", {"questions": ["How many ASOs?"]}))
         return process, events, answers
     monkeypatch.setattr("aso_agents.gui.worker.start", start)
-    ui = AppTest.from_file(str(APP))
+    ui = AppTest.from_file(str(APP), default_timeout=15)
     ui.session_state["validated"] = Settings("openai", "test")
     ui.session_state["messages"] = []
     ui.run(timeout=15)
@@ -90,6 +90,8 @@ def test_chat_delegates_request_and_collects_clarification(monkeypatch):
     events.put(("done", None))
     ui.run()
     assert not any('class="aso-typing"' in item.value for item in ui.markdown)
+    assert sum("Analysis job finished in " in message for role, message in ui.session_state["messages"]
+               if role == "assistant") == 1
     assert not ui.chat_input[0].disabled
     assert not ui.exception
 

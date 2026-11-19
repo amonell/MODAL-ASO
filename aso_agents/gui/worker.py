@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import io
 from contextlib import redirect_stdout, redirect_stderr
+from aso_agents.gui.presentation import transport_error_message
 
 
 def plain_terminal_text(text):
@@ -50,8 +51,11 @@ class ChatStream(io.TextIOBase):
         # Its machine-readable terminal export is not a conversational reply.
         if line.startswith(("AGENTIC_RUN_RESULT:", "[TOOL CALL]", "[TOOL RESULT]")):
             return
+        # The GUI owns run timing. Suppress the terminal's periodic heartbeat.
+        if line.startswith("Still running: ") and line.endswith(" elapsed)."):
+            return
         if line:
-            self.events.put(("message", line))
+            self.events.put(("message", transport_error_message(line) or line))
 
     def flush_warning(self):
         if self.warning_lines:
@@ -115,7 +119,8 @@ def run(settings, request, events, answers, options=()):
         if not result_received and exc.code not in (None, 0):
             from aso_agents.gui.diagnostics import redact_credentials
             detail = exc.code if isinstance(exc.code, str) else "The analysis stopped before returning a result. See the preceding messages."
-            events.put(("error", redact_credentials(detail, api_key)))
+            detail = redact_credentials(detail, api_key)
+            events.put(("error", transport_error_message(detail) or detail))
     except Exception as exc:
         from aso_agents.gui.diagnostics import diagnostic
         details = diagnostic(exc, api_key)
@@ -124,7 +129,7 @@ def run(settings, request, events, answers, options=()):
             message = f"Analysis stopped. {error.field}: {error}"
         elif isinstance(exc, (OSError, ValueError, RuntimeError)):
             # The terminal entry point displays these shared execution errors directly.
-            message = details["message"]
+            message = transport_error_message(details["message"]) or details["message"]
         else:
             message = f"Analysis stopped with {details['type']}: {details['message']}\n\nOpen Technical details for the traceback."
         events.put(("error", message))

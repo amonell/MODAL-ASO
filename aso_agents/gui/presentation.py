@@ -1,5 +1,38 @@
 """Trusted UI markup, kept out of Markdown's indented-code parsing."""
 from html import escape
+import re
+
+
+_TRANSPORT_ERROR = re.compile(
+    r"LLM API transport failed for provider '([^']+)', logical model .*?, resolved model "
+    r".*? \((\w+); HTTP (\d{3}|unknown)\)\.(?: ([^\n]*))?"
+)
+
+
+def transport_error_message(detail):
+    """Translate the shared runtime's error envelope for chat."""
+    match = _TRANSPORT_ERROR.search(str(detail))
+    if not match:
+        return None
+    provider, error_type, status, hint = match.groups()
+    name = {"openrouter": "OpenRouter", "openai": "OpenAI"}.get(provider, "The model provider")
+    if status == "402" and provider == "openrouter" and hint:
+        return hint
+    if "Timeout" in error_type or status in {"408", "504"}:
+        return f"{name} took too long to respond. Try again."
+    if status in {"401", "403"}:
+        return f"{name} rejected access to the model. Check your API key and its permissions."
+    if status == "402":
+        return f"{name} rejected the request because of a credit or spending limit. Check your account balance and API key budget."
+    if status == "404":
+        return f"{name} could not find the selected model. Check the model ID or choose another model."
+    if status == "429":
+        return f"{name} is rate limiting requests. Wait a moment before retrying."
+    if status.startswith("5"):
+        return f"{name} reported a server error. Try again in a moment."
+    if error_type == "APIConnectionError":
+        return f"Could not connect to {name}. Check your internet connection and try again."
+    return f"{name} could not complete the model request. Check your provider settings and try again."
 
 def tagline_html():
     examples = (
@@ -51,7 +84,7 @@ def literal_block(value):
     return f"{fence}text\n{text}\n{fence}"
 
 
-def result_message(result):
+def result_message(result, *, elapsed=None):
     status = str(result.get("status", "finished"))
     if status in {"fatal", "failed", "error"}:
         error = result.get("error") or result.get("last_error") or {}
@@ -59,6 +92,8 @@ def result_message(result):
             error = {}
         stage = result.get("failed_stage") or error.get("stage") or "analysis"
         detail = error.get("message") or "The run did not complete. Review its saved diagnostics."
+        if message := transport_error_message(detail):
+            return f"Analysis stopped during {stage}.\n\n{message}"
         explanation = ""
         if str(detail).startswith("invalid_structured_output"):
             explanation = "The model's response did not match the required data format.\n\n"
@@ -67,9 +102,11 @@ def result_message(result):
         from aso_agents.recommendation_status import review_notice
         review = result.get("recommendation_review") or {}
         notice = review.get("completion_notice") or review_notice(review, review.get("panel_count"))
+        headline = f"Analysis job finished in {elapsed}." if elapsed else "Analysis completed."
         if notice:
-            return "Analysis and outputs saved. " + notice + " Open Results for the report and Files for downloads."
-        return "Analysis completed. Open Results to inspect the report or Files to save the outputs."
+            headline = headline + " Outputs saved." if elapsed else "Analysis and outputs saved."
+            return f"{headline} {notice} Open Results for the report and Files for downloads."
+        return f"{headline} Open Results to inspect the report or Files to save the outputs."
     if status == "needs_user_input":
         return "Run paused. Use its saved state path under Run options to continue."
     return f"Analysis status: {status}."
