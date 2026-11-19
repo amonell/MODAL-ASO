@@ -352,3 +352,65 @@ def test_active_execution_tool_can_request_clarification(tmp_path: Path) -> None
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["status"] == "needs_user_input"
     assert payload["pending_questions"] == ["Which exact site should be targeted?"]
+
+
+def test_fresh_controller_binds_all_tools_and_final_status_to_its_own_state(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from agents import _build_function_schema
+
+    run = tmp_path / "managed"
+    answer = tmp_path / "outputs" / "answer_question.json"
+    answer.parent.mkdir()
+    answer.write_text('{"answer_summary": "There were six rows."}')
+    original = answer.read_bytes()
+    monkeypatch.setattr(pipeline_tools, "_make_managed_run_dir", lambda _: str(run))
+
+    def dispatch(agent, *, input, **kwargs):
+        canonical = Path(json.loads(input)["existing_state_path"])
+        assert json.loads(canonical.read_text())["request"] == "Count the rows."
+        tools = {tool.__name__: tool for tool in agent.tools}
+        assert "initialize_run_state" not in tools
+        for tool in tools.values():
+            assert "state_path" not in _build_function_schema(tool)["parameters"]["properties"]
+        assert tools["read_run_state"](state_path=str(answer))["state_path"] == str(canonical)
+        # This run is awaiting intake. A tool may decline an out-of-order call.
+        # The resulting controller text still cannot complete the run.
+        tools["request_clarification"](state_path=str(answer), questions=["Which table?"], reason="Input needed.")
+        spoofed = {"status": "run_complete", "state_path": str(answer), "error": "stale error"}
+        return SimpleNamespace(final_output=spoofed, responses=[{"parsed": {"tool_calls": [
+            {"name": "read_run_state", "arguments": {"state_path": str(answer)}}]}}])
+
+    monkeypatch.setattr(agentic_runner.Runner, "_run_sync", dispatch)
+    result = agentic_runner.run_agentic_pipeline(user_request="Count the rows.", max_steps=1)
+    assert result["status"] == "in_progress"
+    assert result["state_status"] == "initialized"
+    assert "error" not in result
+    assert result["controller_reported_state_path"] == str(answer)
+    assert Path(result["state_path"]).is_relative_to(run)
+    assert Path(result["agent_trace_path"]).parent == Path(result["state_path"]).parent
+    assert not (answer.parent / "agent_trace.json").exists()
+    assert answer.read_bytes() == original
+
+
+def test_answer_artifact_cannot_be_resumed_as_a_run(tmp_path, monkeypatch):
+    answer = tmp_path / "answer.json"
+    answer.write_text('{"answer_summary": "There were six rows."}')
+    original = answer.read_bytes()
+    monkeypatch.setattr(agentic_runner.Runner, "_run_sync", lambda *_a, **_kw: pytest.fail("Invalid state"))
+    result = agentic_runner.run_agentic_pipeline(user_request="Resume.", existing_state_path=str(answer))
+    assert result["status"] == "fatal" and result["error"]["kind"] == "invalid_run_state"
+    assert answer.read_bytes() == original
+
+
+def test_simultaneous_new_runs_get_distinct_controller_states(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(pipeline_tools, "managed_runs_root", lambda: tmp_path)
+    monkeypatch.setattr(pipeline_tools.time, "time", lambda: 111)
+    requests = ["First saved table", "Second saved table"]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(pipeline_tools.initialize_run_state, requests))
+    assert all(result["status"] == "ok" for result in results)
+    assert len({result["run_dir"] for result in results}) == 2
+    for request, result in zip(requests, results):
+        assert json.loads(Path(result["state_path"]).read_text())["request"] == request

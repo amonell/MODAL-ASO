@@ -10171,6 +10171,7 @@ _RESTART_STAGE_ALIASES: Dict[str, str] = {
 }
 
 _REQUEST_CONTEXT_SCALAR_FIELDS: Tuple[str, ...] = (
+    "artifact_operation",
     "num_mismatches",
     "off_target_screening",
     "gene_symbol",
@@ -15782,6 +15783,17 @@ def _request_graph_review_contract_errors(
     return errors
 
 
+def _upstream_task_ids(task_id: str, dependencies: Dict[str, Set[str]]) -> Set[str]:
+    upstream: Set[str] = set()
+    pending = list(dependencies.get(task_id, ()))
+    while pending:
+        parent = pending.pop()
+        if parent != task_id and parent not in upstream:
+            upstream.add(parent)
+            pending.extend(dependencies.get(parent, ()))
+    return upstream
+
+
 def _executor_capability_issues(
     request_envelope: Dict[str, Any], request_evidence: str = "",
 ) -> List[Dict[str, Any]]:
@@ -15810,21 +15822,6 @@ def _executor_capability_issues(
         downstream = str(edge.get("downstream_task_id") or "").strip()
         if upstream in tasks_by_id and downstream in tasks_by_id:
             dependencies_by_downstream.setdefault(downstream, set()).add(upstream)
-    def consumes_upstream(task_id: str, upstream_ids: Set[str]) -> bool:
-        seen: Set[str] = set()
-        pending = [task_id]
-        while pending:
-            current = pending.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            for name in dependencies_by_downstream.get(current, ()):
-                if name in upstream_ids:
-                    return True
-                if name in tasks_by_id:
-                    pending.append(name)
-        return False
-
     # A missing file cannot be both a task's input and its own future output.
     # Compare explicit absolute paths only: relative inputs and outputs use
     # different runtime roots, which are not available during graph planning.
@@ -15854,7 +15851,7 @@ def _executor_capability_issues(
                 path = absolute_declared_path(ref.get("path") if isinstance(ref, dict) else ref)
                 producers = producers_by_path.get(path, set())
                 if (path is None or task_id not in producers or path.is_file()
-                        or consumes_upstream(task_id, producers - {task_id})):
+                        or _upstream_task_ids(task_id, dependencies_by_downstream) & producers):
                     continue
                 issues.append({
                     "category": "wrong_dependency",
@@ -15901,7 +15898,7 @@ def _executor_capability_issues(
                           "or its export cannot substitute for a set-level comparison.",
             })
         else:
-            if not any(consumes_upstream(str(task.get("task_id")), source_ids)
+            if not any(_upstream_task_ids(str(task.get("task_id")), dependencies_by_downstream) & source_ids
                        for task in comparisons if task.get("task_id")):
                 issues.append({
                     "category": "missing_comparison_dependency",
@@ -15916,7 +15913,7 @@ def _executor_capability_issues(
             report_ids = {str(task.get("task_id")) for task in task_items
                           if task.get("task_id") and
                           _normalize_task_type_value(task.get("task_type")) == "build_composite_report"
-                          and consumes_upstream(str(task.get("task_id")), compare_ids)}
+                          and _upstream_task_ids(str(task.get("task_id")), dependencies_by_downstream) & compare_ids}
             if outputs and not any(str(item.get("task_id")) in compare_ids | report_ids
                                    for item in outputs):
                 issues.append({
@@ -20185,7 +20182,9 @@ def _artifact_ref_is_local_path(ref: str) -> bool:
     text = str(ref or "").strip()
     if not text:
         return False
-    return re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", text) is None
+    scheme, separator, _ = text.partition("://")
+    return not (separator and scheme.isascii() and scheme[:1].isalpha()
+                and all(char.isalnum() or char in "+.-" for char in scheme))
 
 
 def _artifact_ref_path(ref: str) -> Path:
@@ -20213,8 +20212,39 @@ def _artifact_ref_availability(refs: List[str]) -> Dict[str, List[str]]:
     return {"usable": usable, "missing_local": missing_local}
 
 
+def _analysis_local_inputs(context: Dict[str, Any]) -> Dict[Path, bool]:
+    """Map each declared local input to whether this task requires its presence."""
+    inputs: Dict[Path, bool] = {}
+    for holder in (context, context.get("structured_goal")):
+        if not isinstance(holder, dict):
+            continue
+        refs = holder.get("artifact_refs") or []
+        if not isinstance(refs, list):
+            refs = [refs]
+        for ref in [*refs, *_collect_provided_aso_file_specs(holder)]:
+            raw = _provided_aso_file_path_from_spec(ref)
+            if isinstance(ref, dict) and not raw:
+                raw = str(ref.get("run_dir") or "").strip()
+            if raw and _artifact_ref_is_local_path(raw):
+                path = _artifact_ref_path(raw)
+                required = not isinstance(ref, dict) or ref.get("required") is not False
+                inputs[path] = inputs.get(path, False) or required
+    return inputs
+
+
+def _missing_analysis_inputs(context: Dict[str, Any]) -> List[str]:
+    missing = []
+    for path, required in _analysis_local_inputs(context).items():
+        if required and not ((path.is_file() and os.access(path, os.R_OK))
+                             or (path.is_dir() and os.access(path, os.R_OK | os.X_OK))):
+            missing.append(str(path))
+    return missing
+
+
 def _missing_artifact_refs_question(missing_refs: Any = None) -> str:
     refs = [str(item).strip() for item in (missing_refs or []) if str(item).strip()]
+    if refs and any(Path(ref).exists() for ref in refs):
+        return "Please provide readable files or directories for these inputs: " + ", ".join(refs) + "."
     if refs:
         shown_refs = refs[:3]
         question = (
@@ -20773,6 +20803,7 @@ def _build_artifact_index_analysis_response(
     artifact_context: Dict[str, Any],
     response_meta: Dict[str, Any],
     request_envelope: Dict[str, Any],
+    explicit: bool = False,
 ) -> Optional[Dict[str, Any]]:
     artifact_index = artifact_context.get("artifact_index") if isinstance(artifact_context.get("artifact_index"), dict) else {}
     if not artifact_index:
@@ -20787,7 +20818,7 @@ def _build_artifact_index_analysis_response(
         )
         if str(value or "").strip()
     )
-    if not _artifact_index_request_wants_inventory(request_text):
+    if not explicit and not _artifact_index_request_wants_inventory(request_text):
         return None
     aggregate = artifact_index.get("aggregate") if isinstance(artifact_index.get("aggregate"), dict) else {}
     key_tables = _artifact_index_key_tables(artifact_index, limit=18)
@@ -21533,6 +21564,7 @@ def _build_generated_aso_artifact_analysis_response(
     artifact_context: Dict[str, Any],
     response_meta: Dict[str, Any],
     request_envelope: Dict[str, Any],
+    explicit: bool = False,
 ) -> Optional[Dict[str, Any]]:
     request_text = " ".join(
         str(value or "").strip()
@@ -21544,7 +21576,7 @@ def _build_generated_aso_artifact_analysis_response(
         )
         if str(value or "").strip()
     )
-    if not _artifact_analysis_request_wants_generated_aso_ranking(request_text):
+    if not explicit and not _artifact_analysis_request_wants_generated_aso_ranking(request_text):
         return None
     records = _collect_artifact_aso_candidate_records(artifact_context)
     if not records:
@@ -22064,13 +22096,15 @@ def _load_provided_asos_from_files(request_envelope: Dict[str, Any]) -> List[Dic
     return rows
 
 
-def _normalize_provided_asos(request_envelope: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _normalize_provided_asos(
+    request_envelope: Dict[str, Any], *, include_file_rows: bool = True,
+) -> List[Dict[str, Any]]:
     provided = request_envelope.get("provided_asos")
     if isinstance(provided, (str, dict)):
         provided = [provided]
     if not isinstance(provided, list):
         provided = []
-    file_rows = _load_provided_asos_from_files(request_envelope)
+    file_rows = _load_provided_asos_from_files(request_envelope) if include_file_rows else []
     normalized: List[Dict[str, Any]] = []
     inline_items: List[Any] = []
     for item in provided:
@@ -23307,16 +23341,27 @@ def _request_validation_summary(request_envelope: Dict[str, Any]) -> Dict[str, A
                 repairable_issues.extend(
                     _design_goal_execution_contract_issues(context_goal)
                 )
-        elif task_type == "analyze_artifact":
-            if not artifact_refs and not has_generated_design_output:
+        elif task_type in {"analyze_artifact", "answer_question", "sandbox_analysis"}:
+            missing = _missing_analysis_inputs(context)
+            if missing and deps:
+                upstream = _upstream_task_ids(task_id, dependency_map)
+                future_outputs = {
+                    str(_artifact_ref_path(output["path"]))
+                    for output in request_envelope.get("final_outputs") or []
+                    if isinstance(output, dict) and output.get("task_id") in upstream
+                    and isinstance(output.get("path"), str) and Path(output["path"]).is_absolute()
+                }
+                missing = [path for path in missing if path not in future_outputs]
+            if missing:
+                issues.append("artifact_refs_unavailable")
+                questions.append(_missing_artifact_refs_question(missing))
+                reason = "The task needs the referenced input before it can produce the requested result."
+                status = "blocked"
+            elif (task_type == "analyze_artifact" and not artifact_refs
+                  and not _analysis_local_inputs(context) and not has_generated_design_output):
                 issues.append("artifact_refs_missing")
                 questions.append("Which run directory or artifact path should I inspect?")
                 reason = "Artifact analysis requires a concrete artifact or run reference."
-                status = "blocked"
-            elif missing_artifact_refs and not has_usable_artifact_refs:
-                issues.append("artifact_refs_unavailable")
-                questions.append(_missing_artifact_refs_question(missing_artifact_refs))
-                reason = "Artifact analysis cannot run until the referenced local path exists or is replaced."
                 status = "blocked"
         elif task_type == "evaluate_existing_aso_set":
             if not provided_asos and not has_design_dependency:
@@ -34628,25 +34673,42 @@ def _build_deterministic_composite_response(
     )
 
 
+def _artifact_table_schema(summary: Dict[str, Any]) -> Dict[str, Any]:
+    fields = ("table_format", "delimiter", "columns", "row_container", "top_level_keys", "sheet_name")
+    schema = {key: summary[key] for key in fields if key in summary}
+    if summary.get("sheets"):
+        schema["sheets"] = [_artifact_table_schema(sheet) for sheet in summary["sheets"]]
+    return schema
+
+
 def _build_sandbox_declared_inputs(
     state: Dict[str, Any],
     request_envelope: Dict[str, Any],
+    *,
+    include_artifact_previews: bool = True,
 ) -> Dict[str, Any]:
     from .species_config import available_reference_files
     declared: Dict[str, Any] = {"artifact_refs": [], "task_artifacts": [],
         "completed_design_candidates": [],
         "reference_resources": available_reference_files(),
-        "provided_asos": _normalize_provided_asos(request_envelope)}
+        "provided_asos": _normalize_provided_asos(request_envelope, include_file_rows=include_artifact_previews)}
     for ref in _resolve_artifact_ref_paths(request_envelope):
-        path = Path(ref).expanduser()
-        if not path.is_absolute():
-            path = (_repo_root() / path).resolve()
-        declared["artifact_refs"].append({"path": str(path), "exists": path.exists()})
-    artifact_context = _build_artifact_context(request_envelope)
-    artifact_index = artifact_context.get("artifact_index", {})
-    if artifact_index.get("refs"):
-        declared["artifact_index"] = artifact_index
-    declared["artifact_contents"] = artifact_context.get("entries", [])
+        if _artifact_ref_is_local_path(ref):
+            path = _artifact_ref_path(ref)
+            declared["artifact_refs"].append({"path": str(path), "exists": path.exists()})
+    if include_artifact_previews:
+        artifact_context = _build_artifact_context(request_envelope)
+        artifact_index = artifact_context.get("artifact_index", {})
+        if artifact_index.get("refs"):
+            declared["artifact_index"] = artifact_index
+        declared["artifact_contents"] = artifact_context.get("entries", [])
+    else:
+        # Supply column and sheet names for writing the reader. Record values
+        # must come from executing it against the actual input.
+        declared["input_tables"] = [
+            {"path": table["path"], **_artifact_table_schema(table["table_summary"])}
+            for ref in _build_artifact_index(request_envelope)["refs"] for table in ref.get("tables", [])
+        ]
     # Intake may identify supplied molecule tables separately from artifact
     # references. Show generated analysis the actual input path and columns;
     # output filenames in artifact_refs are not a substitute for source data.
@@ -34660,7 +34722,8 @@ def _build_sandbox_declared_inputs(
         provided_files.append({
             "path": str(path),
             "name": path.name,
-            "table_summary": table.get("table_summary") or {},
+            "table_summary": (table.get("table_summary") or {} if include_artifact_previews
+                              else _artifact_table_schema(table.get("table_summary") or {})),
         })
     if provided_files:
         declared["provided_input_files"] = provided_files
@@ -38750,6 +38813,15 @@ def _prepare_v2_task_execution(
         request_envelope,
         task,
     )
+    if task_type in {"answer_question", "analyze_artifact", "sandbox_analysis"}:
+        missing = _missing_analysis_inputs(task_request_envelope)
+        if missing:
+            return _block_v2_task_for_clarification(
+                state=state, state_path=state_path, tool_name=tool_name, run_dir=str(run_dir),
+                task_id=task_id, questions=[_missing_artifact_refs_question(missing)],
+                reason="A required input is missing. Provide its path to continue this analysis.",
+                missing_fields=["artifact_refs_unavailable"], clarification_kind="artifact_input",
+            )
     return {
         "status": "ok",
         "state": state,
@@ -43002,10 +43074,16 @@ def _make_managed_run_dir(structured_goal: Optional[Dict[str, Any]] = None) -> s
     if isinstance(structured_goal, dict):
         gene = structured_goal.get("gene_symbol") or structured_goal.get("gene_id")
     safe_gene = _sanitize_run_dir_gene_label(gene)
-    run_id = f"goal_{int(time.time())}_{safe_gene}"
-    run_dir = managed_runs_root() / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return str(run_dir)
+    root = managed_runs_root()
+    stamp = int(time.time())
+    while True:
+        run_dir = root / f"goal_{stamp}_{safe_gene}"
+        try:
+            run_dir.mkdir(parents=True)
+            return str(run_dir)
+        except FileExistsError:
+            # Multiple CLI invocations can start in the same second.
+            stamp = time.time_ns()
 
 
 def _agentic_state_dir_for_run(run_dir: str, run_id: str) -> Path:
@@ -44985,7 +45063,7 @@ def tool_answer_question(state_path: str) -> Dict[str, Any]:
         tool_name="tool_answer_question",
         task_type="answer_question",
     )
-    if prepared.get("status") != "ok":
+    if prepared.get("status") != "ok" or prepared.get("needs_user_input"):
         return prepared
     state_path = str(prepared.get("state_path") or state_path)
     state = prepared["state"]
@@ -44999,8 +45077,6 @@ def tool_answer_question(state_path: str) -> Dict[str, Any]:
         task_context=task_context,
     )
     response_request_envelope = response_meta["request_envelope"]
-    artifact_context = _build_artifact_context(response_request_envelope)
-    completed_context, completed_tasks = _collect_completed_task_outputs(state, exclude_task_id=task_id)
     request_text = str(response_meta.get("request_text") or "")
     retrieval_config = _normalize_answer_web_retrieval_config(
         task_context,
@@ -45059,6 +45135,13 @@ def tool_answer_question(state_path: str) -> Dict[str, Any]:
                 restart_stage="intake",
                 context="External source retrieval completed; remaining questions require user-specific choices.",
             )
+    if _analysis_local_inputs(response_request_envelope):
+        return _execute_sandbox_analysis(
+            prepared, tool_name="tool_answer_question", response_basename="answer_question",
+            retrieval_context=retrieval_context, retrieval_artifacts=retrieval_artifacts,
+        )
+    artifact_context = _build_artifact_context(response_request_envelope)
+    completed_context, completed_tasks = _collect_completed_task_outputs(state, exclude_task_id=task_id)
     response = _build_deterministic_question_response(
         request_text=request_text,
         request_summary=str(response_meta.get("request_summary") or ""),
@@ -45136,7 +45219,7 @@ def tool_analyze_artifact(state_path: str) -> Dict[str, Any]:
         tool_name="tool_analyze_artifact",
         task_type="analyze_artifact",
     )
-    if prepared.get("status") != "ok":
+    if prepared.get("status") != "ok" or prepared.get("needs_user_input"):
         return prepared
     state_path = str(prepared.get("state_path") or state_path)
     state = prepared["state"]
@@ -45150,39 +45233,43 @@ def tool_analyze_artifact(state_path: str) -> Dict[str, Any]:
         task_context=task_context,
     )
     response_request_envelope = response_meta["request_envelope"]
-    artifact_context = _build_artifact_context(response_request_envelope)
-    if not artifact_context.get("entries"):
-        return _tool_failure(
-            state=state,
-            state_path=state_path,
-            tool_name="tool_analyze_artifact",
-            stage_name="pipeline",
-            phase="tool_analyze_artifact_failed",
-            error_kind="tool_analyze_artifact_failed",
-            error_message="artifact_refs_missing",
-            details={"run_dir": run_dir},
-        )
-    # Declared file deliverables need executed analysis and physical output
-    # checks. An artifact inventory cannot establish their completion.
     if _requested_output_paths(run_dir, response_request_envelope.get("final_outputs")):
         return _execute_sandbox_analysis(prepared, tool_name="tool_analyze_artifact")
-    artifact_index = artifact_context.get("artifact_index") if isinstance(artifact_context.get("artifact_index"), dict) else {}
-    response = _build_generated_aso_artifact_analysis_response(
-        artifact_context=artifact_context,
-        response_meta=response_meta,
-        request_envelope=response_request_envelope,
-    )
-    if response is None:
+    operation = task_context.get("artifact_operation")
+    local_inputs = _analysis_local_inputs(response_request_envelope)
+    if operation == "read_records" and local_inputs:
+        return _execute_sandbox_analysis(
+            prepared, tool_name="tool_analyze_artifact", response_basename="artifact_analysis",
+        )
+    artifact_context = _build_artifact_context(response_request_envelope)
+    if not artifact_context.get("entries") and not local_inputs:
+        return _tool_failure(
+            state=state, state_path=state_path, tool_name="tool_analyze_artifact",
+            stage_name="pipeline", phase="tool_analyze_artifact_failed",
+            error_kind="tool_analyze_artifact_failed", error_message="artifact_refs_missing",
+            details={"run_dir": run_dir},
+        )
+    artifact_index = artifact_context.get("artifact_index") or {}
+    response = None
+    # Historical envelopes did not record an operation and retain their native overview routing.
+    if operation in (None, "rank_candidates"):
+        response = _build_generated_aso_artifact_analysis_response(
+            artifact_context=artifact_context, response_meta=response_meta,
+            request_envelope=response_request_envelope, explicit=operation == "rank_candidates",
+        )
+    if response is None and operation in (None, "annotation_overview"):
         response = _build_snapgene_artifact_analysis_response(
-            artifact_context=artifact_context,
-            response_meta=response_meta,
+            artifact_context=artifact_context, response_meta=response_meta,
             request_envelope=response_request_envelope,
         )
-    if response is None:
+    if response is None and operation in (None, "inventory"):
         response = _build_artifact_index_analysis_response(
-            artifact_context=artifact_context,
-            response_meta=response_meta,
-            request_envelope=response_request_envelope,
+            artifact_context=artifact_context, response_meta=response_meta,
+            request_envelope=response_request_envelope, explicit=operation == "inventory",
+        )
+    if response is None and local_inputs:
+        return _execute_sandbox_analysis(
+            prepared, tool_name="tool_analyze_artifact", response_basename="artifact_analysis",
         )
     if response is None:
         response = _run_workbench_response_sync(
@@ -45949,12 +46036,16 @@ def tool_run_sandbox_analysis(state_path: str) -> Dict[str, Any]:
         tool_name="tool_run_sandbox_analysis",
         task_type="sandbox_analysis",
     )
-    if prepared.get("status") != "ok":
+    if prepared.get("status") != "ok" or prepared.get("needs_user_input"):
         return prepared
     return _execute_sandbox_analysis(prepared, tool_name="tool_run_sandbox_analysis")
 
 
-def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Dict[str, Any]:
+def _execute_sandbox_analysis(
+    prepared: Dict[str, Any], *, tool_name: str, response_basename: str = "sandbox_analysis",
+    retrieval_context: Optional[Dict[str, Any]] = None,
+    retrieval_artifacts: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Execute an explicitly delegated table/sequence analysis for any task type."""
     state_path = str(prepared["state_path"])
     state = prepared["state"]
@@ -45982,10 +46073,17 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
     output_dir = _task_output_dir(run_dir, task_id, request_envelope=request_envelope)
     sandbox_dir = output_dir / "sandbox"
     sandbox_dir.mkdir(parents=True, exist_ok=True)
-    declared_inputs = _build_sandbox_declared_inputs(state, request_envelope)
+    declared_inputs = _build_sandbox_declared_inputs(
+        state, request_envelope, include_artifact_previews=response_basename == "sandbox_analysis",
+    )
     declared_inputs.update(request_text=analysis_request_text,
                            task_request_text=task_request_text,
                            request_envelope=deepcopy(response_request_envelope))
+    if retrieval_context and retrieval_context.get("used"):
+        declared_inputs["retrieval_context"] = retrieval_context
+    clarification_history = _clarification_qa_history(state)
+    if clarification_history:
+        declared_inputs["clarification_history"] = clarification_history
     declared_inputs_path = sandbox_dir / "declared_inputs.json"
     declared_inputs_path.write_text(json.dumps(declared_inputs, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -46036,15 +46134,25 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
         readonly_outputs=source_tables,
         source_tables=source_tables,
         validate_result=validate_design_lineage,
+        allow_input_clarification=True,
         max_attempts=5,
     )
+    outcome = execution.get("clarification")
+    if outcome:
+        return _block_v2_task_for_clarification(
+            state=state, state_path=state_path, tool_name=tool_name, run_dir=run_dir, task_id=task_id,
+            questions=[outcome["question"]], reason=str(outcome.get("reason") or outcome["question"]),
+            artifacts={"declared_inputs_json": str(declared_inputs_path),
+                       "result_json": str(sandbox_dir / "sandbox_result.json")},
+            clarification_kind="artifact_input",
+        )
     if not execution["ok"]:
         return _tool_failure(state=state, state_path=state_path, tool_name=tool_name,
             stage_name="pipeline", phase="data_analysis_failed", error_kind="data_analysis_failed",
             error_message=execution["error"], details={"run_dir":run_dir, "task_id":task_id,
                 "execution_attempts":execution["attempts"]})
     plan_payload = execution["plan"]
-    sandbox_result, summary_text, exit_code = execution["result"], execution["summary"], 0
+    sandbox_result, summary_text, exit_code = execution["result"], execution["summary"], execution["exit_code"]
     code_path = sandbox_dir / "generated_code.py"
     stdout_path, stderr_path = sandbox_dir / "stdout.log", sandbox_dir / "stderr.log"
     result_path, summary_path = sandbox_dir / "sandbox_result.json", sandbox_dir / "sandbox_summary.md"
@@ -46087,21 +46195,25 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
 
     artifacts.update({"requested_export_" + str(i): str(path) for i, path in enumerate(requested_paths, 1)})
 
+    if retrieval_artifacts:
+        artifacts.update({f"retrieval_{key}": value for key, value in retrieval_artifacts.items()})
+    response_payload = {
+        "answer_summary": str(sandbox_result.get("summary") or summary_text).strip(),
+        "markdown": summary_text,
+        "assumptions": plan_payload.get("assumptions") or [],
+        "limitations": plan_payload.get("limitations") or [],
+        "evidence_refs": [str(manifest_path)],
+        "sandbox_result": sandbox_result,
+        "sandbox_manifest": manifest,
+    }
+    if retrieval_context and retrieval_context.get("used"):
+        response_payload["retrieval"] = retrieval_context
     if _should_finalize_current_task(state, task_id):
-        response_payload = {
-            "answer_summary": str(sandbox_result.get("summary") or plan_payload.get("analysis_plan") or "Sandbox analysis completed.").strip(),
-            "markdown": summary_text,
-            "assumptions": plan_payload.get("assumptions") or [],
-            "limitations": (plan_payload.get("limitations") or []) + ([] if exit_code == 0 else [f"sandbox_exit_code={exit_code}"]),
-            "evidence_refs": [str(manifest_path)],
-            "sandbox_result": sandbox_result,
-            "sandbox_manifest": manifest,
-        }
         final_artifacts = _write_v2_response_outputs(
             run_dir=run_dir,
             markdown_text=summary_text,
             response_payload=response_payload,
-            response_basename="sandbox_analysis",
+            response_basename=response_basename,
             title=str(response_meta.get("title") or "ASO Sandbox Analysis"),
         )
         final_artifacts.update(artifacts)
@@ -46117,15 +46229,22 @@ def _execute_sandbox_analysis(prepared: Dict[str, Any], *, tool_name: str) -> Di
             artifacts=final_artifacts,
         )
 
+    status = "sandbox_analysis_ready"
+    if response_basename != "sandbox_analysis":
+        status = "question_answer_ready" if tool_name == "tool_answer_question" else "artifact_analysis_ready"
+        artifacts.update(_write_v2_task_result_files(
+            run_dir=run_dir, task_id=task_id, basename=response_basename, payload=response_payload,
+            markdown_text=summary_text, request_envelope=request_envelope, task_context=task_context,
+        ))
     return _complete_v2_task(
         state_path=state_path,
         state=state,
         tool_name=tool_name,
         run_dir=run_dir,
         task_id=task_id,
-        status="sandbox_analysis_ready",
-        phase="sandbox_analysis_ready",
-        message="Sandbox analysis task completed.",
+        status=status,
+        phase=status,
+        message="Analysis completed.",
         artifacts=artifacts,
     )
 

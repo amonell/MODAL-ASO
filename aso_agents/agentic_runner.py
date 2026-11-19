@@ -1,10 +1,13 @@
+import inspect
 import json
 import os
 from pathlib import Path
 import signal
 import socket
 from contextlib import contextmanager
+from copy import copy
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Any, Callable, Dict, Iterator, Optional
 
 from agents import Runner
@@ -251,73 +254,36 @@ def _parse_json_object(value: Any) -> Dict[str, Any]:
     return {"status": "fatal", "error": f"controller_output_type_{type(value).__name__}"}
 
 
-def _recover_state_path_from_history(
-    responses: Any,
-    *,
-    fallback_state_path: Optional[str] = None,
-) -> Optional[str]:
-    if isinstance(fallback_state_path, str) and fallback_state_path.strip():
-        return str(Path(fallback_state_path).expanduser())
-    if not isinstance(responses, list):
-        return None
-    for item in reversed(responses):
-        if not isinstance(item, dict):
-            continue
-        parsed = item.get("parsed")
-        if not isinstance(parsed, dict):
-            continue
-        tool_calls = parsed.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            continue
-        for call in reversed(tool_calls):
-            if not isinstance(call, dict):
-                continue
-            raw_args = call.get("arguments")
-            args_obj: Dict[str, Any] = {}
-            if isinstance(raw_args, dict):
-                args_obj = raw_args
-            elif isinstance(raw_args, str):
-                try:
-                    parsed_args = json.loads(raw_args)
-                except Exception:
-                    parsed_args = {}
-                if isinstance(parsed_args, dict):
-                    args_obj = parsed_args
-            candidate = args_obj.get("state_path")
-            if isinstance(candidate, str) and candidate.strip():
-                return str(Path(candidate).expanduser())
-    return None
-
-
 def _canonical_state_path(value: Any) -> Optional[str]:
     if not isinstance(value, str) or not value.strip():
         return None
     return str(_state_path_to_obj(value.strip()))
 
 
-def _authoritative_state_path(
-    *,
-    existing_state_path: Optional[str],
-    controller_state_path: Any,
-    responses: Any,
-) -> Optional[str]:
-    """Resolve state identity without trusting free-form controller output.
+class _RunController:
+    """Bind every model-dispatched tool and its trace to this invocation's state."""
 
-    A resumed run is bound to the state supplied by its caller. For a newly
-    initialized run, prefer paths used by actual tool calls and only fall back
-    to the controller's final response when no tool history is available.
-    """
-    existing = _canonical_state_path(existing_state_path)
-    if existing and Path(existing).is_file():
-        return existing
+    def __init__(self, state_path: str):
+        self.path = _live_state_path(state_path)
+        self.agent = copy(pipeline_controller_agent)
+        self.agent.tools = [self._bind(tool) for tool in pipeline_controller_agent.tools]
 
-    recovered = _recover_state_path_from_history(responses)
-    recovered = _canonical_state_path(recovered)
-    reported = _canonical_state_path(controller_state_path)
-    for candidate in (recovered, reported):
-        if candidate and Path(candidate).is_file():
-            return candidate
-    return recovered or reported
+    def _bind(self, tool: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
+        @wraps(tool)
+        def invoke(**arguments: Any) -> Dict[str, Any]:
+            current = _live_state_path(self.path)
+            arguments["state_path"] = str(current)
+            result = tool(**arguments)
+            # A host tool may move a legacy state into its managed run folder.
+            if not current.exists() and isinstance(result, dict) and result.get("state_path"):
+                self.path = _live_state_path(result["state_path"])
+            return result
+
+        signature = inspect.signature(tool)
+        invoke.__signature__ = signature.replace(parameters=[
+            param for name, param in signature.parameters.items() if name != "state_path"
+        ])
+        return invoke
 
 
 def _infer_status_from_state(state_path: Path) -> Dict[str, Any]:
@@ -490,7 +456,7 @@ def _run_planned_next_action_once(
     tool = getattr(tool_module, tool_name, None)
     if not callable(tool):
         return None
-    arguments.setdefault("state_path", str(state_path))
+    arguments["state_path"] = str(state_path)
     _mark_deterministic_tool_started(state_path, tool_name)
     Runner._emit_event(event_callback, {
         "type": "tool_call", "agent": "deterministic_planned_action",
@@ -641,13 +607,13 @@ def run_agentic_pipeline(
 ) -> Dict[str, Any]:
     existing_state_path_resolved = _canonical_state_path(existing_state_path)
 
-    # This execution option must be applied before any controller/tool call,
-    # without relying on a model to copy a CLI flag into the new run state.
-    if skip_shortlist and not existing_state_path_resolved:
+    use_planned_action = bool(existing_state_path_resolved or skip_shortlist)
+    # State identity and CLI flags come from the caller, including on a fresh run.
+    if not existing_state_path_resolved:
         from .pipeline_tools import initialize_run_state
         initialized = initialize_run_state(
             request=user_request, skip_router=skip_router,
-            skip_ensembl_check=skip_ensembl_check, skip_shortlist=True,
+            skip_ensembl_check=skip_ensembl_check, skip_shortlist=skip_shortlist,
             router_max_steps=router_max_steps, router_log_tool_calls=router_log_tool_calls,
             router_debug_dir=router_debug_dir or "", router_print_summary=router_print_summary,
         )
@@ -655,7 +621,17 @@ def run_agentic_pipeline(
             return {"status": "fatal", "error": {"kind": "initialization_failed", "details": initialized}}
         existing_state_path_resolved = _canonical_state_path(initialized["state_path"])
     if existing_state_path_resolved:
-        state = _load_state(existing_state_path_resolved)
+        try:
+            state = _load_state(existing_state_path_resolved)
+        except (OSError, ValueError) as exc:
+            return {"status": "fatal", "state_path": existing_state_path_resolved,
+                    "error": {"kind": "invalid_run_state", "message": str(exc)}}
+        if not isinstance(state, dict) or not (
+            (state.get("phase") and state.get("status"))
+            or (state.get("run_dir") and isinstance(state.get("flags"), dict))
+        ):
+            return {"status": "fatal", "state_path": existing_state_path_resolved,
+                    "error": {"kind": "invalid_run_state", "message": "Provide the state file for the run to resume."}}
         saved_skip = (state.get("flags") or {}).get("skip_shortlist") is True
         if skip_shortlist and not saved_skip:
             def mark_skip(state):
@@ -738,7 +714,7 @@ def run_agentic_pipeline(
     if clarification_answer_summary:
         controller_input["clarification_answer_summary"] = clarification_answer_summary
 
-    if existing_state_path_resolved:
+    if use_planned_action:
         deterministic = _run_planned_next_action_once(
             Path(existing_state_path_resolved), event_callback=event_callback,
         )
@@ -747,8 +723,9 @@ def run_agentic_pipeline(
             deterministic.setdefault("controller_steps", 0)
             return deterministic
 
+    controller = _RunController(existing_state_path_resolved)
     run_result = Runner._run_sync(
-        pipeline_controller_agent,
+        controller.agent,
         input=json.dumps(controller_input, ensure_ascii=False),
         max_steps=max_steps,
         event_callback=event_callback,
@@ -757,45 +734,31 @@ def run_agentic_pipeline(
     parsed.setdefault("controller_agent", pipeline_controller_agent.name)
     parsed.setdefault("controller_steps", len(run_result.responses or []))
 
-    controller_state_path = parsed.get("state_path")
-    state_path = _authoritative_state_path(
-        existing_state_path=existing_state_path_resolved,
-        controller_state_path=controller_state_path,
-        responses=run_result.responses or [],
-    )
-    if state_path:
-        reported_canonical = _canonical_state_path(controller_state_path)
-        if reported_canonical and reported_canonical != state_path:
-            parsed["controller_reported_state_path"] = reported_canonical
-        parsed["state_path"] = state_path
-    if isinstance(state_path, str) and state_path.strip():
-        try:
-            resolved_state = _live_state_path(state_path)
-            trace_path = resolved_state.parent / "agent_trace.json"
-            trace_payload = {
-                "trace_format": "compact_v1",
-                "controller_input": controller_input,
-                "controller_agent": pipeline_controller_agent.name,
-                "controller_steps": len(run_result.responses or []),
-                "responses": run_result.responses or [],
-                "final_output": run_result.final_output,
-            }
-            trace_path.write_text(json.dumps(trace_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            parsed["agent_trace_path"] = str(trace_path)
-            decision_log_path = _write_decision_log(
-                resolved_state,
-                controller_input,
-                run_result.responses or [],
-                run_result.final_output,
-            )
-            parsed["decision_log_path"] = decision_log_path
-            parsed["controller_status_raw"] = parsed.get("status")
-            parsed.update(_infer_status_from_state(resolved_state))
-        except Exception as exc:
-            parsed["agent_trace_error"] = str(exc)
-    else:
-        status_text = str(parsed.get("status") or "").strip().lower()
-        if status_text not in {"run_complete", "needs_user_input", "fatal"}:
-            parsed["status"] = "fatal"
-            parsed.setdefault("error", "controller_missing_state_path")
+    resolved_state = _live_state_path(controller.path)
+    state_path = str(resolved_state)
+    reported = parsed.get("state_path")
+    if isinstance(reported, str) and reported != state_path:
+        parsed["controller_reported_state_path"] = reported
+    parsed["state_path"] = state_path
+    try:
+        trace_path = resolved_state.parent / "agent_trace.json"
+        trace_payload = {
+            "trace_format": "compact_v1",
+            "controller_input": controller_input,
+            "controller_agent": pipeline_controller_agent.name,
+            "controller_steps": len(run_result.responses or []),
+            "responses": run_result.responses or [],
+            "final_output": run_result.final_output,
+        }
+        trace_path.write_text(json.dumps(trace_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        parsed["agent_trace_path"] = str(trace_path)
+        parsed["decision_log_path"] = _write_decision_log(
+            resolved_state, controller_input, run_result.responses or [], run_result.final_output,
+        )
+    except OSError as exc:
+        parsed["agent_trace_error"] = str(exc)
+    parsed["controller_status_raw"] = parsed.get("status")
+    for field in ("error", "run_dir", "artifacts", "pending_questions"):
+        parsed.pop(field, None)
+    parsed.update(_infer_status_from_state(resolved_state))
     return parsed

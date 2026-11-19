@@ -5,7 +5,6 @@ from .pipeline_tools import (
     apply_clarification_to_goal,
     evaluate_step_output,
     finalize_run_state,
-    initialize_run_state,
     inspect_run_outputs,
     request_clarification,
     read_run_state,
@@ -59,15 +58,15 @@ pipeline_controller_agent = Agent(
         "Operate as a state-driven planner, not a fixed stage script.\n"
         "\n"
         "Planning loop:\n"
-        "1) If existing_state_path is provided, use it as state_path; otherwise call initialize_run_state exactly once.\n"
-        "2) Call read_run_state(state_path) to get planning.terminal_status, planning.next_actions, and planning.allowed_next_tools.\n"
+        "1) The host has initialized or resumed this run and supplies its state to each tool.\n"
+        "2) Call read_run_state() to get planning.terminal_status, planning.next_actions, and planning.allowed_next_tools.\n"
         "3) If clarification_answers were provided and submit_clarification_answers is allowed next, call submit_clarification_answers once, then return to step 2.\n"
         "4) If planning.terminal_status is run_complete, needs_user_input, or fatal: stop and return final JSON.\n"
         "5) Otherwise choose exactly one tool from planning.next_actions and execute it.\n"
         "6) Repeat from step 2.\n"
         "\n"
         "Rules:\n"
-        "- Always pass and reuse state_path returned by initialize_run_state.\n"
+        "- Tool arguments describe only the operation. State and report paths are owned by the host.\n"
         "- Never call a tool unless it appears in planning.next_actions from the latest read_run_state.\n"
         "- Enforce allowed transitions: only call tools that are also listed in planning.allowed_next_tools.\n"
         "- If a planning.next_actions item includes an arguments object, pass those arguments exactly.\n"
@@ -101,7 +100,6 @@ pipeline_controller_agent = Agent(
         "- Do not include prose outside JSON.\n"
     ),
     tools=[
-        initialize_run_state,
         tool_parse_goal_request,
         tool_validate_goal_schema,
         tool_resolve_isoforms_and_sites,

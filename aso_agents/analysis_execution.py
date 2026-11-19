@@ -230,6 +230,23 @@ def _computed_report_tables(result: dict, directory: Path, root: Path, source_ta
     return list(dict.fromkeys(tables))
 
 
+class _AnalysisNeedsInput(Exception):
+    def __init__(self, outcome: dict):
+        self.outcome = outcome
+
+
+def _withhold_unfinished_exports(paths: list[Path], local: Path, archives: list[dict]) -> None:
+    """Keep a paused attempt's partial files and restore any prior deliveries."""
+    originals = {Path(item['path']): Path(item['archive']) for item in archives}
+    for index, path in enumerate(paths):
+        if path.exists() or path.is_symlink():
+            target = local / 'unfinished_exports' / str(index)
+            target.parent.mkdir(exist_ok=True)
+            shutil.move(str(path), str(target))
+        if path in originals:
+            shutil.copy2(originals[path], path)
+
+
 def execute_analysis_program(
     *, directory: Path, payload: dict, generate: Callable[[dict], dict],
     required_outputs: list[Path], timeout_seconds: float | None = None, max_attempts: int = 3,
@@ -238,6 +255,7 @@ def execute_analysis_program(
     validate_result: Callable[[dict], None] | None = None,
     review_program: Callable[[dict], dict] | None = None,
     first_review_repair: bool = False,
+    allow_input_clarification: bool = False,
 ) -> dict:
     """Repair execution/serialization faults without substituting scientific data.
 
@@ -335,6 +353,7 @@ def execute_analysis_program(
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, backup)
             protected[path] = backup
+        clarification = None
         plan = generate(request)
         code = str(plan.get('python_code') or '').strip()
         (local / 'plan.json').write_text(json.dumps(plan, indent=2))
@@ -414,6 +433,12 @@ def execute_analysis_program(
             # working-directory exports to their declared delivery paths.
             if result_path.is_file():
                 preview = json.loads(result_path.read_text())
+                outcome = preview.get('request_outcome') if isinstance(preview, dict) else None
+                if allow_input_clarification and isinstance(outcome, dict) and outcome.get('status') == 'needs_input':
+                    if not isinstance(outcome.get('question'), str) or not outcome['question'].strip():
+                        raise ValueError('A request for additional input must include a specific question.')
+                    _withhold_unfinished_exports(required_outputs, local, archived_outputs)
+                    raise _AnalysisNeedsInput(outcome)
                 if isinstance(preview, dict):
                     from .design_workbooks import render_design_workbook_plans
                     render_design_workbook_plans(payload, preview, required_outputs)
@@ -478,6 +503,9 @@ def execute_analysis_program(
                     "status": contract_review["status"], "receipt_path": str(review_path)}
                 result_path.write_text(json.dumps(result, indent=2))
             error = None
+        except _AnalysisNeedsInput as paused:
+            clarification = paused.outcome
+            error = None
         except (ValueError, SyntaxError, OSError, subprocess.TimeoutExpired) as exc:
             error = f'{type(exc).__name__}: {exc}'
             for _, output in promoted:
@@ -529,6 +557,8 @@ def execute_analysis_program(
                    'plan_file_sha256': hashlib.sha256((local / 'plan.json').read_bytes()).hexdigest(),
                    'runtime_diagnostics': diagnostics,
                    'required_outputs':[str(p) for p in required_outputs]}
+        if clarification and error is None:
+            receipt.update(status='needs_input', clarification=clarification)
         serialization_path = local / 'serialization.json'
         if serialization_path.is_file():
             receipt['serialization'] = json.loads(serialization_path.read_text())
@@ -568,6 +598,8 @@ def execute_analysis_program(
                 and path.relative_to(directory).parts[0] != 'execution_attempts'][:200]
         (local / 'execution.json').write_text(json.dumps(receipt, indent=2))
         attempts.append(receipt)
+        if clarification and error is None:
+            return {'ok': False, 'clarification': clarification, 'exit_code': exit_code, 'attempts': attempts}
         if error is None:
             return {'ok':True, 'plan':plan, 'result':result, 'summary':summary,
                     'exit_code':0, 'attempts':attempts}
