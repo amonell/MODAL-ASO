@@ -181,7 +181,8 @@ def test_doctor_distinguishes_absent_optional_models_from_broken_or_required_mod
     monkeypatch.setattr(model_assets,"inventory",lambda *_a,**_k:[])
     monkeypatch.setattr(llm_provider,"get_provider_config",lambda **_:SimpleNamespace(
         api_key="test-only", name="test", resolve_model=lambda _: "test/model"))
-    monkeypatch.setitem(sys.modules,"torch",SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:False)))
+    monkeypatch.setitem(sys.modules,"torch",SimpleNamespace(
+        __version__="test", cuda=SimpleNamespace(is_available=lambda:False)))
     args=["doctor","--json"]+(["--require-model","oligoai"] if required else [])
     assert cli.main(args)==expected
     output=json.loads(capsys.readouterr().out)

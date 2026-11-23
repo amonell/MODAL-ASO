@@ -37,7 +37,7 @@ dependencies = [
     "sinkhorn-transformer>=0.11.4",
     "snakemake>=7.32.4,<8",
     "snapgene-reader>=0.1.20",
-    "torch==2.6.0",
+    "torch>=2.7,<3",
     "upsetplot>=0.9.0",
 ]
 

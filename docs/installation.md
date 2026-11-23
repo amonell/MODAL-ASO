@@ -38,6 +38,8 @@ source .venv/bin/activate
 modal-aso setup --species human --features tools references splice
 ```
 
+For NVIDIA GPU inference, use the [hardware-aware PyTorch install](#select-pytorch-for-the-installed-gpu) in the same environment.
+
 Model source code is fetched automatically at pinned revisions.
 
 ## Install a wheel
@@ -75,6 +77,23 @@ Activation reuses the installed environment. Models and references also persist 
 | OligoAI | Gapmer efficacy predictions | `modal-aso setup --features oligoai` |
 
 Install the corresponding species references before splice models. Splice models run on CPU or compatible NVIDIA GPUs. OligoAI requires Linux x86-64, Python 3.11, and an NVIDIA Ampere or newer GPU with a CUDA 12.4-compatible driver. Its isolated environment uses PyTorch 2.6.0 and FlashAttention 2.7.4.post1.
+
+### Select PyTorch for the installed GPU
+
+From the checkout, run the hardware-aware installer in your activated MODAL-ASO environment on Linux or WSL2:
+
+```bash
+bash scripts/install_gpu_runtime.sh
+```
+
+The installer detects GeForce RTX 50-series GPUs with `nvidia-smi` and selects PyTorch 2.7.1 with CUDA 12.8, which requires a CUDA 12.8-compatible driver. For other systems it uses uv's automatic backend selection. The doctor command runs a CUDA operation and reports the wheel build and GPU architecture. You can also select the RTX 50-series wheel explicitly:
+
+```bash
+uv pip install --torch-backend=cu128 --reinstall-package torch torch==2.7.1 -e '.[splice]'
+modal-aso doctor --species human --require-cuda
+```
+
+Use `--require-cuda` on a GPU machine to also catch a CPU-only wheel or an inaccessible driver. Run `modal-aso` directly from the activated environment, or use `uv run --no-sync`. A locked `uv sync` can replace the hardware-selected wheel, in which case reapply the hardware-specific install. The isolated OligoAI environment uses its own installation procedure.
 
 OligoAI uses BF16 arithmetic on supported GPUs to prevent overflow in its RNA encoder. Each prediction receipt records the arithmetic precision and runner identity. If an individual RNA context produces an invalid estimate, its activity remains unavailable and valid estimates for other contexts are retained.
 

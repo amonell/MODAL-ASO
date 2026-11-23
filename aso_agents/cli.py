@@ -98,7 +98,21 @@ def _doctor(args):
         except RuntimeError as exc:
             add("OligoAI runtime", "error", exc)
     import torch
-    add("Inference device", "ok", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU; OligoAI requires a supported NVIDIA GPU")
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability(0)
+        device = f"{torch.cuda.get_device_name(0)} (sm_{major}{minor})"
+        build = f"PyTorch {torch.__version__}, CUDA {torch.version.cuda}"
+        try:
+            probe = torch.ones(1, device="cuda:0").add_(1)
+            if probe.item() != 2:
+                raise RuntimeError("CUDA smoke test returned an unexpected result")
+        except RuntimeError as exc:
+            add("Inference device", "error", f"{device}; {build}; CUDA smoke test failed: {exc}")
+        else:
+            add("Inference device", "ok", f"{device}; {build}; CUDA smoke test passed")
+    else:
+        status = "error" if args.require_cuda else "ok"
+        add("Inference device", status, f"CPU; PyTorch {torch.__version__}; CUDA unavailable")
     from .llm_provider import get_provider_config
     provider = get_provider_config(require_credentials=False)
     add("LLM credentials", "ok" if provider.api_key else "missing", provider.name + " (key configured)" if provider.api_key else provider.name + " (set API key)")
@@ -230,6 +244,7 @@ def main(argv=None):
         doctor.add_argument("--species", nargs="+", choices=["human", "mouse"], default=["human"])
         doctor.add_argument("--verify", action="store_true", help="Rehash reference files")
         doctor.add_argument("--json", action="store_true")
+        doctor.add_argument("--require-cuda", action="store_true", help="Require a working CUDA device for the main PyTorch environment")
         doctor.add_argument("--require-model", action="append", choices=["oligoai"], default=[], help="Require a working model runtime, including its GPU access")
         doctor.set_defaults(func=_doctor)
         assets = sub.add_parser("assets", help="List, verify or import existing references")
