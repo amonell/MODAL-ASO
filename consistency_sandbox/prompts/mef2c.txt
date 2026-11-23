@@ -1,0 +1,1 @@
+I want to knock down the mutant allele carrying chr5:88,804,750 T>G (NC_000005.10:g.88804750T>G) in the hg38 human genome. Design 20-mer gapmer ASOs that target the mutant variant sequence while avoiding knockdown of the wild-type allele.
